@@ -112,6 +112,7 @@ def test_readme_documents_uv_managed_python_and_git_install() -> None:
     assert "download it automatically" in compact
     assert "without requiring `git` to be installed" in readme
     assert "`a0 update`" in readme
+    assert "resolves the latest published GitHub release at runtime" in compact
     assert "`A0_PACKAGE_SPEC`" in readme
     assert "`A0_PYTHON_SPEC`" in readme
     assert "Install `uv` or rerun the existing installer." in readme

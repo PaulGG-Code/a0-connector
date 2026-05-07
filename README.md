@@ -56,7 +56,11 @@ If you installed `a0` with the standard `uv tool` flow, update it in place with:
 a0 update
 ```
 
-By default `a0 update` follows the same GitHub release archive and managed CPython 3.11 tool runtime used by the installer. For advanced cases you can override the package source with `A0_PACKAGE_SPEC` or the interpreter request with `A0_PYTHON_SPEC` before running `a0 update`.
+By default `a0 update` resolves the latest published GitHub release at runtime
+and installs it into the managed CPython 3.11 tool runtime used by the
+installer. For advanced cases you can override the package source with
+`A0_PACKAGE_SPEC` or the interpreter request with `A0_PYTHON_SPEC` before
+running `a0 update`.
 
 `a0 update` requires `uv` to be available on your `PATH`.
 

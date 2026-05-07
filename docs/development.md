@@ -91,7 +91,9 @@ The sibling `packages/a0-computer-use-*` manifests remain useful for isolated ba
 
 The standalone installers and `a0 update` default to a managed CPython 3.11
 runtime via `uv`, so end users do not need a preinstalled Python 3.10+ on the
-host to get a consistent tool environment.
+host to get a consistent tool environment. The updater resolves the latest
+published GitHub release at runtime instead of baking the current tag into the
+installed CLI.
 
 ### Backend source of truth
 

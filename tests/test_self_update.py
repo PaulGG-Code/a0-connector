@@ -27,6 +27,20 @@ class _FakeDistribution:
         return self._direct_url_text
 
 
+class _FakeReleaseResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> _FakeReleaseResponse:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        del args
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
+
+
 @contextmanager
 def _workspace_temp_dir() -> Path:
     base_dir = ROOT / ".tmp-tests"
@@ -44,8 +58,43 @@ def _load_updater_namespace() -> dict[str, object]:
     return namespace
 
 
-def test_resolve_package_spec_defaults_to_stable_release() -> None:
-    assert self_update.resolve_package_spec({}) == self_update.DEFAULT_PACKAGE_SPEC
+def test_resolve_package_spec_defaults_to_latest_release() -> None:
+    package_spec = self_update.resolve_package_spec(
+        {},
+        latest_release_resolver=lambda: "v9.8",
+    )
+
+    assert package_spec == (
+        "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v9.8.zip"
+    )
+
+
+def test_fetch_latest_release_tag_parses_github_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str, float]] = []
+
+    def fake_urlopen(request: object, *, timeout: float) -> _FakeReleaseResponse:
+        calls.append((request.full_url, timeout))  # type: ignore[attr-defined]
+        return _FakeReleaseResponse({"tag_name": "v9.8"})
+
+    monkeypatch.setattr(self_update, "urlopen", fake_urlopen)
+
+    assert self_update.fetch_latest_release_tag(timeout=3.5) == "v9.8"
+    assert calls == [(self_update.LATEST_RELEASE_API_URL, 3.5)]
+
+
+def test_fetch_latest_release_tag_rejects_missing_tag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        self_update,
+        "urlopen",
+        lambda request, *, timeout: _FakeReleaseResponse({"name": "release"}),
+    )
+
+    with pytest.raises(self_update.LatestReleaseError):
+        self_update.fetch_latest_release_tag()
 
 
 def test_resolve_python_spec_defaults_to_managed_python_release() -> None:
@@ -54,7 +103,18 @@ def test_resolve_python_spec_defaults_to_managed_python_release() -> None:
 
 def test_resolve_package_spec_honors_environment_override() -> None:
     env = {"A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip"}
-    assert self_update.resolve_package_spec(env) == env["A0_PACKAGE_SPEC"]
+    resolver_calls = 0
+
+    def resolver() -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "v9.8"
+
+    assert (
+        self_update.resolve_package_spec(env, latest_release_resolver=resolver)
+        == env["A0_PACKAGE_SPEC"]
+    )
+    assert resolver_calls == 0
 
 
 def test_resolve_python_spec_honors_environment_override() -> None:
@@ -97,6 +157,35 @@ def test_run_self_update_handoff_requires_uv(
         captured = capsys.readouterr()
         assert exit_code == 1
         assert "Install uv or rerun the existing installer." in captured.out
+        assert list(temp_dir.iterdir()) == []
+
+
+def test_run_self_update_handoff_reports_latest_release_resolution_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with _workspace_temp_dir() as temp_dir:
+        monkeypatch.setattr(self_update.shutil, "which", lambda name: "uv")
+        monkeypatch.setattr(
+            self_update,
+            "fetch_latest_release_tag",
+            lambda: (_ for _ in ()).throw(self_update.LatestReleaseError("offline")),
+        )
+
+        popen_calls: list[object] = []
+        monkeypatch.setattr(
+            self_update.subprocess,
+            "Popen",
+            lambda *args, **kwargs: popen_calls.append((args, kwargs)),
+        )
+
+        exit_code = self_update.run_self_update_handoff(temp_dir=temp_dir)
+
+        captured = capsys.readouterr()
+        assert exit_code == 1
+        assert "Failed to resolve the latest a0 release: offline" in captured.out
+        assert "Set A0_PACKAGE_SPEC" in captured.out
+        assert popen_calls == []
         assert list(temp_dir.iterdir()) == []
 
 
@@ -183,7 +272,8 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
     monkeypatch.setattr(namespace["shutil"], "which", lambda name: "uv")
     monkeypatch.setattr(namespace["subprocess"], "run", fake_run)
 
-    exit_code = namespace["main"](["123", self_update.DEFAULT_PACKAGE_SPEC, "3.11"])
+    package_spec = self_update.package_spec_for_release_tag("v9.8")
+    exit_code = namespace["main"](["123", package_spec, "3.11"])
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -198,7 +288,7 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
                 "3.11",
                 "--managed-python",
                 "--upgrade",
-                self_update.DEFAULT_PACKAGE_SPEC,
+                package_spec,
             ],
             False,
         )

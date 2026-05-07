@@ -10,13 +10,23 @@ import subprocess
 import sys
 import tempfile
 from textwrap import dedent
-from typing import Mapping
-from urllib.parse import urlparse
-from urllib.request import url2pathname
+from typing import Callable, Mapping
+from urllib.parse import quote, urlparse
+from urllib.request import Request, url2pathname, urlopen
 
 
-DEFAULT_PACKAGE_SPEC = "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v1.6.zip"
+PACKAGE_NAME = "a0"
+GITHUB_REPOSITORY = "agent0ai/a0-connector"
+LATEST_RELEASE_API_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/releases/latest"
+RELEASE_ARCHIVE_URL_TEMPLATE = (
+    f"https://github.com/{GITHUB_REPOSITORY}/archive/refs/tags/{{tag}}.zip"
+)
 DEFAULT_PYTHON_SPEC = "3.11"
+_GITHUB_API_TIMEOUT = 10.0
+
+
+class LatestReleaseError(RuntimeError):
+    """Raised when the updater cannot resolve the latest release tag."""
 
 
 @dataclass(frozen=True)
@@ -30,11 +40,48 @@ class InstallProvenance:
         return self.editable or self.local_path is not None
 
 
-def resolve_package_spec(env: Mapping[str, str] | None = None) -> str:
+def package_spec_for_release_tag(tag: str) -> str:
+    clean_tag = tag.strip()
+    if not clean_tag:
+        raise LatestReleaseError("latest release response did not include a tag name")
+    archive_url = RELEASE_ARCHIVE_URL_TEMPLATE.format(tag=quote(clean_tag, safe=""))
+    return f"{PACKAGE_NAME} @ {archive_url}"
+
+
+def fetch_latest_release_tag(
+    *,
+    api_url: str = LATEST_RELEASE_API_URL,
+    timeout: float = _GITHUB_API_TIMEOUT,
+) -> str:
+    request = Request(
+        api_url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "a0-cli-self-update",
+        },
+    )
+    try:
+        with urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise LatestReleaseError(f"could not fetch latest GitHub release: {exc}") from exc
+
+    tag = payload.get("tag_name") if isinstance(payload, dict) else None
+    if not isinstance(tag, str) or not tag.strip():
+        raise LatestReleaseError("latest GitHub release response did not include tag_name")
+    return tag.strip()
+
+
+def resolve_package_spec(
+    env: Mapping[str, str] | None = None,
+    *,
+    latest_release_resolver: Callable[[], str] | None = None,
+) -> str:
     source = os.environ if env is None else env
     if "A0_PACKAGE_SPEC" in source:
         return source["A0_PACKAGE_SPEC"]
-    return DEFAULT_PACKAGE_SPEC
+    resolver = latest_release_resolver or fetch_latest_release_tag
+    return package_spec_for_release_tag(resolver())
 
 
 def resolve_python_spec(env: Mapping[str, str] | None = None) -> str:
@@ -78,7 +125,6 @@ def run_self_update_handoff(
     env: Mapping[str, str] | None = None,
     temp_dir: str | os.PathLike[str] | None = None,
 ) -> int:
-    package_spec = resolve_package_spec(env)
     python_spec = resolve_python_spec(env)
     provenance = detect_install_provenance()
     if provenance.is_local_checkout:
@@ -87,6 +133,13 @@ def run_self_update_handoff(
     uv_executable = shutil.which("uv")
     if uv_executable is None:
         print("uv is required for `a0 update`. Install uv or rerun the existing installer.")
+        return 1
+
+    try:
+        package_spec = resolve_package_spec(env)
+    except LatestReleaseError as exc:
+        print(f"Failed to resolve the latest a0 release: {exc}")
+        print("Set A0_PACKAGE_SPEC to install from a specific package source.")
         return 1
 
     script_path = _write_updater_script(temp_dir=temp_dir)
