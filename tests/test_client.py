@@ -606,6 +606,21 @@ async def test_send_hello_includes_remote_file_and_exec_metadata() -> None:
     assert payload["remote_exec"] == remote_exec
 
 
+async def test_send_hello_includes_context_id_for_metadata_refresh() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.sio = FakeSocketIOClient(
+        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+    )
+
+    await client.send_hello(context_id=" ctx-1 ", remote_exec={"enabled": True})
+
+    event, payload, namespace = client.sio.call_calls[0]
+    assert event == "connector_hello"
+    assert namespace == "/ws"
+    assert payload["context_id"] == "ctx-1"
+    assert payload["remote_exec"] == {"enabled": True}
+
+
 async def test_pause_agent_normalizes_http_failure() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()

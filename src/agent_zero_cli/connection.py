@@ -287,6 +287,7 @@ async def begin_connection(
 
     try:
         await app.client.subscribe_context(context_id)
+        await app._refresh_remote_tool_metadata()
     except Exception as exc:
         await _silently_disconnect_websocket(app)
         app._sync_connection_status("disconnected", normalized_host)

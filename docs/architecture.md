@@ -70,13 +70,14 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 
 | Event | Purpose |
 |-------|---------|
-| `connector_hello` | Handshake: returns protocol version, features, and `exec_config` |
+| `connector_hello` | Handshake/metadata refresh: returns protocol version, features, `exec_config`, and remote-tool state |
 | `connector_subscribe_context` | Subscribe to a context event stream |
 | `connector_unsubscribe_context` | Unsubscribe from a context |
 | `connector_send_message` | Send user message asynchronously |
 | `connector_file_op_result` | Return result of a local file operation |
 | `connector_remote_tree_update` | Publish frontend workspace tree snapshots |
 | `connector_exec_op_result` | Return result of a shell-backed frontend execution operation |
+| `connector_computer_use_op_result` | Return result of a frontend computer-use operation |
 
 ### Server -> Client
 
@@ -89,6 +90,14 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 | `connector_error` | Application-level error for a context |
 | `connector_file_op` | Request a local file operation |
 | `connector_exec_op` | Request a shell-backed frontend execution operation |
+| `connector_computer_use_op` | Request a frontend computer-use operation |
+
+`connector_hello` is also the canonical permission metadata refresh. The CLI
+sends current `remote_files`, `remote_exec`, and `computer_use` metadata on
+connect and whenever F2/F3/F4 gated permissions change. When a chat is active,
+the payload includes `context_id`; the backend re-associates that SID with the
+context before the next prompt is built so gated stubs such as
+`code_execution_remote` are exposed for the correct chat.
 
 ## Event bridge
 

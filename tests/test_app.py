@@ -1348,12 +1348,14 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
 
     async def fake_send_hello(
         *,
+        context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
         calls.append(
             {
+                "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
@@ -1362,6 +1364,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
         return {"exec_config": {"version": 1}}
 
     dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-remote"
     dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
 
     await dummy_app.action_toggle_computer_use()
@@ -1369,6 +1372,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
 
     assert calls == [
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": True,
@@ -1385,6 +1389,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
             },
         },
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": False,
@@ -1458,12 +1463,14 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
 
     async def fake_send_hello(
         *,
+        context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
         calls.append(
             {
+                "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
@@ -1472,6 +1479,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
         return {"exec_config": {"version": 1}}
 
     dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-remote"
     dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
     dummy_app._computer_use.set_enabled(True)
 
@@ -1480,6 +1488,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
 
     assert calls == [
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": True,
@@ -1496,6 +1505,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
             },
         },
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": True,
@@ -1521,12 +1531,14 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
 
     async def fake_send_hello(
         *,
+        context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
         calls.append(
             {
+                "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
@@ -1535,6 +1547,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
         return {"exec_config": {"version": 1}}
 
     dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-remote"
     dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
 
     await dummy_app.action_toggle_remote_file_mode()
@@ -1542,6 +1555,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
 
     assert calls == [
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": False,
@@ -1558,6 +1572,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             },
         },
         {
+            "context_id": "ctx-remote",
             "computer_use": {
                 "supported": True,
                 "enabled": False,
@@ -1573,6 +1588,36 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
                 "enabled": True,
             },
         },
+    ]
+
+
+async def test_remote_exec_toggle_warns_when_metadata_refresh_fails(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+
+    async def fake_send_hello(**_: object) -> dict[str, object]:
+        raise RuntimeError("socket call failed")
+
+    dummy_app.client.connected = True
+    dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app.action_toggle_remote_exec()
+
+    assert dummy_app._remote_exec_enabled is True
+    assert dummy_app._python_tty.enabled is True
+    assert notices == [
+        (
+            "Remote execution changed locally, but Agent Zero did not acknowledge "
+            "the update: socket call failed",
+            True,
+        )
     ]
 
 

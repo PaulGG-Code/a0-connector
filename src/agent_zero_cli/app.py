@@ -184,6 +184,7 @@ class AgentZeroCLI(App):
         self._chat_intro_pending = True
         self._remote_file_write_enabled = False
         self._remote_exec_enabled = False
+        self._remote_tool_metadata_error = ""
         self._remote_files = RemoteFileUtility(
             scan_root=os.getcwd(),
             allow_writes=self._remote_file_write_enabled,
@@ -1087,18 +1088,24 @@ class AgentZeroCLI(App):
             "enabled": self._remote_exec_enabled,
         }
 
-    async def _refresh_remote_tool_metadata(self) -> None:
+    async def _refresh_remote_tool_metadata(self) -> bool:
         if not self.client.connected:
-            return
+            self._remote_tool_metadata_error = ""
+            return True
         try:
             hello = await self.client.send_hello(
+                context_id=self.current_context,
                 computer_use=self._computer_use_metadata(),
                 remote_files=self._remote_file_metadata(),
                 remote_exec=self._remote_exec_metadata(),
             )
-        except Exception:
-            return
-        self._python_tty.set_exec_config(hello.get("exec_config") if isinstance(hello, dict) else None)
+        except Exception as exc:
+            self._remote_tool_metadata_error = str(exc).strip() or exc.__class__.__name__
+            return False
+        self._remote_tool_metadata_error = ""
+        exec_config = hello.get("exec_config") if isinstance(hello, dict) else None
+        self._python_tty.set_exec_config(exec_config)
+        return True
 
     def _start_remote_tree_publisher(self) -> None:
         event_handlers.start_remote_tree_publisher(self)
@@ -1456,8 +1463,15 @@ class AgentZeroCLI(App):
 
     async def _set_computer_use_mode(self, mode: str) -> None:
         selected = self._computer_use.set_trust_mode(mode)
-        await self._refresh_remote_tool_metadata()
-        self._show_notice(f"Computer use set to {_computer_use_mode_label(selected)}.")
+        synced = await self._refresh_remote_tool_metadata()
+        if synced:
+            self._show_notice(f"Computer use set to {_computer_use_mode_label(selected)}.")
+        else:
+            self._show_notice(
+                "Computer use changed locally, but Agent Zero did not acknowledge "
+                f"the update: {self._remote_tool_metadata_error}",
+                error=True,
+            )
         self._sync_computer_use_status()
 
     async def _disconnect_and_exit(self) -> None:
@@ -1474,25 +1488,46 @@ class AgentZeroCLI(App):
         self._computer_use.set_enabled(enabled)
         if not enabled:
             await self._computer_use.disconnect()
-        await self._refresh_remote_tool_metadata()
+        synced = await self._refresh_remote_tool_metadata()
         state = "enabled" if self._computer_use.enabled else "disabled"
-        self._show_notice(
-            f"Computer use {state} for this CLI session "
-            f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
-        )
+        if synced:
+            self._show_notice(
+                f"Computer use {state} for this CLI session "
+                f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
+            )
+        else:
+            self._show_notice(
+                "Computer use changed locally, but Agent Zero did not acknowledge "
+                f"the update: {self._remote_tool_metadata_error}",
+                error=True,
+            )
         self._sync_computer_use_status()
 
     async def action_toggle_remote_file_mode(self) -> None:
         self._set_remote_file_write_enabled(not self._remote_file_write_enabled)
-        await self._refresh_remote_tool_metadata()
+        synced = await self._refresh_remote_tool_metadata()
         mode = "Read&Write" if self._remote_file_write_enabled else "Read only"
-        self._show_notice(f"Local access: {mode}.")
+        if synced:
+            self._show_notice(f"Local access: {mode}.")
+        else:
+            self._show_notice(
+                "Local access changed locally, but Agent Zero did not acknowledge "
+                f"the update: {self._remote_tool_metadata_error}",
+                error=True,
+            )
 
     async def action_toggle_remote_exec(self) -> None:
         self._set_remote_exec_enabled(not self._remote_exec_enabled)
-        await self._refresh_remote_tool_metadata()
+        synced = await self._refresh_remote_tool_metadata()
         mode = "enabled" if self._remote_exec_enabled else "disabled"
-        self._show_notice(f"Remote execution {mode} for this CLI session.")
+        if synced:
+            self._show_notice(f"Remote execution {mode} for this CLI session.")
+        else:
+            self._show_notice(
+                "Remote execution changed locally, but Agent Zero did not acknowledge "
+                f"the update: {self._remote_tool_metadata_error}",
+                error=True,
+            )
 
     async def action_list_chats(self) -> None:
         self.run_worker(self._cmd_chats(), exclusive=True, name="cmd-chats")

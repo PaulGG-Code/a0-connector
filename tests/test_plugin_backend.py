@@ -671,6 +671,51 @@ def test_ws_connector_stores_remote_tool_metadata_from_hello() -> None:
     }
 
 
+def test_ws_connector_hello_with_context_id_associates_remote_tool_metadata() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+
+    agent_mod = types.ModuleType("agent")
+
+    class FakeAgentContext:
+        @staticmethod
+        def get(context_id: str) -> object | None:
+            return object() if context_id == "ctx-remote" else None
+
+    agent_mod.AgentContext = FakeAgentContext
+    sys.modules["agent"] = agent_mod
+
+    ws_runtime_mod.register_sid("sid-cli")
+    payload = asyncio.run(
+        ws_connector_mod.WsConnector(None, None).process(
+            "connector_hello",
+            {
+                "context_id": "ctx-remote",
+                "remote_files": {
+                    "enabled": True,
+                    "write_enabled": True,
+                    "mode": "read_write",
+                },
+                "remote_exec": {
+                    "enabled": True,
+                },
+            },
+            "sid-cli",
+        )
+    )
+
+    assert ws_runtime_mod.subscribed_sids_for_context("ctx-remote") == {"sid-cli"}
+    assert payload["remote_tools"] == {
+        "contexts": ["ctx-remote"],
+        "computer_use": False,
+        "remote_files": True,
+        "remote_file_writes": True,
+        "remote_exec": True,
+    }
+
+
 def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None:
     _install_fake_helpers()
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
@@ -743,21 +788,7 @@ def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None
     assert "pyproject.toml" in remote_tree_prompt
 
 
-def test_computer_use_remote_guidance_is_injected_as_extras_when_enabled_cli_is_available() -> None:
-    _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
+def _install_fake_extension_helper() -> None:
     extension_mod = types.ModuleType("helpers.extension")
 
     class Extension:
@@ -769,26 +800,39 @@ def test_computer_use_remote_guidance_is_injected_as_extras_when_enabled_cli_is_
     sys.modules["helpers.extension"] = extension_mod
     sys.modules["helpers"].extension = extension_mod
 
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_77_include_computer_use_remote"
+
+def _load_remote_tool_stubs_extension():
+    _install_fake_extension_helper()
+    return _reload(
+        "plugins._a0_connector.extensions.python._functions.extensions.python."
+        "system_prompt._11_tools_prompt.build_prompt.end._70_include_remote_tool_stubs"
     )
 
-    sid = "sid-computer-use"
-    context_id = "ctx-computer-use"
+
+def test_remote_tool_stubs_are_injected_when_enabled_cli_capabilities_are_available() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    include_mod = _load_remote_tool_stubs_extension()
+
+    sid = "sid-all-remote-tools"
+    context_id = "ctx-all-remote-tools"
     ws_runtime_mod.register_sid(sid)
     ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
+    ws_runtime_mod.store_sid_remote_file_metadata(
+        sid,
+        {"enabled": True, "write_enabled": True, "mode": "read_write"},
+    )
+    ws_runtime_mod.store_sid_remote_exec_metadata(sid, {"enabled": True})
     ws_runtime_mod.store_sid_computer_use_metadata(
         sid,
         {
             "supported": True,
             "enabled": True,
             "trust_mode": "persistent",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             "backend_id": "wayland",
             "backend_family": "linux",
             "features": ["inline-png-capture", "pointer-injection"],
-            "support_reason": "Wayland portal backend is available.",
         },
     )
 
@@ -799,73 +843,90 @@ def test_computer_use_remote_guidance_is_injected_as_extras_when_enabled_cli_is_
         context = FakeContext()
 
         def read_prompt(self, file: str, **kwargs) -> str:
-            assert file == "agent.extras.computer_use_remote.md"
-            return (
-                "COMPUTER_USE_EXTRAS\n"
-                f"{kwargs['backend']}\n"
-                f"{kwargs['trust_mode']}\n"
-                f"{kwargs['features']}\n"
-                f"{kwargs['support_reason']}"
-            )
+            if file == "agent.connector_tool.text_editor_remote.md":
+                return f"TEXT_EDITOR_STUB {kwargs['access_mode']} {kwargs['write_guidance']}"
+            if file == "agent.connector_tool.code_execution_remote.md":
+                return (
+                    f"CODE_EXEC_STUB {kwargs['access_mode']} "
+                    f"{kwargs['write_runtime_note']}"
+                )
+            if file == "agent.connector_tool.computer_use_remote.md":
+                return (
+                    f"COMPUTER_USE_STUB {kwargs['backend']} "
+                    f"{kwargs['trust_mode']} {kwargs['features']}"
+                )
+            raise AssertionError(f"unexpected prompt {file!r}")
 
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
+    data = {"result": "## available tools\nbase_tool"}
+    include_mod.IncludeRemoteToolStubs(agent=FakeAgent()).execute(data=data)
 
-    asyncio.run(
-        include_mod.IncludeComputerUseRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    assert set(loop_data.extras_temporary) == {"computer_use_remote"}
-    prompt = loop_data.extras_temporary["computer_use_remote"]
-    assert "COMPUTER_USE_EXTRAS" in prompt
-    assert "wayland/linux" in prompt
-    assert "persistent" in prompt
-    assert "inline-png-capture, pointer-injection" in prompt
+    prompt = data["result"]
+    assert "base_tool" in prompt
+    assert "TEXT_EDITOR_STUB Read&Write Writes and patches are currently available." in prompt
+    assert "CODE_EXEC_STUB Read&Write Mutating runtimes are currently available" in prompt
+    assert "COMPUTER_USE_STUB wayland/linux persistent inline-png-capture, pointer-injection" in prompt
 
 
-def test_computer_use_remote_guidance_is_not_injected_without_enabled_cli() -> None:
+def test_remote_tool_stubs_reflect_read_only_file_access() -> None:
     _install_fake_helpers()
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
+    include_mod = _load_remote_tool_stubs_extension()
 
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_77_include_computer_use_remote"
-    )
-
-    sid = "sid-disabled"
-    context_id = "ctx-computer-use"
+    sid = "sid-read-only"
+    context_id = "ctx-read-only"
     ws_runtime_mod.register_sid(sid)
     ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
+    ws_runtime_mod.store_sid_remote_file_metadata(
+        sid,
+        {"enabled": True, "write_enabled": False, "mode": "read_only"},
+    )
+    ws_runtime_mod.store_sid_remote_exec_metadata(sid, {"enabled": True})
+
+    class FakeContext:
+        id = context_id
+
+    class FakeAgent:
+        context = FakeContext()
+
+        def read_prompt(self, file: str, **kwargs) -> str:
+            if file == "agent.connector_tool.text_editor_remote.md":
+                return f"TEXT_EDITOR_STUB {kwargs['access_mode']} {kwargs['write_guidance']}"
+            if file == "agent.connector_tool.code_execution_remote.md":
+                return (
+                    f"CODE_EXEC_STUB {kwargs['access_mode']} "
+                    f"{kwargs['write_runtime_note']}"
+                )
+            raise AssertionError(f"unexpected prompt {file!r}")
+
+    data = {"result": "## available tools\nbase_tool"}
+    include_mod.IncludeRemoteToolStubs(agent=FakeAgent()).execute(data=data)
+
+    prompt = data["result"]
+    assert "TEXT_EDITOR_STUB Read only" in prompt
+    assert "Writes and patches are disabled until the user switches the CLI" in prompt
+    assert "CODE_EXEC_STUB Read only" in prompt
+    assert "Mutating runtimes are disabled until the user switches the CLI" in prompt
+
+
+def test_remote_tool_stubs_are_not_injected_without_enabled_cli_capabilities() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    include_mod = _load_remote_tool_stubs_extension()
+
+    sid = "sid-disabled"
+    context_id = "ctx-disabled"
+    ws_runtime_mod.register_sid(sid)
+    ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
+    ws_runtime_mod.store_sid_remote_file_metadata(sid, {"enabled": False})
+    ws_runtime_mod.store_sid_remote_exec_metadata(sid, {"enabled": False})
     ws_runtime_mod.store_sid_computer_use_metadata(
         sid,
         {
             "supported": True,
             "enabled": False,
             "trust_mode": "persistent",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
 
@@ -878,360 +939,10 @@ def test_computer_use_remote_guidance_is_not_injected_without_enabled_cli() -> N
         def read_prompt(self, file: str, **kwargs) -> str:
             raise AssertionError(f"read_prompt should not be called, got {file!r}")
 
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
+    data = {"result": "## available tools\nbase_tool"}
+    include_mod.IncludeRemoteToolStubs(agent=FakeAgent()).execute(data=data)
 
-    asyncio.run(
-        include_mod.IncludeComputerUseRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    assert loop_data.extras_temporary == {}
-
-
-def test_code_execution_remote_guidance_is_injected_as_extras_when_cli_is_available() -> None:
-    _install_fake_helpers(
-        code_execution_config={
-            "code_exec_first_output_timeout": 12,
-            "code_exec_between_output_timeout": 7,
-            "code_exec_max_exec_timeout": 99,
-            "code_exec_dialog_timeout": 3,
-            "output_first_output_timeout": 33,
-            "output_between_output_timeout": 21,
-            "output_max_exec_timeout": 120,
-            "output_dialog_timeout": 4,
-            "prompt_patterns": ["PS .+> ?$"],
-            "dialog_patterns": ["yes/no"],
-        }
-    )
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_78_include_code_execution_remote"
-    )
-
-    sid = "sid-exec"
-    context_id = "ctx-exec"
-    ws_runtime_mod.register_sid(sid)
-    ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
-    ws_runtime_mod.store_sid_remote_file_metadata(
-        sid,
-        {
-            "enabled": True,
-            "write_enabled": True,
-            "mode": "read_write",
-        },
-    )
-    ws_runtime_mod.store_sid_remote_exec_metadata(sid, {"enabled": True})
-
-    class FakeContext:
-        id = context_id
-
-    class FakeAgent:
-        context = FakeContext()
-
-        def read_prompt(self, file: str, **kwargs) -> str:
-            assert file == "agent.extras.code_execution_remote.md"
-            return (
-                "CODE_EXEC_REMOTE_EXTRAS\n"
-                f"{kwargs['access_mode']}\n"
-                f"{kwargs['write_runtime_guidance']}\n"
-                f"{kwargs['write_runtime_examples']}\n"
-                f"{kwargs['code_exec_timeouts']}\n"
-                f"{kwargs['output_timeouts']}\n"
-                f"{kwargs['prompt_patterns']}\n"
-                f"{kwargs['dialog_patterns']}"
-            )
-
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
-
-    asyncio.run(
-        include_mod.IncludeCodeExecutionRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    assert set(loop_data.extras_temporary) == {"code_execution_remote"}
-    prompt = loop_data.extras_temporary["code_execution_remote"]
-    assert "CODE_EXEC_REMOTE_EXTRAS" in prompt
-    assert "Read&Write" in prompt
-    assert '"runtime": "terminal"' in prompt
-    assert '"code": "pwd"' in prompt
-    assert "first_output_timeout=12" in prompt
-    assert "max_exec_timeout=120" in prompt
-    assert "PS .+> ?$" in prompt
-    assert "yes/no" in prompt
-
-
-def test_code_execution_remote_guidance_reflects_read_only_mode() -> None:
-    _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_78_include_code_execution_remote"
-    )
-
-    sid = "sid-exec"
-    context_id = "ctx-exec"
-    ws_runtime_mod.register_sid(sid)
-    ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
-    ws_runtime_mod.store_sid_remote_file_metadata(
-        sid,
-        {
-            "enabled": True,
-            "write_enabled": False,
-            "mode": "read_only",
-        },
-    )
-    ws_runtime_mod.store_sid_remote_exec_metadata(sid, {"enabled": True})
-
-    class FakeContext:
-        id = context_id
-
-    class FakeAgent:
-        context = FakeContext()
-
-        def read_prompt(self, file: str, **kwargs) -> str:
-            assert file == "agent.extras.code_execution_remote.md"
-            return (
-                "CODE_EXEC_REMOTE_EXTRAS\n"
-                f"{kwargs['access_mode']}\n"
-                f"{kwargs['write_runtime_guidance']}\n"
-                f"{kwargs['write_runtime_examples']}"
-            )
-
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
-
-    asyncio.run(
-        include_mod.IncludeCodeExecutionRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    prompt = loop_data.extras_temporary["code_execution_remote"]
-    assert "Read only" in prompt
-    assert "Press F3" in prompt
-    assert '"runtime": "terminal"' not in prompt
-
-
-def test_code_execution_remote_guidance_is_not_injected_without_cli() -> None:
-    _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_78_include_code_execution_remote"
-    )
-
-    class FakeContext:
-        id = "ctx-exec"
-
-    class FakeAgent:
-        context = FakeContext()
-
-        def read_prompt(self, file: str, **kwargs) -> str:
-            raise AssertionError(f"read_prompt should not be called, got {file!r}")
-
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
-
-    asyncio.run(
-        include_mod.IncludeCodeExecutionRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    assert loop_data.extras_temporary == {}
-
-
-def test_text_editor_remote_guidance_is_injected_as_extras_when_cli_is_available() -> None:
-    _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_79_include_text_editor_remote"
-    )
-
-    sid = "sid-editor"
-    context_id = "ctx-editor"
-    ws_runtime_mod.register_sid(sid)
-    ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
-    ws_runtime_mod.store_sid_remote_file_metadata(
-        sid,
-        {
-            "enabled": True,
-            "write_enabled": False,
-            "mode": "read_only",
-        },
-    )
-
-    class FakeContext:
-        id = context_id
-
-    class FakeAgent:
-        context = FakeContext()
-
-        def read_prompt(self, file: str, **kwargs) -> str:
-            assert file == "agent.extras.text_editor_remote.md"
-            return (
-                "TEXT_EDITOR_REMOTE_EXTRAS\n"
-                f"{kwargs['access_mode']}\n"
-                f"{kwargs['write_guidance']}\n"
-                f"{kwargs['write_examples']}"
-            )
-
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
-
-    asyncio.run(
-        include_mod.IncludeTextEditorRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    prompt = loop_data.extras_temporary["text_editor_remote"]
-    assert "TEXT_EDITOR_REMOTE_EXTRAS" in prompt
-    assert "Read only" in prompt
-    assert "Press F3" in prompt
-
-
-def test_text_editor_remote_guidance_is_not_injected_without_cli() -> None:
-    _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
-    _reset_ws_runtime_state(ws_runtime_mod)
-
-    class FakeLoopData:
-        def __init__(self) -> None:
-            self.system = []
-            self.extras_temporary = {}
-            self.extras_persistent = {}
-
-    agent_mod = types.ModuleType("agent")
-    agent_mod.LoopData = FakeLoopData
-    sys.modules["agent"] = agent_mod
-
-    extension_mod = types.ModuleType("helpers.extension")
-
-    class Extension:
-        def __init__(self, agent=None, **kwargs) -> None:
-            self.agent = agent
-            self.kwargs = kwargs
-
-    extension_mod.Extension = Extension
-    sys.modules["helpers.extension"] = extension_mod
-    sys.modules["helpers"].extension = extension_mod
-
-    include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
-        "_79_include_text_editor_remote"
-    )
-
-    class FakeContext:
-        id = "ctx-editor"
-
-    class FakeAgent:
-        context = FakeContext()
-
-        def read_prompt(self, file: str, **kwargs) -> str:
-            raise AssertionError(f"read_prompt should not be called, got {file!r}")
-
-    loop_data = FakeLoopData()
-    loop_data.system.append("static system prompt")
-
-    asyncio.run(
-        include_mod.IncludeTextEditorRemote(agent=FakeAgent()).execute(loop_data=loop_data)
-    )
-
-    assert loop_data.system == ["static system prompt"]
-    assert loop_data.extras_temporary == {}
+    assert data["result"] == "## available tools\nbase_tool"
 
 
 def test_select_remote_exec_target_sid_ignores_disabled_clients() -> None:

@@ -589,6 +589,7 @@ class A0Client:
     async def send_hello(
         self,
         *,
+        context_id: str | None = None,
         computer_use: dict[str, Any] | None = None,
         remote_files: dict[str, Any] | None = None,
         remote_exec: dict[str, Any] | None = None,
@@ -598,6 +599,8 @@ class A0Client:
             "client": "a0",
             "client_version": __version__,
         }
+        if isinstance(context_id, str) and context_id.strip():
+            payload["context_id"] = context_id.strip()
         if isinstance(computer_use, dict):
             payload["computer_use"] = dict(computer_use)
         if isinstance(remote_files, dict):
