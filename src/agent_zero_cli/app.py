@@ -111,14 +111,6 @@ class AgentZeroCLI(App):
     BINDINGS = [
         Binding("Ctrl+C", "Quit", "Exit", show=True),
         Binding(
-            "f2",
-            "toggle_computer_use",
-            "Comp-use OFF",
-            show=False,
-            priority=True,
-            key_display="F2",
-        ),
-        Binding(
             "f3",
             "toggle_remote_file_mode",
             "Read&Write",
@@ -297,6 +289,24 @@ class AgentZeroCLI(App):
                 ),
             )
         yield SystemCommand(
+            "Computer Use: On",
+            "Allow Agent Zero to request local computer-use access through this CLI session.",
+            lambda: self.run_worker(
+                self._set_computer_use_enabled(True),
+                exclusive=True,
+                name="palette-computer-use-on",
+            ),
+        )
+        yield SystemCommand(
+            "Computer Use: Off",
+            "Stop advertising local computer-use access from this CLI session.",
+            lambda: self.run_worker(
+                self._set_computer_use_enabled(False),
+                exclusive=True,
+                name="palette-computer-use-off",
+            ),
+        )
+        yield SystemCommand(
             "Computer Use: Confirm with User",
             "Ask before local computer-use access and remember the approval for future Free Run.",
             lambda: self.run_worker(
@@ -411,6 +421,13 @@ class AgentZeroCLI(App):
                 "Choose Browser host/container mode and manage host-browser control.",
                 lambda app: browser_commands.browser_availability(app),
                 lambda app: browser_commands.cmd_browser(app),
+            ),
+            CommandSpec(
+                "/computer-use",
+                ("/computer", "/cu"),
+                "Turn Computer Use on/off, or choose Confirm with User/Free Run mode.",
+                lambda app: CommandAvailability(True),
+                lambda app: app._cmd_computer_use(),
             ),
             CommandSpec(
                 "/keys",
@@ -879,8 +896,6 @@ class AgentZeroCLI(App):
         splash_helpers.show_notice(self, message, error=error)
 
     def get_binding_description(self, binding: Binding) -> str:
-        if binding.action == "toggle_computer_use":
-            return "Comp-use ON" if self._computer_use.enabled else "Comp-use OFF"
         if binding.action == "toggle_remote_file_mode":
             return "Read&Write" if self._remote_file_write_enabled else "Read-only"
         if binding.action == "toggle_remote_exec":
@@ -1192,6 +1207,12 @@ class AgentZeroCLI(App):
         if token == "/browser":
             _, _, query = text.partition(" ")
             await browser_commands.cmd_browser(self, query=query.strip())
+            self._sync_ready_actions()
+            return
+
+        if token in {"/computer-use", "/computer", "/cu"}:
+            _, _, query = text.partition(" ")
+            await self._cmd_computer_use(query=query.strip())
             self._sync_ready_actions()
             return
 
@@ -1516,19 +1537,10 @@ class AgentZeroCLI(App):
             )
         self._sync_computer_use_status()
 
-    async def _disconnect_and_exit(self) -> None:
-        await connection.disconnect_and_exit(self)
-
-    async def _disconnect_to_login(self) -> None:
-        await connection.disconnect_to_login(self)
-
-    async def action_clear_chat(self) -> None:
-        await self._cmd_clear()
-
-    async def action_toggle_computer_use(self) -> None:
-        enabled = not self._computer_use.enabled
+    async def _set_computer_use_enabled(self, enabled: bool) -> None:
+        was_enabled = self._computer_use.enabled
         self._computer_use.set_enabled(enabled)
-        if not enabled:
+        if not enabled and was_enabled:
             await self._computer_use.disconnect()
         synced = await self._refresh_remote_tool_metadata()
         state = "enabled" if self._computer_use.enabled else "disabled"
@@ -1544,6 +1556,45 @@ class AgentZeroCLI(App):
                 error=True,
             )
         self._sync_computer_use_status()
+
+    async def _cmd_computer_use(self, *, query: str = "") -> None:
+        tokens = query.split()
+        action = "-".join(token.strip().lower().replace("_", "-") for token in tokens) if tokens else "status"
+        if action in {"status", "state", ""}:
+            state = "enabled" if self._computer_use.enabled else "disabled"
+            self._show_notice(
+                "Computer use is "
+                f"{state} for this CLI session "
+                f"({_computer_use_mode_label(self._computer_use.trust_mode)}). "
+                "Use /computer-use on|off|confirm|free-run."
+            )
+            return
+        if action in {"on", "enable", "enabled", "true", "yes", "1"}:
+            await self._set_computer_use_enabled(True)
+            return
+        if action in {"off", "disable", "disabled", "false", "no", "0"}:
+            await self._set_computer_use_enabled(False)
+            return
+        if action in {"confirm", "confirm-with-user", "persistent", "interactive"}:
+            await self._set_computer_use_mode("persistent")
+            return
+        if action in {"free", "free-run", "freerun"}:
+            await self._set_computer_use_mode("free_run")
+            return
+
+        self._show_notice(
+            "Usage: /computer-use on|off|confirm|free-run|status",
+            error=True,
+        )
+
+    async def _disconnect_and_exit(self) -> None:
+        await connection.disconnect_and_exit(self)
+
+    async def _disconnect_to_login(self) -> None:
+        await connection.disconnect_to_login(self)
+
+    async def action_clear_chat(self) -> None:
+        await self._cmd_clear()
 
     async def action_toggle_remote_file_mode(self) -> None:
         self._set_remote_file_write_enabled(not self._remote_file_write_enabled)

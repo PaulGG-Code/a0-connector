@@ -422,9 +422,8 @@ def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
 def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
 
-    assert bindings["toggle_computer_use"].key == "f2"
-    assert bindings["toggle_computer_use"].key_display == "F2"
-    assert bindings["toggle_computer_use"].show is False
+    assert "toggle_computer_use" not in bindings
+    assert all(binding.key != "f2" for binding in AgentZeroCLI.BINDINGS)
     assert bindings["toggle_remote_file_mode"].key == "f3"
     assert bindings["toggle_remote_file_mode"].key_display == "F3"
     assert bindings["toggle_remote_exec"].key == "f4"
@@ -443,23 +442,28 @@ def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
 
 def test_raw_slash_command_detection_requires_arguments() -> None:
     assert is_raw_slash_command("/browser status")
+    assert is_raw_slash_command("/computer-use on")
     assert is_raw_slash_command("  /project Main  ")
     assert not is_raw_slash_command("/")
     assert not is_raw_slash_command("/browser")
     assert not is_raw_slash_command("hello /browser status")
 
 
-def test_get_binding_description_reflects_computer_use_toggle_state(
+def test_get_binding_description_reflects_remote_safety_toggle_state(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
     bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
-    computer_use_binding = bindings["toggle_computer_use"]
+    file_binding = bindings["toggle_remote_file_mode"]
+    exec_binding = bindings["toggle_remote_exec"]
 
-    assert dummy_app.get_binding_description(computer_use_binding) == "Comp-use OFF"
+    assert dummy_app.get_binding_description(file_binding) == "Read-only"
+    assert dummy_app.get_binding_description(exec_binding) == "Code-exec OFF"
 
-    dummy_app._computer_use.set_enabled(True)
+    dummy_app._set_remote_file_write_enabled(True)
+    dummy_app._set_remote_exec_enabled(True)
 
-    assert dummy_app.get_binding_description(computer_use_binding) == "Comp-use ON"
+    assert dummy_app.get_binding_description(file_binding) == "Read&Write"
+    assert dummy_app.get_binding_description(exec_binding) == "Code-exec ON"
 
 
 def test_apply_instance_discovery_result_autoconnects_single_instance(
@@ -1390,7 +1394,7 @@ async def test_remote_safety_toggles_update_local_permissions(
     assert dummy_app._python_tty.allow_writes is True
 
 
-async def test_action_toggle_computer_use_updates_notice_and_status(
+async def test_computer_use_slash_commands_update_notice_and_status(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1399,7 +1403,7 @@ async def test_action_toggle_computer_use_updates_notice_and_status(
     notices: list[tuple[str, bool]] = []
     monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
 
-    await dummy_app.action_toggle_computer_use()
+    await dummy_app._dispatch_command("/computer-use on")
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
@@ -1409,7 +1413,7 @@ async def test_action_toggle_computer_use_updates_notice_and_status(
     assert "can control your computer in this session" in banner.message
     assert notices == [("Computer use enabled for this CLI session (Confirm with User).", False)]
 
-    await dummy_app.action_toggle_computer_use()
+    await dummy_app._dispatch_command("/computer-use off")
 
     assert dummy_app._computer_use.enabled is False
     assert dummy_app._computer_use.disconnect_calls == 1
@@ -1418,7 +1422,7 @@ async def test_action_toggle_computer_use_updates_notice_and_status(
     assert banner.message == ""
 
 
-async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connected(
+async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
     calls: list[dict[str, object]] = []
@@ -1446,8 +1450,8 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
     dummy_app.current_context = "ctx-remote"
     dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
 
-    await dummy_app.action_toggle_computer_use()
-    await dummy_app.action_toggle_computer_use()
+    await dummy_app._dispatch_command("/computer-use on")
+    await dummy_app._dispatch_command("/computer-use off")
 
     assert calls == [
         {
@@ -1587,6 +1591,8 @@ def test_system_commands_include_confirm_with_user_and_free_run(
     commands = list(dummy_app.get_system_commands(None))
     titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
 
+    assert "Computer Use: On" in titles
+    assert "Computer Use: Off" in titles
     assert "Computer Use: Confirm with User" in titles
     assert "Computer Use: Free Run" in titles
     assert "Browser: Use Host" in titles
@@ -1594,6 +1600,28 @@ def test_system_commands_include_confirm_with_user_and_free_run(
     assert "Computer Use: Interactive" not in titles
     assert "Computer Use: Persistent" not in titles
     assert "Computer Use: Free-Run" not in titles
+
+
+async def test_computer_use_slash_commands_set_trust_mode(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+    dummy_app._computer_use.set_enabled(True)
+
+    await dummy_app._dispatch_command("/computer-use free-run")
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+    assert dummy_app._computer_use.trust_mode == "free_run"
+    assert status.computer_use_status == "Free Run"
+
+    await dummy_app._dispatch_command("/computer confirm")
+    assert dummy_app._computer_use.trust_mode == "persistent"
+    assert status.computer_use_status == "Confirm with User"
+    assert notices == [
+        ("Computer use set to Free Run.", False),
+        ("Computer use set to Confirm with User.", False),
+    ]
 
 
 async def test_set_computer_use_mode_updates_status_for_free_run_and_confirm(

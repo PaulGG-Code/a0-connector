@@ -24,10 +24,22 @@ class OrderedSystemCommandsProvider(Provider):
         async for hit in self._search_browser_targets(query):
             yield hit
 
+        async for hit in self._search_computer_use_targets(query):
+            yield hit
+
         matcher = self.matcher(query)
         for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
             if (match := matcher.match(title)) > 0:
                 yield Hit(match, matcher.highlight(title), callback, help=help_text)
+
+    async def _search_computer_use_targets(self, query: str):
+        normalized = str(query or "").strip().lower()
+        if normalized not in {"/computer-use", "/computer", "/cu"}:
+            return
+
+        for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
+            if title.startswith("Computer Use: "):
+                yield Hit(1_000_000, title, callback, help=help_text)
 
     async def _search_browser_targets(self, query: str):
         normalized = str(query or "").strip().lower()
