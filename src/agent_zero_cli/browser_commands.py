@@ -9,6 +9,12 @@ if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
 
 
+_CONTENT_POLICY_NOTICE = (
+    "For GDPR/content policy, visit Agent Zero WebUI > Browser settings to choose "
+    "Local models only, Warn when using cloud, or Allow."
+)
+
+
 def browser_availability(app: "AgentZeroCLI") -> CommandAvailability:
     del app
     return CommandAvailability(True)
@@ -17,12 +23,18 @@ def browser_availability(app: "AgentZeroCLI") -> CommandAvailability:
 async def cmd_browser(app: "AgentZeroCLI", query: str = "") -> None:
     tokens = [token.strip() for token in str(query or "").split() if token.strip()]
     if not tokens or tokens[0].lower() in {"status", "state"}:
-        app._show_notice(app._host_browser.status_text())
+        await _cmd_browser_status(app)
         return
 
     command = tokens[0].lower()
     if command == "host":
+        if len(tokens) == 1:
+            await _cmd_browser_runtime(app, "host_required")
+            return
         await _cmd_browser_host(app, tokens[1:])
+        return
+    if command in {"container", "docker", "docker_container"}:
+        await _cmd_browser_runtime(app, "container")
         return
     if command == "profile":
         await _cmd_browser_profile(app, tokens[1:])
@@ -35,15 +47,71 @@ async def cmd_browser(app: "AgentZeroCLI", query: str = "") -> None:
             await _refresh_browser_metadata_notice(app, "Host browser repair completed.")
         return
     if command == "privacy":
-        app._show_notice(
-            "Host-browser privacy is controlled per project in Agent Zero Browser settings."
-        )
+        app._show_notice(_CONTENT_POLICY_NOTICE)
         return
 
     app._show_notice(
-        "Usage: /browser status | host on|off | profile [family] [profile] | relaunch | repair | privacy",
+        "Usage: /browser host | container | status | host on|off | "
+        "profile [family] [profile] | relaunch | repair | privacy",
         error=True,
     )
+
+
+async def _cmd_browser_status(app: "AgentZeroCLI") -> None:
+    lines = [app._host_browser.status_text()]
+    if _browser_runtime_config_available(app) and app.current_context:
+        try:
+            payload = await app.client.get_browser_runtime(app.current_context)
+        except Exception as exc:
+            lines.append(f"Browser mode unavailable: {exc}")
+        else:
+            if payload.get("ok"):
+                label = _browser_mode_label(payload.get("runtime_backend"))
+                lines.insert(0, f"Browser mode: {label}.")
+    lines.append("Use /browser host or /browser container to choose where Browser runs.")
+    app._show_notice("\n".join(lines))
+
+
+async def _cmd_browser_runtime(app: "AgentZeroCLI", runtime_backend: str) -> None:
+    if not _browser_runtime_config_available(app):
+        app._show_notice(
+            "This Agent Zero server does not support CLI Browser mode changes.",
+            error=True,
+        )
+        return
+    if not app.current_context:
+        app._show_notice("Open or create a chat context before changing Browser mode.", error=True)
+        return
+    if app.agent_active:
+        app._show_notice("Wait for the current run to finish before changing Browser mode.", error=True)
+        return
+
+    if runtime_backend == "host_required":
+        app._host_browser.set_enabled(True)
+        if _selected_profile_needs_playwright(app) and not await _ensure_playwright_dependency(app):
+            await _refresh_browser_metadata_notice(app, "Browser host mode is selected but unsupported.")
+            return
+        if not await app._refresh_remote_tool_metadata():
+            app._show_notice(
+                "Host browser changed locally, but Agent Zero did not acknowledge "
+                f"the update: {app._remote_tool_metadata_error}",
+                error=True,
+            )
+            return
+
+    try:
+        payload = await app.client.set_browser_runtime(app.current_context, runtime_backend)
+    except Exception as exc:
+        app._show_notice(f"Could not update Browser mode: {exc}", error=True)
+        return
+
+    if not payload.get("ok"):
+        app._show_notice(str(payload.get("error") or "Could not update Browser mode."), error=True)
+        return
+
+    label = _browser_mode_label(payload.get("runtime_backend"))
+    scope = _browser_scope_label(payload)
+    app._show_notice(f"Browser set to {label}{scope}. {_CONTENT_POLICY_NOTICE}")
 
 
 async def _cmd_browser_host(app: "AgentZeroCLI", args: list[str]) -> None:
@@ -172,3 +240,20 @@ async def _refresh_browser_metadata_notice(app: "AgentZeroCLI", message: str) ->
             f"{message} Agent Zero did not acknowledge the update: {app._remote_tool_metadata_error}",
             error=True,
         )
+
+
+def _browser_runtime_config_available(app: "AgentZeroCLI") -> bool:
+    return "browser_runtime_config" in getattr(app, "connector_features", set())
+
+
+def _browser_mode_label(value: object) -> str:
+    return (
+        "Bring Your Own Browser"
+        if str(value or "") == "host_required"
+        else "Docker browser"
+    )
+
+
+def _browser_scope_label(payload: dict) -> str:
+    project_name = str(payload.get("project_name") or "").strip()
+    return f" for project {project_name}" if project_name else ""

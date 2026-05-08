@@ -314,6 +314,24 @@ class AgentZeroCLI(App):
                 name="palette-computer-use-free-run",
             ),
         )
+        yield SystemCommand(
+            "Browser: Use Host",
+            "Run Browser through A0 CLI against your Chrome or Chromium-family browser.",
+            lambda: self.run_worker(
+                browser_commands.cmd_browser(self, query="host"),
+                exclusive=True,
+                name="palette-browser-host",
+            ),
+        )
+        yield SystemCommand(
+            "Browser: Docker Container",
+            "Run Browser inside the Agent Zero Docker/container browser.",
+            lambda: self.run_worker(
+                browser_commands.cmd_browser(self, query="container"),
+                exclusive=True,
+                name="palette-browser-container",
+            ),
+        )
 
     def _build_command_registry(self) -> tuple[CommandSpec, ...]:
         return (
@@ -390,7 +408,7 @@ class AgentZeroCLI(App):
             CommandSpec(
                 "/browser",
                 (),
-                "Manage host-browser control through the A0 CLI connector.",
+                "Choose Browser host/container mode and manage host-browser control.",
                 lambda app: browser_commands.browser_availability(app),
                 lambda app: browser_commands.cmd_browser(app),
             ),

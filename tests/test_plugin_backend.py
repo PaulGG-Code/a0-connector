@@ -456,8 +456,57 @@ def test_capabilities_advertise_current_ws_contract() -> None:
         "agent_profile_set",
         "agents_list",
         "model_switcher",
+        "browser_runtime_config",
         "compact_chat",
     } <= set(payload["features"])
+
+
+def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+    saved: list[tuple[str, str, str, dict[str, object]]] = []
+
+    plugins_mod.get_plugin_config = lambda plugin_name, **kwargs: {
+        "extension_paths": ["/tmp/ext"],
+        "default_homepage": "https://example.com",
+        "autofocus_active_page": False,
+        "runtime_backend": "container",
+        "host_browser_privacy_policy": "warn",
+        "model_preset": "Research",
+    }
+    plugins_mod.save_plugin_config = (
+        lambda plugin_name, project_name, agent_profile, settings: saved.append(
+            (plugin_name, project_name, agent_profile, dict(settings))
+        )
+    )
+    _reload("plugins._a0_connector.api.v1.base")
+    browser_runtime_mod = _reload("plugins._a0_connector.api.v1.browser_runtime")
+
+    payload = asyncio.run(
+        browser_runtime_mod.BrowserRuntime(None, None).process(
+            {"action": "set", "runtime_backend": "host"},
+            object(),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["runtime_backend"] == "host_required"
+    assert "GDPR/content policy" in payload["privacy_notice"]
+    assert saved == [
+        (
+            "_browser",
+            "",
+            "",
+            {
+                "extension_paths": ["/tmp/ext"],
+                "default_homepage": "https://example.com",
+                "autofocus_active_page": False,
+                "runtime_backend": "host_required",
+                "host_browser_privacy_policy": "warn",
+                "model_preset": "Research",
+            },
+        )
+    ]
 
 
 def test_capabilities_reflect_core_login_requirement() -> None:

@@ -1541,6 +1541,46 @@ async def test_browser_repair_command_installs_missing_playwright(
     assert notices[-1][0].startswith("Host browser repair completed.")
 
 
+async def test_browser_runtime_commands_update_agent_zero_config(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, str]] = []
+    notices: list[tuple[str, bool]] = []
+
+    async def fake_set_browser_runtime(
+        context_id: str | None,
+        runtime_backend: str,
+    ) -> dict[str, object]:
+        calls.append((context_id, runtime_backend))
+        return {
+            "ok": True,
+            "runtime_backend": runtime_backend,
+            "project_name": "Research",
+        }
+
+    dummy_app.connector_features = {"browser_runtime_config"}
+    dummy_app.current_context = "ctx-browser"
+    dummy_app.client.set_browser_runtime = fake_set_browser_runtime  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app._dispatch_command("/browser host")
+    await dummy_app._dispatch_command("/browser container")
+
+    assert dummy_app._host_browser.enabled is True
+    assert calls == [
+        ("ctx-browser", "host_required"),
+        ("ctx-browser", "container"),
+    ]
+    assert "Browser set to Bring Your Own Browser for project Research." in notices[0][0]
+    assert "Browser set to Docker browser for project Research." in notices[1][0]
+    assert all("GDPR/content policy" in notice[0] for notice in notices)
+
+
 def test_system_commands_include_confirm_with_user_and_free_run(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
@@ -1549,6 +1589,8 @@ def test_system_commands_include_confirm_with_user_and_free_run(
 
     assert "Computer Use: Confirm with User" in titles
     assert "Computer Use: Free Run" in titles
+    assert "Browser: Use Host" in titles
+    assert "Browser: Docker Container" in titles
     assert "Computer Use: Interactive" not in titles
     assert "Computer Use: Persistent" not in titles
     assert "Computer Use: Free-Run" not in titles

@@ -720,6 +720,30 @@ class A0Client:
         response.raise_for_status()
         return self._json(response)
 
+    async def get_browser_runtime(self, context_id: str | None) -> dict[str, Any]:
+        response = await self._post(
+            "browser_runtime",
+            {"action": "get", "context_id": context_id or ""},
+        )
+        response.raise_for_status()
+        return self._json(response)
+
+    async def set_browser_runtime(
+        self,
+        context_id: str | None,
+        runtime_backend: str,
+    ) -> dict[str, Any]:
+        response = await self._post(
+            "browser_runtime",
+            {
+                "action": "set",
+                "context_id": context_id or "",
+                "runtime_backend": runtime_backend,
+            },
+        )
+        response.raise_for_status()
+        return self._json(response)
+
     async def activate_project(self, context_id: str, name: str) -> dict[str, Any]:
         response = await self._post(
             "projects",
