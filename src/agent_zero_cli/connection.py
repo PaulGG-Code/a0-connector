@@ -244,11 +244,13 @@ async def begin_connection(
     app.client.on_file_op = app._handle_file_op
     app.client.on_exec_op = app._handle_exec_op
     app.client.on_computer_use_op = app._handle_computer_use_op
+    app.client.on_browser_op = app._handle_browser_op
 
     try:
         await app.client.connect_websocket()
         hello = await app.client.send_hello(
             computer_use=app._computer_use_metadata(),
+            host_browser=app._host_browser_metadata(),
             remote_files=app._remote_file_metadata(),
             remote_exec=app._remote_exec_metadata(),
         )
@@ -361,6 +363,7 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._python_tty.set_exec_config(None)
     asyncio.create_task(app._python_tty.close())
     asyncio.create_task(app._computer_use.disconnect())
+    asyncio.create_task(app._host_browser.disconnect())
     app._sync_computer_use_status()
     app._clear_model_switcher()
     app._sync_body_mode()
@@ -434,6 +437,7 @@ async def disconnect_and_exit(app: AgentZeroCLI) -> None:
     app._stop_state_sync()
     await app._python_tty.close()
     await app._computer_use.disconnect()
+    await app._host_browser.disconnect()
     try:
         await app.client.disconnect()
     except Exception:

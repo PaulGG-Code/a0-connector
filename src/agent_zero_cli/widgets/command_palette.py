@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from textual import on
+from textual.app import ScreenStackError
 from textual.command import CommandPalette, DiscoveryHit, Hit, Provider
-from textual.widgets import Input
+from textual.widgets import Button, Input
 
 from agent_zero_cli import project_commands
 from agent_zero_cli.project_utils import display_project_title, normalize_project_list, project_name
@@ -62,12 +64,18 @@ class OrderedSystemCommandsProvider(Provider):
             )
 
 
+def is_raw_slash_command(value: str) -> bool:
+    raw = str(value or "").strip()
+    return raw.startswith("/") and bool(raw.split(maxsplit=1)[0].strip()) and " " in raw
+
+
 class AgentCommandPalette(CommandPalette):
     """Command palette with slash-first styling and optional seeded query."""
 
-    def __init__(self, *args, initial_query: str = "", **kwargs) -> None:
+    def __init__(self, *args, initial_query: str = "", from_slash: bool = False, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._initial_query = initial_query
+        self._from_slash = from_slash
 
     DEFAULT_CSS = CommandPalette.DEFAULT_CSS + """
     AgentCommandPalette > Vertical {
@@ -111,3 +119,41 @@ class AgentCommandPalette(CommandPalette):
         input_widget = self.query_one(Input)
         input_widget.value = self._initial_query
         input_widget.action_end()
+
+    @on(Input.Submitted)
+    @on(Button.Pressed)
+    def _select_or_command(self, event: Input.Submitted | Button.Pressed | None = None) -> None:
+        if event is not None:
+            event.stop()
+
+        input_widget = self.query_one(Input)
+        raw_command = input_widget.value.strip()
+        if self._from_slash and is_raw_slash_command(raw_command):
+            self._cancel_gather_commands()
+
+            token = raw_command.split(maxsplit=1)[0].strip().lower().lstrip("/") or "command"
+            worker_name = f"slash-{token.replace('/', '-')}"
+            self._close_and_call_later(
+                lambda: self.app.run_worker(
+                    self.app._dispatch_command(raw_command),
+                    exclusive=True,
+                    name=worker_name,
+                )
+            )
+            return
+
+        if event is None and self._selected_command is not None:
+            self._cancel_gather_commands()
+            self._close_and_call_later(self._selected_command.command)
+            return
+
+        super()._select_or_command(event)
+
+    def _close_and_call_later(self, callback) -> None:
+        self.app.post_message(CommandPalette.Closed(option_selected=True))
+        self.app.delay_update()
+        try:
+            self.dismiss()
+        except ScreenStackError:
+            pass
+        self.app.call_later(callback)

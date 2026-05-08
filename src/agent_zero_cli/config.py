@@ -9,8 +9,14 @@ _LAST_CONTEXT_HOST_KEY = "AGENT_ZERO_LAST_CONTEXT_HOST"
 _COMPUTER_USE_ENABLED_KEY = "AGENT_ZERO_COMPUTER_USE_ENABLED"
 _COMPUTER_USE_TRUST_MODE_KEY = "AGENT_ZERO_COMPUTER_USE_TRUST_MODE"
 _COMPUTER_USE_RESTORE_TOKEN_KEY = "AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN"
+_HOST_BROWSER_ENABLED_KEY = "AGENT_ZERO_HOST_BROWSER_ENABLED"
+_HOST_BROWSER_FAMILY_KEY = "AGENT_ZERO_HOST_BROWSER_FAMILY"
+_HOST_BROWSER_PROFILE_PATH_KEY = "AGENT_ZERO_HOST_BROWSER_PROFILE_PATH"
+_HOST_BROWSER_PROFILE_LABEL_KEY = "AGENT_ZERO_HOST_BROWSER_PROFILE_LABEL"
+_HOST_BROWSER_RELAUNCH_PREFERENCE_KEY = "AGENT_ZERO_HOST_BROWSER_RELAUNCH_PREFERENCE"
 _DEFAULT_COMPUTER_USE_TRUST_MODE = "persistent"
 _VALID_COMPUTER_USE_TRUST_MODES = {"persistent", "free_run"}
+_VALID_HOST_BROWSER_RELAUNCH_PREFERENCES = {"ask", "manual"}
 _COMPUTER_USE_TRUST_MODE_ALIASES = {
     "confirm": "persistent",
     "confirm with user": "persistent",
@@ -30,6 +36,11 @@ class CLIConfig:
     computer_use_enabled: bool = False
     computer_use_trust_mode: str = _DEFAULT_COMPUTER_USE_TRUST_MODE
     computer_use_restore_token: str = ""
+    host_browser_enabled: bool = False
+    host_browser_family: str = ""
+    host_browser_profile_path: str = ""
+    host_browser_profile_label: str = ""
+    host_browser_relaunch_preference: str = "ask"
 
 
 def _read_dotenv() -> dict[str, str]:
@@ -126,6 +137,50 @@ def save_computer_use_restore_token(token: str) -> None:
     delete_env(_COMPUTER_USE_RESTORE_TOKEN_KEY)
 
 
+def normalize_host_browser_relaunch_preference(value: object) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    if normalized in _VALID_HOST_BROWSER_RELAUNCH_PREFERENCES:
+        return normalized
+    return "ask"
+
+
+def save_host_browser_enabled(enabled: bool) -> None:
+    save_env(_HOST_BROWSER_ENABLED_KEY, "1" if enabled else "0")
+
+
+def save_host_browser_profile(
+    *,
+    family: str = "",
+    profile_path: str = "",
+    profile_label: str = "",
+) -> None:
+    family_value = str(family or "").strip().lower()
+    profile_path_value = str(profile_path or "").strip()
+    profile_label_value = str(profile_label or "").strip()
+
+    if family_value:
+        save_env(_HOST_BROWSER_FAMILY_KEY, family_value)
+    else:
+        delete_env(_HOST_BROWSER_FAMILY_KEY)
+
+    if profile_path_value:
+        save_env(_HOST_BROWSER_PROFILE_PATH_KEY, profile_path_value)
+    else:
+        delete_env(_HOST_BROWSER_PROFILE_PATH_KEY)
+
+    if profile_label_value:
+        save_env(_HOST_BROWSER_PROFILE_LABEL_KEY, profile_label_value)
+    else:
+        delete_env(_HOST_BROWSER_PROFILE_LABEL_KEY)
+
+
+def save_host_browser_relaunch_preference(preference: str) -> None:
+    save_env(
+        _HOST_BROWSER_RELAUNCH_PREFERENCE_KEY,
+        normalize_host_browser_relaunch_preference(preference),
+    )
+
+
 def save_last_context(host: str, context_id: str) -> None:
     """Persist the last active chat context for the current host."""
     normalized_host = host.strip().rstrip("/")
@@ -155,6 +210,28 @@ def load_config() -> CLIConfig:
         os.environ.get(_COMPUTER_USE_RESTORE_TOKEN_KEY)
         or dotenv.get(_COMPUTER_USE_RESTORE_TOKEN_KEY, "")
     ).strip()
+    host_browser_enabled = _parse_bool(
+        os.environ.get(_HOST_BROWSER_ENABLED_KEY, dotenv.get(_HOST_BROWSER_ENABLED_KEY, "0")),
+        default=False,
+    )
+    host_browser_family = (
+        os.environ.get(_HOST_BROWSER_FAMILY_KEY)
+        or dotenv.get(_HOST_BROWSER_FAMILY_KEY, "")
+    ).strip().lower()
+    host_browser_profile_path = (
+        os.environ.get(_HOST_BROWSER_PROFILE_PATH_KEY)
+        or dotenv.get(_HOST_BROWSER_PROFILE_PATH_KEY, "")
+    ).strip()
+    host_browser_profile_label = (
+        os.environ.get(_HOST_BROWSER_PROFILE_LABEL_KEY)
+        or dotenv.get(_HOST_BROWSER_PROFILE_LABEL_KEY, "")
+    ).strip()
+    host_browser_relaunch_preference = normalize_host_browser_relaunch_preference(
+        os.environ.get(
+            _HOST_BROWSER_RELAUNCH_PREFERENCE_KEY,
+            dotenv.get(_HOST_BROWSER_RELAUNCH_PREFERENCE_KEY, "ask"),
+        )
+    )
 
     return CLIConfig(
         instance_url=instance_url,
@@ -163,4 +240,9 @@ def load_config() -> CLIConfig:
         computer_use_enabled=computer_use_enabled,
         computer_use_trust_mode=computer_use_trust_mode,
         computer_use_restore_token=computer_use_restore_token,
+        host_browser_enabled=host_browser_enabled,
+        host_browser_family=host_browser_family,
+        host_browser_profile_path=host_browser_profile_path,
+        host_browser_profile_label=host_browser_profile_label,
+        host_browser_relaunch_preference=host_browser_relaunch_preference,
     )

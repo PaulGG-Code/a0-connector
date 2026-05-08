@@ -17,6 +17,7 @@ from agent_zero_cli.client import DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
 from agent_zero_cli.rendering import render_connector_event
+from agent_zero_cli.widgets.command_palette import is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import ChatInput, ConnectionStatus, ProfileMenuItem, ProjectMenuItem, SplashState
 
@@ -256,6 +257,65 @@ class FakeComputerUseManager:
         return {"op_id": data.get("op_id"), "ok": True, "result": {"status": "active"}}
 
 
+class FakeHostBrowserManager:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.disconnect_calls = 0
+        self.handled_ops: list[dict[str, object]] = []
+        self.playwright_available = True
+        self.install_calls = 0
+
+    def metadata(self) -> dict[str, object]:
+        return {
+            "supported": self.playwright_available,
+            "enabled": self.enabled,
+            "status": "ready" if self.enabled and self.playwright_available else "disabled",
+            "browser_family": "chrome",
+            "profile_label": "Default",
+            "features": ["open", "content"],
+            "support_reason": "" if self.playwright_available else "missing playwright",
+        }
+
+    def status_text(self) -> str:
+        if not self.playwright_available:
+            return "Host browser unsupported: missing playwright"
+        state = "ready" if self.enabled else "disabled"
+        return f"Host browser {state}: chrome profile Default (/tmp/profile)."
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def has_playwright_dependency(self) -> bool:
+        return self.playwright_available
+
+    def playwright_install_command(self) -> list[str]:
+        return ["/tmp/python", "-m", "pip", "install", "playwright"]
+
+    async def ensure_playwright_dependency(self) -> dict[str, object]:
+        self.install_calls += 1
+        self.playwright_available = True
+        return {"installed": True, "command": self.playwright_install_command(), "output": ""}
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+
+    async def handle_op(self, data: dict[str, object]) -> dict[str, object]:
+        self.handled_ops.append(dict(data))
+        return {"op_id": data.get("op_id"), "ok": True, "result": {"status": "ready"}}
+
+
+def _host_browser_metadata(enabled: bool = False) -> dict[str, object]:
+    return {
+        "supported": True,
+        "enabled": enabled,
+        "status": "ready" if enabled else "disabled",
+        "browser_family": "chrome",
+        "profile_label": "Default",
+        "features": ["open", "content"],
+        "support_reason": "",
+    }
+
+
 class DummyAgentZeroCLI(AgentZeroCLI):
     def __init__(self) -> None:
         super().__init__(config=CLIConfig(instance_url="http://example.test"))
@@ -288,6 +348,7 @@ class TranscriptSelectionApp(App[None]):
 def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
     app = DummyAgentZeroCLI()
     app._computer_use = FakeComputerUseManager()
+    app._host_browser = FakeHostBrowserManager()
     widgets = {
         "#chat-log": FakeChatLog(),
         "#message-input": FakeInput(),
@@ -370,6 +431,14 @@ def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     assert bindings["pause_agent"].key_display == "F8"
     assert bindings["command_palette"].key == "ctrl+p"
     assert bindings["command_palette"].key_display == "^P"
+
+
+def test_raw_slash_command_detection_requires_arguments() -> None:
+    assert is_raw_slash_command("/browser status")
+    assert is_raw_slash_command("  /project Main  ")
+    assert not is_raw_slash_command("/")
+    assert not is_raw_slash_command("/browser")
+    assert not is_raw_slash_command("hello /browser status")
 
 
 def test_get_binding_description_reflects_computer_use_toggle_state(
@@ -1350,6 +1419,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
         *,
         context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
@@ -1357,6 +1427,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
             {
                 "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
+                "host_browser": dict(host_browser or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
             }
@@ -1379,6 +1450,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
                 "trust_mode": "persistent",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": False,
@@ -1396,6 +1468,7 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
                 "trust_mode": "persistent",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": False,
@@ -1406,6 +1479,41 @@ async def test_action_toggle_computer_use_refreshes_hello_metadata_when_connecte
             },
         },
     ]
+
+
+async def test_browser_host_on_repairs_missing_playwright(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_browser = dummy_app._host_browser
+    host_browser.playwright_available = False
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+
+    await dummy_app._dispatch_command("/browser host on")
+
+    assert host_browser.enabled is True
+    assert host_browser.install_calls == 1
+    assert host_browser.playwright_available is True
+    assert "Installing now: /tmp/python -m pip install playwright" in notices[0][0]
+    assert "Python Playwright installed for host browser control" in notices[1][0]
+    assert notices[-1][0].startswith("Host browser enabled.")
+
+
+async def test_browser_repair_command_installs_missing_playwright(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_browser = dummy_app._host_browser
+    host_browser.playwright_available = False
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+
+    await dummy_app._dispatch_command("/browser repair")
+
+    assert host_browser.install_calls == 1
+    assert "Installing now: /tmp/python -m pip install playwright" in notices[0][0]
+    assert notices[-1][0].startswith("Host browser repair completed.")
 
 
 def test_system_commands_include_confirm_with_user_and_free_run(
@@ -1465,6 +1573,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
         *,
         context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
@@ -1472,6 +1581,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
             {
                 "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
+                "host_browser": dict(host_browser or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
             }
@@ -1495,6 +1605,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
                 "trust_mode": "free_run",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": False,
@@ -1512,6 +1623,7 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
                 "trust_mode": "persistent",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": False,
@@ -1533,6 +1645,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
         *,
         context_id: str | None = None,
         computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
         remote_files: dict[str, object] | None = None,
         remote_exec: dict[str, object] | None = None,
     ) -> dict[str, object]:
@@ -1540,6 +1653,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             {
                 "context_id": context_id,
                 "computer_use": dict(computer_use or {}),
+                "host_browser": dict(host_browser or {}),
                 "remote_files": dict(remote_files or {}),
                 "remote_exec": dict(remote_exec or {}),
             }
@@ -1562,6 +1676,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
                 "trust_mode": "persistent",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": True,
@@ -1579,6 +1694,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
                 "trust_mode": "persistent",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
+            "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
                 "write_enabled": True,

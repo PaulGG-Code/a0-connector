@@ -78,6 +78,7 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 | `connector_remote_tree_update` | Publish frontend workspace tree snapshots |
 | `connector_exec_op_result` | Return result of a shell-backed frontend execution operation |
 | `connector_computer_use_op_result` | Return result of a frontend computer-use operation |
+| `connector_browser_op_result` | Return result of a host-browser operation |
 
 ### Server -> Client
 
@@ -91,13 +92,84 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 | `connector_file_op` | Request a local file operation |
 | `connector_exec_op` | Request a shell-backed frontend execution operation |
 | `connector_computer_use_op` | Request a frontend computer-use operation |
+| `connector_browser_op` | Request a host-browser operation |
 
 `connector_hello` is also the canonical permission metadata refresh. The CLI
-sends current `remote_files`, `remote_exec`, and `computer_use` metadata on
-connect and whenever F2/F3/F4 gated permissions change. When a chat is active,
-the payload includes `context_id`; the backend re-associates that SID with the
-context before the next prompt is built so gated stubs such as
-`code_execution_remote` are exposed for the correct chat.
+sends current `remote_files`, `remote_exec`, `computer_use`, and `host_browser`
+metadata on connect and whenever gated permissions change. When a chat is
+active, the payload includes `context_id`; the backend re-associates that SID
+with the context before the next prompt is built so gated stubs such as
+`code_execution_remote` and host-backed Browser routing are exposed for the
+correct chat.
+
+## Host browser operations
+
+Host browser mode keeps the public agent API as Agent Zero's existing
+`browser` tool. The Browser plugin decides whether a call uses the container
+Playwright runtime or emits `connector_browser_op` to the subscribed CLI:
+
+```json
+{
+  "op_id": "uuid",
+  "context_id": "ctx-...",
+  "action": "open",
+  "url": "https://example.com"
+}
+```
+
+The CLI returns:
+
+```json
+{
+  "op_id": "uuid",
+  "ok": true,
+  "result": {
+    "id": 1,
+    "state": {
+      "id": 1,
+      "runtime": "host",
+      "currentUrl": "https://example.com/"
+    }
+  }
+}
+```
+
+Screenshots are transferred as artifact payloads rather than inline tool
+output. The CLI writes a host-side temp file, sends base64 bytes in
+`result.artifact`, and the Agent Zero Browser adapter materializes that artifact
+under Agent Zero `tmp/browser/host-screenshots/<context>/` before returning the
+same `vision_load` shape used by the container browser.
+
+`connector_hello.host_browser` advertises:
+- `supported`, `enabled`, and `status`
+- `browser_family`
+- `profile_label` and `profile_path`
+- `features`
+- `support_reason`
+
+The CLI detects installed Chrome-family browsers and profile roots per OS, but
+it never silently seizes a locked profile. If Chrome is already using the
+selected profile, operations fail with `HOST_BROWSER_RELAUNCH_REQUIRED` until
+the user explicitly closes that browser. When Browser settings request host
+mode, Agent Zero may send an idempotent `ensure` browser operation before the
+first user-facing browser action; the CLI then enables host browser control and
+launches the selected profile when it is not locked. `/browser host on` and
+`/browser relaunch` remain manual diagnostics rather than required happy-path
+steps.
+
+Chrome 136+ does not allow `--remote-debugging-port` or
+`--remote-debugging-pipe` against the default personal Chrome data directory.
+For those browsers, the CLI advertises an A0-controlled local profile such as
+`chrome-a0 Default` under the user's data directory. Cookies and site data stay
+inside that separate browser profile on the host; A0 does not copy them out.
+
+Host browser support requires Python Playwright in the A0 CLI host environment.
+The Playwright runtime under the Agent Zero Docker container, including
+`/a0/tmp/playwright`, powers the container browser backend and cannot control a
+host Chrome-family profile from inside Docker. If the host Python dependency is
+missing, `/browser host on`, `/browser relaunch`, and `/browser repair` surface
+the install command in the TUI and run `python -m pip install playwright` in the
+A0 CLI environment.
 
 ## Event bridge
 

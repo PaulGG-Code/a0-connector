@@ -35,6 +35,8 @@ _EVENT_EXEC_OP = "connector_exec_op"
 _EVENT_EXEC_OP_RESULT = "connector_exec_op_result"
 _EVENT_COMPUTER_USE_OP = "connector_computer_use_op"
 _EVENT_COMPUTER_USE_OP_RESULT = "connector_computer_use_op_result"
+_EVENT_BROWSER_OP = "connector_browser_op"
+_EVENT_BROWSER_OP_RESULT = "connector_browser_op_result"
 _EVENT_REMOTE_TREE_UPDATE = "connector_remote_tree_update"
 _EVENT_ERROR = "connector_error"
 
@@ -114,6 +116,7 @@ class A0Client:
         self.on_file_op: Callable[[dict[str, Any]], Any] | None = None
         self.on_exec_op: Callable[[dict[str, Any]], Any] | None = None
         self.on_computer_use_op: Callable[[dict[str, Any]], Any] | None = None
+        self.on_browser_op: Callable[[dict[str, Any]], Any] | None = None
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.base_url}{_PLUGIN_API}/{endpoint}"
@@ -428,6 +431,16 @@ class A0Client:
                 namespace=WS_NAMESPACE,
             )
 
+        @self.sio.on(_EVENT_BROWSER_OP, namespace=WS_NAMESPACE)
+        async def _on_browser_op(payload: dict[str, Any]) -> None:
+            request = self._unwrap_envelope(payload)
+            result = await self._handle_browser_op(request)
+            await self.sio.emit(
+                _EVENT_BROWSER_OP_RESULT,
+                result,
+                namespace=WS_NAMESPACE,
+            )
+
         self._events_registered = True
 
     async def _handle_file_op(self, data: dict[str, Any]) -> dict[str, Any]:
@@ -523,6 +536,39 @@ class A0Client:
             "code": "COMPUTER_USE_ERROR",
         }
 
+    async def _handle_browser_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        callback = self.on_browser_op
+        op_id = data.get("op_id")
+        if callback is None:
+            return {
+                "op_id": op_id,
+                "ok": False,
+                "error": "No browser_op handler configured",
+                "code": "HOST_BROWSER_ERROR",
+            }
+
+        try:
+            result = callback(data)
+            if asyncio.iscoroutine(result):
+                result = await result
+        except Exception as exc:
+            return {
+                "op_id": op_id,
+                "ok": False,
+                "error": str(exc),
+                "code": "HOST_BROWSER_ERROR",
+            }
+
+        if isinstance(result, dict):
+            return result
+
+        return {
+            "op_id": op_id,
+            "ok": False,
+            "error": "Invalid browser_op handler result",
+            "code": "HOST_BROWSER_ERROR",
+        }
+
     async def fetch_capabilities(self) -> dict[str, Any]:
         response = await self._post("capabilities")
         if response.status_code == 404:
@@ -591,6 +637,7 @@ class A0Client:
         *,
         context_id: str | None = None,
         computer_use: dict[str, Any] | None = None,
+        host_browser: dict[str, Any] | None = None,
         remote_files: dict[str, Any] | None = None,
         remote_exec: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -603,6 +650,8 @@ class A0Client:
             payload["context_id"] = context_id.strip()
         if isinstance(computer_use, dict):
             payload["computer_use"] = dict(computer_use)
+        if isinstance(host_browser, dict):
+            payload["host_browser"] = dict(host_browser)
         if isinstance(remote_files, dict):
             payload["remote_files"] = dict(remote_files)
         if isinstance(remote_exec, dict):

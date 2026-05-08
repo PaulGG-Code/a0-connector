@@ -710,6 +710,8 @@ def test_ws_connector_hello_with_context_id_associates_remote_tool_metadata() ->
     assert payload["remote_tools"] == {
         "contexts": ["ctx-remote"],
         "computer_use": False,
+        "host_browser": False,
+        "host_browser_status": {},
         "remote_files": True,
         "remote_file_writes": True,
         "remote_exec": True,

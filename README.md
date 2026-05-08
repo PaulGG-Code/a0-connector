@@ -129,9 +129,44 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 | `/compact` | Compact the current chat when supported |
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
+| `/browser status` | Show host-browser connector status |
+| `/browser host on` / `/browser host off` | Manually advertise or disable host-browser control from this CLI |
+| `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
+| `/browser relaunch` | Start the selected profile under explicit A0 CLI control once it is not locked |
+| `/browser repair` | Install missing Python Playwright into the A0 CLI host environment |
+| `/browser privacy` | Show where host-browser content policy is configured |
 | `/disconnect` | Disconnect and return to the current host connection flow |
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
+
+### Host browser mode
+
+Agent Zero can route its existing `browser` tool through A0 CLI so the CLI controls a real Chrome-family browser on the host machine while the Agent Zero server still runs in Docker or another remote runtime.
+
+Happy path:
+
+1. Keep A0 CLI connected to the Agent Zero chat.
+2. In Agent Zero Browser settings, choose `host_when_available` or `host_required`.
+3. Ask the agent to use the browser.
+
+When a subscribed CLI supports host-browser control, the first browser action can enable and launch the local browser automatically. The CLI slash commands remain available for diagnostics and manual override.
+
+The CLI uses Python Playwright in the A0 CLI host environment against an installed Chrome, Chromium, or Edge executable. It does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If the selected profile is already locked by normal Chrome, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually.
+
+Chrome 136+ blocks remote debugging against the default personal Chrome data directory. On those versions, A0 exposes and auto-selects a separate local profile such as `chrome-a0 Default` under the user's data directory. Site data stays in that local browser profile, and the user may need to sign in once there. You can still select it manually with `/browser profile chrome-a0 Default`.
+
+The Playwright runtime and Chromium binary under the Agent Zero Docker container, such as `/a0/tmp/playwright`, belong to the container browser backend. They are useful when Browser settings use `container`, but they cannot control a host Chrome-family profile from inside Docker.
+
+When automatic host-browser preparation, `/browser host on`, or `/browser relaunch` finds that Python Playwright is missing, the TUI shows the install command and runs the same repair automatically. You can also trigger it directly:
+
+```bash
+/browser repair
+```
+
+Platform caveats:
+- macOS: detects Chrome, Chromium, and Edge apps in `/Applications` and profile data in `~/Library/Application Support`.
+- Windows: detects Chrome, Chromium, and Edge under `%LOCALAPPDATA%`/Program Files profile conventions.
+- Linux: detects `google-chrome`, `chromium`, `chromium-browser`, and Edge variants on `PATH`; X11 and Wayland are both supported by the underlying system browser.
 
 ## Troubleshooting
 

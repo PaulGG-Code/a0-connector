@@ -606,6 +606,28 @@ async def test_send_hello_includes_remote_file_and_exec_metadata() -> None:
     assert payload["remote_exec"] == remote_exec
 
 
+async def test_send_hello_includes_host_browser_metadata() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.sio = FakeSocketIOClient(
+        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+    )
+
+    metadata = {
+        "supported": True,
+        "enabled": True,
+        "status": "ready",
+        "browser_family": "chrome",
+        "profile_label": "Default",
+        "features": ["open", "content"],
+    }
+    await client.send_hello(host_browser=metadata)
+
+    event, payload, namespace = client.sio.call_calls[0]
+    assert event == "connector_hello"
+    assert namespace == "/ws"
+    assert payload["host_browser"] == metadata
+
+
 async def test_send_hello_includes_context_id_for_metadata_refresh() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.sio = FakeSocketIOClient(
@@ -766,6 +788,35 @@ async def test_registers_computer_use_ws_handler_and_emits_result() -> None:
         (
             "connector_computer_use_op_result",
             {"op_id": "cu-1", "ok": True, "result": {"status": "active"}},
+            "/ws",
+        )
+    ]
+
+
+async def test_registers_browser_ws_handler_and_emits_result() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(
+            status_code=200,
+            text='0{"sid":"sid-1","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}',
+        )
+    )
+    client.sio = FakeSocketIOClient()
+    client.on_browser_op = AsyncMock(
+        return_value={"op_id": "browser-1", "ok": True, "result": {"id": 1}}
+    )
+
+    await client.connect_websocket()
+
+    handler = client.sio.handlers[("/ws", "connector_browser_op")]
+    await handler({"data": {"op_id": "browser-1", "action": "open", "context_id": "ctx-1"}})
+
+    client.on_browser_op.assert_awaited_once()
+    assert client.sio.emit_calls == [
+        (
+            "connector_browser_op_result",
+            {"op_id": "browser-1", "ok": True, "result": {"id": 1}},
             "/ws",
         )
     ]

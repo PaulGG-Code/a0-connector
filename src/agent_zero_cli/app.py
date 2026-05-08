@@ -16,6 +16,7 @@ from textual.widgets import ContentSwitcher
 
 from agent_zero_cli import (
     availability,
+    browser_commands,
     chat_commands,
     compaction,
     connection,
@@ -35,6 +36,7 @@ from agent_zero_cli.clipboard import (
     should_use_native_windows_clipboard,
 )
 from agent_zero_cli.computer_use import ComputerUseManager
+from agent_zero_cli.host_browser import HostBrowserManager
 from agent_zero_cli.commands import CommandAvailability, CommandSpec
 from agent_zero_cli.config import CLIConfig, load_config, save_last_context
 from agent_zero_cli.instance_discovery import DiscoveryResult, discover_local_instances
@@ -198,6 +200,7 @@ class AgentZeroCLI(App):
         self._computer_use.set_status_callback(
             lambda label, detail: self._run_on_ui(self._apply_computer_use_status, label, detail)
         )
+        self._host_browser = HostBrowserManager(self.config)
         self._local_workspace = self._remote_files.scan_root
         self._remote_workspace = ""
         self._token_refresh_task: asyncio.Task[None] | None = None
@@ -385,6 +388,13 @@ class AgentZeroCLI(App):
                 lambda app: app._cmd_models(),
             ),
             CommandSpec(
+                "/browser",
+                (),
+                "Manage host-browser control through the A0 CLI connector.",
+                lambda app: browser_commands.browser_availability(app),
+                lambda app: browser_commands.cmd_browser(app),
+            ),
+            CommandSpec(
                 "/keys",
                 (),
                 "Show or hide key and widget help.",
@@ -433,6 +443,7 @@ class AgentZeroCLI(App):
                 providers=[OrderedSystemCommandsProvider],
                 id="--command-palette",
                 initial_query=initial_query,
+                from_slash=from_slash,
             )
         )
 
@@ -1076,6 +1087,12 @@ class AgentZeroCLI(App):
     def _computer_use_metadata(self) -> dict[str, Any]:
         return self._computer_use.metadata()
 
+    async def _handle_browser_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        return await event_handlers.handle_browser_op(self, data)
+
+    def _host_browser_metadata(self) -> dict[str, Any]:
+        return self._host_browser.metadata()
+
     def _remote_file_metadata(self) -> dict[str, Any]:
         return {
             "enabled": True,
@@ -1096,6 +1113,7 @@ class AgentZeroCLI(App):
             hello = await self.client.send_hello(
                 context_id=self.current_context,
                 computer_use=self._computer_use_metadata(),
+                host_browser=self._host_browser_metadata(),
                 remote_files=self._remote_file_metadata(),
                 remote_exec=self._remote_exec_metadata(),
             )
@@ -1150,6 +1168,12 @@ class AgentZeroCLI(App):
         if token in {"/project", "/projects"}:
             _, _, query = text.partition(" ")
             await project_commands.cmd_project(self, query=query.strip())
+            self._sync_ready_actions()
+            return
+
+        if token == "/browser":
+            _, _, query = text.partition(" ")
+            await browser_commands.cmd_browser(self, query=query.strip())
             self._sync_ready_actions()
             return
 
