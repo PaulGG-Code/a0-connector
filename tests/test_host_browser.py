@@ -21,6 +21,7 @@ from agent_zero_cli.host_browser import (
     discover_remote_debugging_profiles,
     discover_profiles,
     is_profile_locked,
+    normalize_url,
     normalize_remote_debugging_endpoint,
     parse_content_helper_payload,
     profile_lock_state,
@@ -40,8 +41,10 @@ MINIMAL_CONTENT_HELPER_SOURCE = """
     fileInputElementFor() {},
     fileInputFor() {},
     pointFor() {},
+    ready() { return true; },
     select() {},
     setChecked() {},
+    requiredApis: [],
   };
 })();
 """
@@ -260,22 +263,43 @@ def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
 
     agent_zero_source = agent_zero_asset.read_text(encoding="utf-8")
     agent_zero_hash = content_helper_sha256(agent_zero_source)
-
-    assert parse_content_helper_payload(
-        {"content_helper": {"source": agent_zero_source, "sha256": agent_zero_hash}}
-    ) == (agent_zero_source, agent_zero_hash)
-    for api_name in (
+    required_apis = [
         "annotate",
         "boundingBoxFor",
         "capture",
+        "click",
         "detail",
         "fileInputElementFor",
         "fileInputFor",
         "pointFor",
+        "scroll",
         "select",
         "setChecked",
-    ):
+        "submit",
+        "type",
+        "typeSubmit",
+    ]
+
+    assert parse_content_helper_payload(
+        {
+            "content_helper": {
+                "required_apis": required_apis,
+                "source": agent_zero_source,
+                "sha256": agent_zero_hash,
+            }
+        }
+    ) == (agent_zero_source, agent_zero_hash)
+    assert "REQUIRED_API_NAMES" in agent_zero_source
+    assert "ready()" in agent_zero_source
+    for api_name in required_apis:
         assert api_name in agent_zero_source
+
+
+def test_host_browser_accepts_only_agent_zero_normalized_urls() -> None:
+    assert normalize_url("https://example.com/") == "https://example.com/"
+    assert normalize_url("about:blank") == "about:blank"
+    with pytest.raises(ValueError, match="Agent Zero-normalized"):
+        normalize_url("example.com")
 
 
 def test_remote_debugging_profile_is_discovered_when_chrome_allows_it(
@@ -612,7 +636,7 @@ async def test_host_browser_manager_dispatches_open_and_screenshot_artifact(tmp_
     )
 
     opened = await manager.handle_op(
-        {"op_id": "op-open", "context_id": "ctx-1", "action": "open", "url": "example.com"}
+        {"op_id": "op-open", "context_id": "ctx-1", "action": "open", "url": "https://example.com/"}
     )
     screenshot = await manager.handle_op(
         {"op_id": "op-shot", "context_id": "ctx-1", "action": "screenshot", "browser_id": 1}
@@ -652,7 +676,7 @@ async def test_host_browser_manager_uses_agent_zero_supplied_content_helper(tmp_
             "op_id": "op-open",
             "context_id": "ctx-helper",
             "action": "open",
-            "url": "example.com",
+            "url": "https://example.com/",
             "content_helper": {
                 "source": MINIMAL_CONTENT_HELPER_SOURCE,
                 "sha256": helper_hash,
@@ -697,7 +721,7 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
     )
 
     opened = await manager.handle_op(
-        {"op_id": "op-open", "context_id": "chat-1", "action": "open", "url": "example.com"}
+        {"op_id": "op-open", "context_id": "chat-1", "action": "open", "url": "https://example.com/"}
     )
 
     assert opened["ok"] is True
@@ -852,7 +876,7 @@ async def test_remote_debugging_session_opens_lists_and_reads_content(
                     return {"result": {"type": "string", "value": "Example"}}
                 if "history" in expression:
                     return {"result": {"type": "number", "value": 1}}
-                if "__spaceBrowserPageContent__?.capture" in expression:
+                if "__spaceBrowserPageContent__?.ready" in expression:
                     return {"result": {"type": "boolean", "value": True}}
                 if "__spaceBrowserPageContent__.capture" in expression:
                     return {
@@ -876,7 +900,7 @@ async def test_remote_debugging_session_opens_lists_and_reads_content(
     )
     session = HostBrowserSession(context_id="ctx-cdp-actions", profile=profile)
 
-    opened = await session.open("example.com")
+    opened = await session.open("https://example.com/")
     content = await session.content(opened["id"])
     listed = await session.list(include_content=True)
     closed = await session.close_browser(opened["id"])
@@ -984,7 +1008,7 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
         playwright_starter=lambda: FakeStarter(playwright),
     )
     await manager.handle_op(
-        {"op_id": "op-open-1", "context_id": "chat-1", "action": "open", "url": "example.com"}
+        {"op_id": "op-open-1", "context_id": "chat-1", "action": "open", "url": "https://example.com/"}
     )
     monkeypatch.setattr(
         host_browser_common_module,
@@ -993,7 +1017,7 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
     )
 
     result = await manager.handle_op(
-        {"op_id": "op-open-2", "context_id": "chat-2", "action": "open", "url": "example.org"}
+        {"op_id": "op-open-2", "context_id": "chat-2", "action": "open", "url": "https://example.org/"}
     )
 
     assert result["ok"] is False

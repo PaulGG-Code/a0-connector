@@ -384,8 +384,6 @@ class HostBrowserSession:
         self.context.set_default_navigation_timeout(30000)
         self.context.on("close", self._on_context_closed)
         self.context.on("page", self._on_new_page_sync)
-        with contextlib.suppress(Exception):
-            await self.context.add_init_script(self._shadow_dom_script())
         if self._content_helper_source:
             with contextlib.suppress(Exception):
                 await self.context.add_init_script(script=self._content_helper_source)
@@ -1145,7 +1143,7 @@ class HostBrowserSession:
 
     async def _ensure_content_helper(self, page: Any) -> None:
         has_helper = await page.evaluate(
-            "() => Boolean(globalThis.__spaceBrowserPageContent__?.capture && globalThis.__spaceBrowserPageContent__?.detail && globalThis.__spaceBrowserPageContent__?.pointFor)"
+            "() => Boolean(globalThis.__spaceBrowserPageContent__?.ready?.())"
         )
         if has_helper:
             return
@@ -1154,22 +1152,6 @@ class HostBrowserSession:
                 "Host browser content helper source was not provided by Agent Zero Browser plugin."
             )
         await page.evaluate(self._content_helper_source)
-
-    @staticmethod
-    def _shadow_dom_script() -> str:
-        return """
-(() => {
-  const original = Element.prototype.attachShadow;
-  if (original && !original.__a0BrowserOpenShadowPatch) {
-    const patched = function attachShadow(options) {
-      return original.call(this, { ...(options || {}), mode: "open" });
-    };
-    patched.__a0BrowserOpenShadowPatch = true;
-    Element.prototype.attachShadow = patched;
-  }
-})();
-"""
-
 
 class ProfileLockedError(RuntimeError):
     def __init__(self, message: str, *, lock_state: ProfileLockState):
