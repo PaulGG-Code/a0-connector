@@ -68,6 +68,15 @@ def nudge_availability(app: AgentZeroCLI) -> CommandAvailability:
     return CommandAvailability(True)
 
 
+def attachments_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = require_connection(app)
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
 def project_availability(app: AgentZeroCLI) -> CommandAvailability:
     base = app._require_features("projects")
     if not base.available:

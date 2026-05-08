@@ -29,7 +29,7 @@ from agent_zero_cli import (
 from agent_zero_cli.client import A0Client, DEFAULT_HOST
 from agent_zero_cli.attachments import (
     AttachmentError,
-    save_clipboard_image_attachment,
+    create_clipboard_image_upload,
 )
 from agent_zero_cli.clipboard import (
     copy_text_to_windows_clipboard,
@@ -242,13 +242,24 @@ class AgentZeroCLI(App):
 
     async def attach_clipboard_image(self) -> bool:
         try:
-            attachment = await asyncio.to_thread(save_clipboard_image_attachment)
+            upload = await asyncio.to_thread(create_clipboard_image_upload)
         except AttachmentError:
             return False
         except Exception as exc:
             self._show_notice(f"Error attaching clipboard image: {exc}", error=True)
             return True
 
+        try:
+            attachments = await self.client.upload_attachments([upload])
+        except Exception as exc:
+            self._show_notice(f"Error uploading clipboard image: {exc}", error=True)
+            return True
+
+        if not attachments:
+            self._show_notice("Error uploading clipboard image: no attachment was returned.", error=True)
+            return True
+
+        attachment = attachments[0]
         try:
             self.query_one("#message-input", ChatInput).add_attachment(attachment)
         except Exception:
@@ -421,6 +432,13 @@ class AgentZeroCLI(App):
                 "Choose Browser host/container mode and manage host-browser control.",
                 lambda app: browser_commands.browser_availability(app),
                 lambda app: browser_commands.cmd_browser(app),
+            ),
+            CommandSpec(
+                "/attach",
+                ("/image", "/img"),
+                "Attach local image file(s) to the next message.",
+                lambda app: availability.attachments_availability(app),
+                lambda app: chat_commands.cmd_attach(app),
             ),
             CommandSpec(
                 "/computer-use",
@@ -1207,6 +1225,12 @@ class AgentZeroCLI(App):
         if token == "/browser":
             _, _, query = text.partition(" ")
             await browser_commands.cmd_browser(self, query=query.strip())
+            self._sync_ready_actions()
+            return
+
+        if token in {"/attach", "/image", "/img"}:
+            _, _, query = text.partition(" ")
+            await chat_commands.cmd_attach(self, query=query.strip())
             self._sync_ready_actions()
             return
 

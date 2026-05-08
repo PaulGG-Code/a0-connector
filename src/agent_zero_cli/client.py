@@ -12,6 +12,7 @@ import httpx
 import socketio
 
 from agent_zero_cli import __version__
+from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload, remote_upload_path
 
 _PLUGIN_API = "/api/plugins/_a0_connector/v1"
 # Agent Zero's installer defaults to the first free port starting at 5080.
@@ -120,6 +121,9 @@ class A0Client:
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.base_url}{_PLUGIN_API}/{endpoint}"
+
+    def _core_api_url(self, endpoint: str) -> str:
+        return f"{self.base_url}/api/{endpoint.lstrip('/')}"
 
     def _login_url(self) -> str:
         return f"{self.base_url}/login"
@@ -687,6 +691,42 @@ class A0Client:
         if attachments:
             payload["attachments"] = list(attachments)
         return await self._call(_EVENT_SEND_MESSAGE, payload)
+
+    async def upload_attachments(self, uploads: list[AttachmentUpload]) -> list[AttachmentRef]:
+        if not uploads:
+            return []
+
+        files = [
+            ("file", (upload.filename, upload.content, upload.mime_type))
+            for upload in uploads
+        ]
+        response = await self.http.post(self._core_api_url("upload"), files=files)
+        if self._is_login_redirect(response):
+            raise A0ProtocolError("Upload requires an authenticated Agent Zero session.")
+        if response.status_code >= 400:
+            raise A0ProtocolError(f"Upload failed: {self._response_message(response)}")
+
+        try:
+            data = self._json(response)
+        except Exception as exc:
+            raise A0ProtocolError("Upload returned an invalid JSON response.") from exc
+        filenames = data.get("filenames")
+        if not isinstance(filenames, list) or len(filenames) != len(uploads):
+            raise A0ProtocolError("Upload returned an invalid attachment response.")
+
+        refs: list[AttachmentRef] = []
+        for filename, upload in zip(filenames, uploads):
+            if not isinstance(filename, str) or not filename.strip():
+                raise A0ProtocolError("Upload returned an invalid attachment filename.")
+            normalized_name = filename.replace("\\", "/").rsplit("/", maxsplit=1)[-1]
+            refs.append(
+                AttachmentRef(
+                    path=remote_upload_path(normalized_name),
+                    name=normalized_name,
+                    mime_type=upload.mime_type,
+                )
+            )
+        return refs
 
     async def create_chat(self, *, current_context_id: str | None = None) -> str:
         payload = {}

@@ -11,9 +11,11 @@ import httpx
 import pytest
 import socketio
 
+from agent_zero_cli.attachments import AttachmentUpload
 from agent_zero_cli.client import (
     A0Client,
     A0ConnectorPluginMissingError,
+    A0ProtocolError,
     A0WebSocketConnectionError,
     _ensure_aiohttp_ws_timeout_compat,
     _socketio_client_kwargs,
@@ -531,6 +533,49 @@ async def test_send_message_includes_attachment_refs() -> None:
 
     _event, payload, _namespace = client.sio.call_calls[0]
     assert payload["attachments"] == ["/a0/usr/uploads/clipboard.png"]
+
+
+async def test_upload_attachments_posts_files_to_core_upload_endpoint() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(json_data={"filenames": ["stored-image.png"]})
+    )
+
+    refs = await client.upload_attachments(
+        [
+            AttachmentUpload(
+                filename="local-image.png",
+                content=b"png-bytes",
+                mime_type="image/png",
+            )
+        ]
+    )
+
+    client.http.post.assert_awaited_once_with(
+        "http://localhost:5080/api/upload",
+        files=[("file", ("local-image.png", b"png-bytes", "image/png"))],
+    )
+    assert refs[0].path == "/a0/usr/uploads/stored-image.png"
+    assert refs[0].name == "stored-image.png"
+    assert refs[0].mime_type == "image/png"
+
+
+async def test_upload_attachments_rejects_invalid_response() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.post = AsyncMock(return_value=FakeResponse(json_data={"filenames": []}))
+
+    with pytest.raises(A0ProtocolError, match="invalid attachment response"):
+        await client.upload_attachments(
+            [
+                AttachmentUpload(
+                    filename="local-image.png",
+                    content=b"png-bytes",
+                    mime_type="image/png",
+                )
+            ]
+        )
 
 
 async def test_send_hello_returns_exec_config_payload() -> None:

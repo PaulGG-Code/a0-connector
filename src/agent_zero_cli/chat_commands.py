@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
+import shlex
 from typing import TYPE_CHECKING, Any, Mapping
 
+from agent_zero_cli.attachments import AttachmentError, create_image_file_upload
 from agent_zero_cli.project_utils import project_name, project_title
 
 from agent_zero_cli.screens.chat_list import ChatListScreen
@@ -361,3 +364,42 @@ async def cmd_nudge(app: AgentZeroCLI) -> None:
         app._show_notice(str(response.get("message") or "Nudge failed."), error=True)
         app.agent_active = False
         app._sync_ready_actions()
+
+
+async def cmd_attach(app: AgentZeroCLI, *, query: str = "") -> None:
+    try:
+        paths = shlex.split(query)
+    except ValueError as exc:
+        app._show_notice(f"Could not parse image path: {exc}", error=True)
+        return
+
+    if not paths:
+        app._show_notice("Usage: /attach <image-path> [more-image-paths...]", error=True)
+        return
+
+    try:
+        uploads = await asyncio.to_thread(
+            lambda: [create_image_file_upload(path) for path in paths]
+        )
+    except AttachmentError as exc:
+        app._show_notice(str(exc), error=True)
+        return
+    except OSError as exc:
+        app._show_notice(f"Could not read image attachment: {exc}", error=True)
+        return
+
+    try:
+        attachments = await app.client.upload_attachments(uploads)
+    except Exception as exc:
+        app._show_notice(f"Image upload failed: {exc}", error=True)
+        return
+
+    input_widget = app.query_one("#message-input", ChatInput)
+    for attachment in attachments:
+        input_widget.add_attachment(attachment)
+
+    if len(attachments) == 1:
+        app._show_notice(f"Attached {attachments[0].name}.")
+        return
+
+    app._show_notice(f"Attached {len(attachments)} images.")

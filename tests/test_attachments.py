@@ -29,3 +29,49 @@ def test_save_clipboard_image_attachment_writes_exact_bytes(
     assert attachment.name == attachment.path.rsplit("/", maxsplit=1)[-1]
     assert attachment.mime_type == "image/png"
     assert (tmp_path / attachment.name).read_bytes() == b"png-bytes"
+
+
+def test_create_clipboard_image_upload_reads_exact_bytes(monkeypatch) -> None:
+    monkeypatch.setattr(
+        attachments_mod,
+        "read_clipboard_image_bytes",
+        lambda: ("image/webp", b"webp-bytes"),
+    )
+
+    upload = attachments_mod.create_clipboard_image_upload()
+
+    assert upload.filename.startswith("clipboard-")
+    assert upload.filename.endswith(".webp")
+    assert upload.mime_type == "image/webp"
+    assert upload.content == b"webp-bytes"
+
+
+def test_create_image_file_upload_reads_supported_image(tmp_path: Path) -> None:
+    source = tmp_path / "diagram final.PNG"
+    source.write_bytes(b"png-bytes")
+
+    upload = attachments_mod.create_image_file_upload(source)
+
+    assert upload.filename.startswith("diagram-final-")
+    assert upload.filename.endswith(".png")
+    assert upload.mime_type == "image/png"
+    assert upload.content == b"png-bytes"
+
+
+def test_create_image_file_upload_rejects_non_image(tmp_path: Path) -> None:
+    source = tmp_path / "notes.txt"
+    source.write_text("not an image", encoding="utf-8")
+
+    try:
+        attachments_mod.create_image_file_upload(source)
+    except attachments_mod.AttachmentError as exc:
+        assert "Unsupported image type" in str(exc)
+    else:
+        raise AssertionError("Expected AttachmentError")
+
+
+def test_remote_upload_path_normalizes_server_filename() -> None:
+    assert (
+        attachments_mod.remote_upload_path("nested\\server-image.png")
+        == "/a0/usr/uploads/server-image.png"
+    )

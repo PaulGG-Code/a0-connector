@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 import shutil
@@ -21,6 +22,7 @@ _IMAGE_MIME_EXTENSIONS = {
     "image/gif": ".gif",
     "image/bmp": ".bmp",
     "image/tiff": ".tiff",
+    "image/svg+xml": ".svg",
 }
 _PREFERRED_IMAGE_MIME_TYPES = (
     "image/png",
@@ -30,7 +32,20 @@ _PREFERRED_IMAGE_MIME_TYPES = (
     "image/gif",
     "image/bmp",
     "image/tiff",
+    "image/svg+xml",
 )
+_IMAGE_EXTENSION_MIME_TYPES = {
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".bmp": "image/bmp",
+    ".tif": "image/tiff",
+    ".tiff": "image/tiff",
+    ".svg": "image/svg+xml",
+}
+_SAFE_STEM_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 class AttachmentError(RuntimeError):
@@ -44,23 +59,57 @@ class AttachmentRef:
     mime_type: str
 
 
+@dataclass(frozen=True)
+class AttachmentUpload:
+    filename: str
+    content: bytes
+    mime_type: str
+
+
 def attachment_label(count: int) -> str:
     noun = "attachment" if count == 1 else "attachments"
     return f"[{count} Image {noun}]"
 
 
-def save_clipboard_image_attachment() -> AttachmentRef:
+def create_clipboard_image_upload() -> AttachmentUpload:
     mime_type, image_bytes = read_clipboard_image_bytes()
     extension = _IMAGE_MIME_EXTENSIONS[mime_type]
     filename = f"clipboard-{uuid.uuid4().hex}{extension}"
+    return AttachmentUpload(filename=filename, content=image_bytes, mime_type=mime_type)
+
+
+def create_image_file_upload(path: str | Path) -> AttachmentUpload:
+    source = Path(path).expanduser()
+    if not source.is_file():
+        raise AttachmentError(f"Image file not found: {source}")
+
+    mime_type = _mime_type_for_image_path(source)
+    if not mime_type:
+        supported = ", ".join(sorted(_IMAGE_EXTENSION_MIME_TYPES))
+        raise AttachmentError(f"Unsupported image type: {source}. Supported extensions: {supported}.")
+
+    return AttachmentUpload(
+        filename=_unique_upload_filename(source),
+        content=source.read_bytes(),
+        mime_type=mime_type,
+    )
+
+
+def remote_upload_path(filename: str) -> str:
+    safe_name = PurePosixPath(str(filename).replace("\\", "/")).name
+    return f"{_container_upload_root()}/{safe_name}"
+
+
+def save_clipboard_image_attachment() -> AttachmentRef:
+    upload = create_clipboard_image_upload()
     host_root = _host_upload_root()
     host_root.mkdir(parents=True, exist_ok=True)
-    host_path = host_root / filename
-    host_path.write_bytes(image_bytes)
+    host_path = host_root / upload.filename
+    host_path.write_bytes(upload.content)
     return AttachmentRef(
-        path=f"{_container_upload_root()}/{filename}",
-        name=filename,
-        mime_type=mime_type,
+        path=remote_upload_path(upload.filename),
+        name=upload.filename,
+        mime_type=upload.mime_type,
     )
 
 
@@ -147,6 +196,21 @@ def _run_binary_command(command: list[str]) -> bytes:
     return completed.stdout
 
 
+def _mime_type_for_image_path(path: Path) -> str:
+    return _IMAGE_EXTENSION_MIME_TYPES.get(path.suffix.lower(), "")
+
+
+def _sanitize_filename_stem(stem: str) -> str:
+    sanitized = _SAFE_STEM_RE.sub("-", stem).strip("._-")
+    return sanitized or "image"
+
+
+def _unique_upload_filename(path: Path) -> str:
+    suffix = path.suffix.lower()
+    stem = _sanitize_filename_stem(path.stem)
+    return f"{stem}-{uuid.uuid4().hex}{suffix}"
+
+
 def _container_upload_root() -> str:
     root = str(os.environ.get(_CONTAINER_UPLOAD_ROOT_ENV, _DEFAULT_CONTAINER_UPLOAD_ROOT) or "").strip()
     if not root:
@@ -162,6 +226,10 @@ def _host_upload_root() -> Path:
     volume_root = _find_dockervolume_root()
     if volume_root is not None:
         return _host_path_from_container_root(_container_upload_root(), volume_root=volume_root)
+
+    raise AttachmentError(
+        "No Agent Zero upload directory is configured. Use the HTTP upload path instead."
+    )
 
 
 def _path_search_roots() -> list[Path]:

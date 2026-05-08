@@ -12,7 +12,7 @@ from textual.selection import SELECT_ALL
 
 from agent_zero_cli import chat_commands, connection
 from agent_zero_cli.app import AgentZeroCLI
-from agent_zero_cli.attachments import AttachmentRef
+from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
@@ -1040,6 +1040,11 @@ async def test_attach_clipboard_image_adds_pending_attachment(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notices: list[tuple[str, bool]] = []
+    upload = AttachmentUpload(
+        filename="clipboard-local.png",
+        content=b"png-bytes",
+        mime_type="image/png",
+    )
     attachment = AttachmentRef(
         path="/a0/usr/uploads/clipboard.png",
         name="clipboard.png",
@@ -1047,9 +1052,15 @@ async def test_attach_clipboard_image_adds_pending_attachment(
     )
 
     monkeypatch.setattr(
-        "agent_zero_cli.app.save_clipboard_image_attachment",
-        lambda: attachment,
+        "agent_zero_cli.app.create_clipboard_image_upload",
+        lambda: upload,
     )
+
+    async def fake_upload_attachments(uploads: list[AttachmentUpload]) -> list[AttachmentRef]:
+        assert uploads == [upload]
+        return [attachment]
+
+    monkeypatch.setattr(dummy_app.client, "upload_attachments", fake_upload_attachments)
     monkeypatch.setattr(
         dummy_app,
         "_show_notice",
@@ -1062,6 +1073,46 @@ async def test_attach_clipboard_image_adds_pending_attachment(
     assert handled is True
     assert input_widget.attachments == [attachment]
     assert notices == [("Attached clipboard.png.", False)]
+
+
+async def test_attach_command_uploads_local_image_paths(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    notices: list[tuple[str, bool]] = []
+    requested_paths: list[str] = []
+    upload_a = AttachmentUpload("first.png", b"first", "image/png")
+    upload_b = AttachmentUpload("second.webp", b"second", "image/webp")
+    ref_a = AttachmentRef("/a0/usr/uploads/first.png", "first.png", "image/png")
+    ref_b = AttachmentRef("/a0/usr/uploads/second.webp", "second.webp", "image/webp")
+
+    def fake_create_image_file_upload(path: str) -> AttachmentUpload:
+        requested_paths.append(path)
+        return upload_a if len(requested_paths) == 1 else upload_b
+
+    async def fake_upload_attachments(uploads: list[AttachmentUpload]) -> list[AttachmentRef]:
+        assert uploads == [upload_a, upload_b]
+        return [ref_a, ref_b]
+
+    monkeypatch.setattr(
+        "agent_zero_cli.chat_commands.create_image_file_upload",
+        fake_create_image_file_upload,
+    )
+    monkeypatch.setattr(dummy_app.client, "upload_attachments", fake_upload_attachments)
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app._dispatch_command('/attach "/tmp/first image.png" /tmp/second.webp')
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert requested_paths == ["/tmp/first image.png", "/tmp/second.webp"]
+    assert input_widget.attachments == [ref_a, ref_b]
+    assert notices == [("Attached 2 images.", False)]
 
 
 async def test_profile_command_dispatches_profile_menu(
