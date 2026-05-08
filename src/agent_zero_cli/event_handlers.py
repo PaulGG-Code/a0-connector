@@ -12,6 +12,7 @@ from agent_zero_cli.rendering import (
     extract_detail,
     render_connector_event,
 )
+from agent_zero_cli.widgets import ChatInput
 from agent_zero_cli.widgets.chat_log import ChatLog
 
 if TYPE_CHECKING:
@@ -23,6 +24,23 @@ def _chat_log_or_none(app: AgentZeroCLI) -> ChatLog | None:
         return app.query_one("#chat-log", ChatLog)
     except NoMatches:
         return None
+
+
+def _remember_user_message(app: AgentZeroCLI, event: dict[str, Any]) -> None:
+    if event.get("event") != "user_message":
+        return
+
+    event_data = event.get("data")
+    if not isinstance(event_data, dict):
+        return
+    text = str(event_data.get("text") or "")
+    if not text.strip():
+        return
+
+    try:
+        app.query_one("#message-input", ChatInput).seed_history([text])
+    except Exception:
+        return
 
 
 async def _compaction_context_reload(app: AgentZeroCLI, context_id: str) -> None:
@@ -53,6 +71,7 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
 
         if app._message_flag_for_event(event_type):
             app._mark_context_has_messages()
+        _remember_user_message(app, event)
 
         if category in ("user", "response", "warning", "error", "code", "info"):
             app._show_chat_intro(log, category)
@@ -86,6 +105,7 @@ def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:
 
     if app._message_flag_for_event(event_type):
         app._mark_context_has_messages()
+    _remember_user_message(app, data)
 
     category = _EVENT_CATEGORY.get(event_type, "info")
     log = _chat_log_or_none(app)

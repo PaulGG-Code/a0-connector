@@ -305,6 +305,7 @@ async def begin_connection(
     app.connected = True
     app._sync_connection_status("connected", normalized_host)
     input_widget = app.query_one("#message-input", ChatInput)
+    input_widget.set_history_context(context_id)
     input_widget.disabled = False
     app._start_remote_tree_publisher()
     if remember_host_flag:
@@ -344,6 +345,7 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._slash_palette_query = None
     app._sync_connection_status("disconnected")
     input_widget = app.query_one("#message-input", ChatInput)
+    input_widget.set_history_context(None)
     input_widget.disabled = True
     app.query_one("#chat-log", ChatLog).clear()
     app._set_idle()

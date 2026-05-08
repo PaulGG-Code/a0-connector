@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Iterable
 
 from textual import events
 from textual.message import Message
@@ -16,6 +17,8 @@ _PLACEHOLDER = "Type a message... (/help for commands)"
 _PROGRESS_CLASS = "progress-active"
 # Same prefix as Agent Zero WebUI composer (see webui/components/chat/input/input-store.js).
 _PROGRESS_PREFIX = "|>  "
+_DEFAULT_HISTORY_SCOPE = "__default__"
+_MAX_HISTORY_ITEMS = 50
 
 # Minimal theme so the input blends with the app style.
 _INPUT_THEME = TextAreaTheme(
@@ -80,6 +83,10 @@ class ChatInput(TextArea):
         self._activity_label = ""
         self._activity_detail = ""
         self.attachments: list[AttachmentRef] = []
+        self._history_scope = _DEFAULT_HISTORY_SCOPE
+        self._history_by_scope: dict[str, list[str]] = {_DEFAULT_HISTORY_SCOPE: []}
+        self._history_index: int | None = None
+        self._history_draft = ""
 
     def on_mount(self) -> None:
         self.register_theme(_INPUT_THEME)
@@ -107,23 +114,33 @@ class ChatInput(TextArea):
                 event.stop()
                 return
 
+        if self._is_newline_key(event):
+            event.prevent_default()
+            event.stop()
+            self.insert("\n")
+            self._update_height()
+            return
+
+        if event.key == "up" and self._history_previous():
+            event.prevent_default()
+            event.stop()
+            return
+
+        if event.key == "down" and self._history_next():
+            event.prevent_default()
+            event.stop()
+            return
+
         if event.key == "enter":
             event.prevent_default()
             event.stop()
             text = self.text
             attachments = list(self.attachments)
+            self._push_history(text)
             self.clear()
             self.clear_attachments()
             self._update_height()
             self.post_message(self.Submitted(value=text, input=self, attachments=attachments))
-            return
-
-        if event.key == "shift+enter" or event.key == "ctrl+j":
-            # Insert a newline
-            event.prevent_default()
-            event.stop()
-            self.insert("\n")
-            self._update_height()
             return
 
         if event.key == "backspace" and not self.text and self.attachments:
@@ -191,6 +208,99 @@ class ChatInput(TextArea):
     def set_attachments(self, attachments: list[AttachmentRef]) -> None:
         self.attachments = list(attachments)
         self._sync_progress_placeholder()
+
+    # ---- input history ----------------------------------------------
+
+    def set_history_context(self, context_id: str | None) -> None:
+        """Switch the active history scope to match the current chat."""
+        scope = context_id.strip() if context_id else _DEFAULT_HISTORY_SCOPE
+        if scope == self._history_scope:
+            return
+        self._history_scope = scope
+        self._history_by_scope.setdefault(scope, [])
+        self._history_index = None
+        self._history_draft = ""
+
+    def _history(self) -> list[str]:
+        return self._history_by_scope.setdefault(self._history_scope, [])
+
+    def seed_history(self, values: Iterable[str]) -> None:
+        """Append known user messages to the current history scope."""
+        for value in values:
+            self._push_history(value)
+
+    def _push_history(self, text: str) -> None:
+        trimmed = text.strip()
+        if not trimmed:
+            return
+
+        history = self._history()
+        if history and history[-1] == trimmed:
+            self._history_index = None
+            self._history_draft = ""
+            return
+
+        history.append(trimmed)
+        if len(history) > _MAX_HISTORY_ITEMS:
+            del history[:-_MAX_HISTORY_ITEMS]
+        self._history_index = None
+        self._history_draft = ""
+
+    def _is_newline_key(self, event: events.Key) -> bool:
+        aliases = set(event.aliases)
+        return bool({"shift+enter", "ctrl+j", "newline", "alt+enter"} & aliases)
+
+    def _selection_is_collapsed_at(self, location: tuple[int, int]) -> bool:
+        start, end = self.selection
+        return start == end == location
+
+    def _document_end(self) -> tuple[int, int]:
+        last_row = max(0, self.document.line_count - 1)
+        return last_row, len(self.document[last_row])
+
+    def _set_history_value(self, value: str, *, cursor: str) -> None:
+        self.value = value
+        if cursor == "start":
+            self.move_cursor((0, 0))
+        else:
+            self.move_cursor(self._document_end())
+        self._update_height()
+
+    def _history_previous(self) -> bool:
+        if not self._selection_is_collapsed_at((0, 0)):
+            return False
+
+        history = self._history()
+        if not history:
+            return True
+
+        if self._history_index is None:
+            self._history_draft = self.text
+            self._history_index = len(history) - 1
+        elif self._history_index > 0:
+            self._history_index -= 1
+        else:
+            return True
+
+        self._set_history_value(history[self._history_index], cursor="start")
+        return True
+
+    def _history_next(self) -> bool:
+        if not self._selection_is_collapsed_at(self._document_end()):
+            return False
+
+        history = self._history()
+        if self._history_index is None:
+            return True
+
+        if self._history_index < len(history) - 1:
+            self._history_index += 1
+            self._set_history_value(history[self._history_index], cursor="end")
+        else:
+            self._history_index = None
+            self._set_history_value(self._history_draft, cursor="end")
+            self._history_draft = ""
+        return True
 
     # ---- dynamic height ---------------------------------------------
 

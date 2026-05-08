@@ -67,6 +67,8 @@ terminal helper textarea:
 
 - Selector: `#terminal .xterm-helper-textarea`
 - Model: click/focus terminal helper -> type keys -> press Enter
+- Multiline composer input: use `Ctrl+J` to insert a newline. Some
+  browser/xterm paths collapse `Shift+Enter` into plain `Enter`.
 
 ### Why this matters
 

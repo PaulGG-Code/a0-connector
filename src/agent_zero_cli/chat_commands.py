@@ -209,6 +209,7 @@ async def switch_context(app: AgentZeroCLI, context_id: str, *, has_messages_hin
         await app.client.unsubscribe_context(app.current_context)
 
     app.current_context = context_id
+    app.query_one("#message-input", ChatInput).set_history_context(context_id)
     app._set_pause_latched(False)
     app.current_context_has_messages = has_messages_hint
     app._response_delivered = False

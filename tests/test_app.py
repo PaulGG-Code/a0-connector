@@ -99,6 +99,8 @@ class FakeInput:
         self.activity_idle = True
         self.value = ""
         self.attachments = []
+        self.history_context = None
+        self.history_seeded: list[str] = []
 
     def focus(self) -> None:
         self.focused = True
@@ -121,6 +123,12 @@ class FakeInput:
 
     def clear_attachments(self) -> None:
         self.attachments = []
+
+    def set_history_context(self, context_id: str | None) -> None:
+        self.history_context = context_id
+
+    def seed_history(self, values: list[str]) -> None:
+        self.history_seeded.extend(values)
 
 
 class FakeBodySwitcher:
@@ -659,6 +667,34 @@ def test_context_event_status_updates_activity_lane_without_rendering_message(
         "thoughts": ["Plan the answer"],
     }
     assert dummy_app.rendered_events == []
+
+
+def test_context_snapshot_seeds_input_history_from_user_messages(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+
+    dummy_app._handle_context_snapshot(
+        {
+            "context_id": "ctx-1",
+            "events": [
+                {
+                    "event": "user_message",
+                    "sequence": 1,
+                    "data": {"text": "previous prompt"},
+                },
+                {
+                    "event": "assistant_message",
+                    "sequence": 2,
+                    "data": {"text": "Hello"},
+                },
+            ],
+        }
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert input_widget.history_seeded == ["previous prompt"]
 
 
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:

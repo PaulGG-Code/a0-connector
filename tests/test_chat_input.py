@@ -1,0 +1,91 @@
+from __future__ import annotations
+
+import pytest
+from textual import events
+
+from agent_zero_cli.widgets import ChatInput
+
+
+pytestmark = pytest.mark.anyio
+
+
+async def test_chat_input_ctrl_j_inserts_newline_and_grows() -> None:
+    input_widget = ChatInput()
+    input_widget.value = "one"
+
+    await input_widget._on_key(events.Key("ctrl+j", None))
+    input_widget.insert("two")
+    input_widget._update_height()
+
+    assert input_widget.value == "one\ntwo"
+    assert input_widget.styles.height.cells == 4
+
+
+async def test_chat_input_shift_enter_inserts_newline_and_grows() -> None:
+    input_widget = ChatInput()
+    input_widget.value = "one"
+
+    await input_widget._on_key(events.Key("shift+enter", None))
+    input_widget.insert("two")
+    input_widget._update_height()
+
+    assert input_widget.value == "one\ntwo"
+    assert input_widget.styles.height.cells == 4
+
+
+async def test_chat_input_history_recalls_at_text_boundaries() -> None:
+    input_widget = ChatInput()
+    input_widget.set_history_context("ctx-1")
+    input_widget._push_history("first")
+    input_widget._push_history("second")
+    input_widget.value = "draft"
+    input_widget.move_cursor((0, 0))
+
+    await input_widget._on_key(events.Key("up", None))
+    assert input_widget.value == "second"
+    assert input_widget.selection.start == (0, 0)
+    assert input_widget.selection.end == (0, 0)
+
+    await input_widget._on_key(events.Key("up", None))
+    assert input_widget.value == "first"
+
+    input_widget.move_cursor(input_widget._document_end())
+    await input_widget._on_key(events.Key("down", None))
+    assert input_widget.value == "second"
+    assert input_widget.selection.start == input_widget._document_end()
+    assert input_widget.selection.end == input_widget._document_end()
+
+    await input_widget._on_key(events.Key("down", None))
+    assert input_widget.value == "draft"
+
+
+def test_chat_input_history_leaves_multiline_navigation_alone() -> None:
+    input_widget = ChatInput()
+    input_widget._push_history("older")
+    input_widget.value = "one\ntwo"
+
+    input_widget.move_cursor((0, 1))
+    assert input_widget._history_previous() is False
+
+    input_widget.move_cursor((1, 0))
+    assert input_widget._history_next() is False
+
+
+def test_chat_input_history_is_scoped_by_context() -> None:
+    input_widget = ChatInput()
+
+    input_widget.set_history_context("ctx-1")
+    input_widget.seed_history(["from one"])
+    input_widget.set_history_context("ctx-2")
+    input_widget.seed_history(["from two"])
+
+    input_widget.value = ""
+    input_widget.move_cursor((0, 0))
+    assert input_widget._history_previous() is True
+    assert input_widget.value == "from two"
+
+    input_widget.set_history_context("ctx-1")
+    input_widget.value = ""
+    input_widget.move_cursor((0, 0))
+    assert input_widget._history_previous() is True
+    assert input_widget.value == "from one"
