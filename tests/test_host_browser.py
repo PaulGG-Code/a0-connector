@@ -9,23 +9,42 @@ from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.host_browser import (
     BrowserCandidate,
     BrowserProfile,
+    CONTENT_HELPER_PATH,
     HostBrowserManager,
     HostBrowserSession,
     ProfileLockState,
     RELAUNCH_CONTEXT_ID,
     a0_managed_user_data_dir,
     chromium_launch_args,
+    content_helper_sha256,
     remote_debugging_endpoint_from_active_port_file,
     discover_remote_debugging_profiles,
     discover_profiles,
     is_profile_locked,
     normalize_remote_debugging_endpoint,
+    parse_content_helper_payload,
     profile_lock_state,
     remote_debugging_restriction_reason,
 )
 
 
 pytestmark = pytest.mark.anyio
+
+MINIMAL_CONTENT_HELPER_SOURCE = """
+(() => {
+  globalThis.__spaceBrowserPageContent__ = {
+    annotate() {},
+    boundingBoxFor() {},
+    capture() {},
+    detail() {},
+    fileInputElementFor() {},
+    fileInputFor() {},
+    pointFor() {},
+    select() {},
+    setChecked() {},
+  };
+})();
+"""
 
 
 class FakeKeyboard:
@@ -112,6 +131,7 @@ class FakeContext:
         self.pages = []
         self.handlers = {}
         self.closed = False
+        self.init_scripts: list[str] = []
 
     def set_default_timeout(self, timeout: int) -> None:
         del timeout
@@ -122,7 +142,11 @@ class FakeContext:
     def on(self, event: str, callback) -> None:
         self.handlers[event] = callback
 
-    async def add_init_script(self, *_: object, **__: object) -> None:
+    async def add_init_script(self, script: object = None, *, path: object = None) -> None:
+        if script is not None:
+            self.init_scripts.append(str(script))
+        elif path is not None:
+            self.init_scripts.append(Path(str(path)).read_text(encoding="utf-8"))
         return None
 
     async def new_page(self) -> FakePage:
@@ -220,6 +244,40 @@ def test_a0_managed_user_data_dir_is_separate_from_default_chrome_dir(
     assert path != tmp_path / "config" / "google-chrome"
 
 
+def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
+    assert not CONTENT_HELPER_PATH.exists()
+
+    agent_zero_asset = (
+        Path(__file__).resolve().parents[2]
+        / "agent-zero"
+        / "plugins"
+        / "_browser"
+        / "assets"
+        / "browser-page-content.js"
+    )
+    if not agent_zero_asset.exists():
+        pytest.skip("Agent Zero sibling repo is not available for content-helper contract")
+
+    agent_zero_source = agent_zero_asset.read_text(encoding="utf-8")
+    agent_zero_hash = content_helper_sha256(agent_zero_source)
+
+    assert parse_content_helper_payload(
+        {"content_helper": {"source": agent_zero_source, "sha256": agent_zero_hash}}
+    ) == (agent_zero_source, agent_zero_hash)
+    for api_name in (
+        "annotate",
+        "boundingBoxFor",
+        "capture",
+        "detail",
+        "fileInputElementFor",
+        "fileInputFor",
+        "pointFor",
+        "select",
+        "setChecked",
+    ):
+        assert api_name in agent_zero_source
+
+
 def test_remote_debugging_profile_is_discovered_when_chrome_allows_it(
     tmp_path: Path,
 ) -> None:
@@ -246,11 +304,35 @@ def test_remote_debugging_profile_is_discovered_when_chrome_allows_it(
     assert profiles[0].as_dict()["locked"] is False
 
 
+def test_remote_debugging_discovery_reads_active_port_without_network_probe(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import agent_zero_cli.host_browser_cdp as host_browser_cdp_module
+
+    root = tmp_path / "google-chrome"
+    root.mkdir()
+    (root / "DevToolsActivePort").write_text("9222\n/devtools/browser/test\n", encoding="utf-8")
+
+    def fail_client_session(*_: object, **__: object) -> object:
+        raise AssertionError("remote debugging discovery must not open network connections")
+
+    monkeypatch.setattr(host_browser_cdp_module.aiohttp, "ClientSession", fail_client_session)
+
+    profiles = discover_remote_debugging_profiles(
+        [BrowserCandidate("chrome", "Google Chrome", "/bin/chrome", root)]
+    )
+
+    assert [profile.cdp_endpoint for profile in profiles] == [
+        "ws://localhost:9222/devtools/browser/test"
+    ]
+
+
 def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_manager as host_browser_manager_module
 
     a0_root = tmp_path / "a0-chrome"
     executable = tmp_path / "chrome"
@@ -264,7 +346,7 @@ def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
         "Remote debugging allowed",
         cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
     )
-    monkeypatch.setattr(host_browser_module, "discover_remote_debugging_profiles", lambda *_: [remote_profile])
+    monkeypatch.setattr(host_browser_manager_module, "discover_remote_debugging_profiles", lambda *_: [remote_profile])
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_family="chrome-a0",
@@ -325,14 +407,14 @@ def test_profile_lock_detection_reports_singleton_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     lock = tmp_path / "SingletonLock"
     try:
         os.symlink("host-12345", lock)
     except (PermissionError, OSError, NotImplementedError):
         pytest.skip("symlink not supported in this environment")
-    monkeypatch.setattr(host_browser_module, "_pid_is_alive", lambda pid: pid == 12345)
+    monkeypatch.setattr(host_browser_common_module, "_pid_is_alive", lambda pid: pid == 12345)
 
     state = profile_lock_state(tmp_path)
 
@@ -346,7 +428,7 @@ def test_profile_lock_detection_ignores_stale_singleton_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     lock = tmp_path / "SingletonLock"
     try:
@@ -354,7 +436,7 @@ def test_profile_lock_detection_ignores_stale_singleton_owner(
     except (PermissionError, OSError, NotImplementedError):
         pytest.skip("symlink not supported in this environment")
     (tmp_path / "SingletonCookie").symlink_to("cookie")
-    monkeypatch.setattr(host_browser_module, "_pid_is_alive", lambda pid: False)
+    monkeypatch.setattr(host_browser_common_module, "_pid_is_alive", lambda pid: False)
 
     state = profile_lock_state(tmp_path)
 
@@ -393,12 +475,12 @@ def test_remote_debugging_restriction_blocks_default_chrome_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
-    monkeypatch.setattr(host_browser_module, "browser_major_version", lambda _: 147)
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     profile = BrowserProfile("chrome", "Chrome", "/bin/chrome", default_root, "Default", "Default")
 
     reason = remote_debugging_restriction_reason(profile)
@@ -411,9 +493,9 @@ def test_remote_debugging_restriction_allows_a0_managed_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
-    monkeypatch.setattr(host_browser_module, "browser_major_version", lambda _: 147)
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     profile = BrowserProfile("chrome-a0", "Chrome", "/bin/chrome", tmp_path, "Default", "Default")
 
     assert remote_debugging_restriction_reason(profile) == ""
@@ -423,7 +505,7 @@ def test_selected_profile_prefers_supported_a0_profile_when_default_is_restricte
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -432,7 +514,7 @@ def test_selected_profile_prefers_supported_a0_profile_when_default_is_restricte
     (default_root / "Default").mkdir(parents=True)
     a0_root = tmp_path / "a0-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
-    monkeypatch.setattr(host_browser_module, "browser_major_version", lambda _: 147)
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(),
         candidate_provider=lambda: [
@@ -478,7 +560,7 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -487,7 +569,7 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
     (default_root / "Default").mkdir(parents=True)
     managed_root = tmp_path / "a0-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
-    monkeypatch.setattr(host_browser_module, "browser_major_version", lambda _: 147)
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=False,
@@ -546,11 +628,48 @@ async def test_host_browser_manager_dispatches_open_and_screenshot_artifact(tmp_
     assert playwright.chromium.launch_kwargs["user_data_dir"] == str(root)
 
 
+async def test_host_browser_manager_uses_agent_zero_supplied_content_helper(tmp_path: Path) -> None:
+    root = tmp_path / "Chrome"
+    (root / "Default").mkdir(parents=True)
+    executable = tmp_path / "chrome"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    playwright = FakePlaywright()
+    manager = HostBrowserManager(
+        CLIConfig(
+            host_browser_enabled=True,
+            host_browser_family="chrome",
+            host_browser_profile_path=str(root),
+            host_browser_profile_label="Default",
+        ),
+        candidate_provider=lambda: [BrowserCandidate("chrome", "Google Chrome", str(executable), root)],
+        playwright_available=True,
+        playwright_starter=lambda: FakeStarter(playwright),
+    )
+    helper_hash = content_helper_sha256(MINIMAL_CONTENT_HELPER_SOURCE)
+
+    opened = await manager.handle_op(
+        {
+            "op_id": "op-open",
+            "context_id": "ctx-helper",
+            "action": "open",
+            "url": "example.com",
+            "content_helper": {
+                "source": MINIMAL_CONTENT_HELPER_SOURCE,
+                "sha256": helper_hash,
+            },
+        }
+    )
+
+    assert opened["ok"] is True
+    assert manager.metadata()["content_helper_sha256"] == helper_hash
+    assert MINIMAL_CONTENT_HELPER_SOURCE in playwright.chromium.context.init_scripts
+
+
 async def test_relaunch_session_is_adopted_by_first_browser_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     root = tmp_path / "Chrome"
     (root / "Default").mkdir(parents=True)
@@ -572,7 +691,7 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
     )
     await manager.relaunch()
     monkeypatch.setattr(
-        host_browser_module,
+        host_browser_common_module,
         "profile_lock_state",
         lambda _: ProfileLockState(True, (str(root / "SingletonLock"),), 12345),
     )
@@ -590,7 +709,7 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
 async def test_remote_debugging_session_attaches_without_closing_user_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_session as host_browser_session_module
 
     instances = []
 
@@ -636,7 +755,7 @@ async def test_remote_debugging_session_attaches_without_closing_user_context(
                 return {"result": {"type": "undefined"}}
             return {}
 
-    monkeypatch.setattr(host_browser_module, "CDPConnection", FakeCDPConnection)
+    monkeypatch.setattr(host_browser_session_module, "CDPConnection", FakeCDPConnection)
     profile = BrowserProfile(
         "chrome-cdp",
         "Chrome (remote debugging)",
@@ -657,6 +776,117 @@ async def test_remote_debugging_session_attaches_without_closing_user_context(
 
     assert instances[0].endpoint == "ws://127.0.0.1:9222/devtools/browser/test"
     assert listed["browsers"][0]["currentUrl"] == "https://example.com/"
+    assert instances[0].closed is True
+
+
+async def test_remote_debugging_session_opens_lists_and_reads_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import agent_zero_cli.host_browser_session as host_browser_session_module
+
+    instances = []
+
+    class FakeCDPConnection:
+        def __init__(self, endpoint: str) -> None:
+            self.endpoint = endpoint
+            self.closed = False
+            self.targets: dict[str, dict[str, str]] = {}
+            self.sessions: dict[str, str] = {}
+            self.closed_targets: list[str] = []
+            instances.append(self)
+
+        async def connect(self) -> None:
+            return None
+
+        async def close(self) -> None:
+            self.closed = True
+
+        async def command(
+            self,
+            method: str,
+            params: dict[str, object] | None = None,
+            *,
+            session_id: str | None = None,
+            timeout: float = 30.0,
+        ) -> dict[str, object]:
+            del timeout
+            params = params or {}
+            if method == "Target.getTargets":
+                return {
+                    "targetInfos": [
+                        {
+                            "targetId": target_id,
+                            "type": "page",
+                            "url": target["url"],
+                        }
+                        for target_id, target in self.targets.items()
+                    ]
+                }
+            if method == "Target.createTarget":
+                target_id = f"target-{len(self.targets) + 1}"
+                self.targets[target_id] = {"url": str(params.get("url") or "about:blank")}
+                return {"targetId": target_id}
+            if method == "Target.attachToTarget":
+                target_id = str(params.get("targetId") or "")
+                session = f"session-{target_id}"
+                self.sessions[session] = target_id
+                return {"sessionId": session}
+            if method == "Target.closeTarget":
+                target_id = str(params.get("targetId") or "")
+                self.closed_targets.append(target_id)
+                self.targets.pop(target_id, None)
+                return {}
+            if method in {"Page.enable", "Runtime.enable", "Page.addScriptToEvaluateOnNewDocument"}:
+                return {}
+            if method == "Page.navigate":
+                target_id = self.sessions[str(session_id)]
+                self.targets[target_id]["url"] = str(params.get("url") or "")
+                return {}
+            if method == "Runtime.evaluate":
+                expression = str(params.get("expression") or "")
+                target_id = self.sessions[str(session_id)]
+                url = self.targets[target_id]["url"]
+                if "location.href" in expression:
+                    return {"result": {"type": "string", "value": url}}
+                if "document.title" in expression:
+                    return {"result": {"type": "string", "value": "Example"}}
+                if "history" in expression:
+                    return {"result": {"type": "number", "value": 1}}
+                if "__spaceBrowserPageContent__?.capture" in expression:
+                    return {"result": {"type": "boolean", "value": True}}
+                if "__spaceBrowserPageContent__.capture" in expression:
+                    return {
+                        "result": {
+                            "type": "object",
+                            "value": {"document": "[button 1] Continue"},
+                        }
+                    }
+                return {"result": {"type": "undefined"}}
+            return {}
+
+    monkeypatch.setattr(host_browser_session_module, "CDPConnection", FakeCDPConnection)
+    profile = BrowserProfile(
+        "chrome-cdp",
+        "Chrome (remote debugging)",
+        "",
+        Path(),
+        "127.0.0.1:9222",
+        "Remote debugging allowed",
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
+    )
+    session = HostBrowserSession(context_id="ctx-cdp-actions", profile=profile)
+
+    opened = await session.open("example.com")
+    content = await session.content(opened["id"])
+    listed = await session.list(include_content=True)
+    closed = await session.close_browser(opened["id"])
+    await session.close()
+
+    assert opened["state"]["currentUrl"] == "https://example.com/"
+    assert content == {"document": "[button 1] Continue"}
+    assert listed["browsers"][0]["content"] == {"document": "[button 1] Continue"}
+    assert closed == {"browsers": [], "last_interacted_browser_id": None}
+    assert instances[0].closed_targets == ["target-1"]
     assert instances[0].closed is True
 
 
@@ -694,7 +924,7 @@ async def test_ensure_auto_selects_supported_managed_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
@@ -703,7 +933,7 @@ async def test_ensure_auto_selects_supported_managed_profile(
     (default_root / "Default").mkdir(parents=True)
     managed_root = tmp_path / "a0-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
-    monkeypatch.setattr(host_browser_module, "browser_major_version", lambda _: 147)
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=False,
@@ -733,7 +963,7 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser as host_browser_module
+    import agent_zero_cli.host_browser_common as host_browser_common_module
 
     root = tmp_path / "Chrome"
     (root / "Default").mkdir(parents=True)
@@ -757,7 +987,7 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
         {"op_id": "op-open-1", "context_id": "chat-1", "action": "open", "url": "example.com"}
     )
     monkeypatch.setattr(
-        host_browser_module,
+        host_browser_common_module,
         "profile_lock_state",
         lambda _: ProfileLockState(True, (str(root / "SingletonLock"),), 12345),
     )
@@ -810,6 +1040,21 @@ async def test_set_checked_dispatch_parses_false_string(tmp_path: Path) -> None:
     )
 
     assert seen == {"browser_id": 1, "ref": "input-1", "checked": False}
+
+
+async def test_manager_preserves_error_payload_shape_for_unknown_action(tmp_path: Path) -> None:
+    manager = HostBrowserManager(CLIConfig(host_browser_enabled=True), playwright_available=True)
+
+    result = await manager.handle_op(
+        {"op_id": "op-unknown", "context_id": "ctx-error-shape", "action": "dance"}
+    )
+
+    assert result == {
+        "op_id": "op-unknown",
+        "ok": False,
+        "code": "UNKNOWN_ACTION",
+        "error": "Unknown host browser action: 'dance'",
+    }
 
 
 async def test_goto_surfaces_navigation_failures(tmp_path: Path) -> None:
