@@ -456,13 +456,13 @@ def test_get_binding_description_reflects_remote_safety_toggle_state(
     file_binding = bindings["toggle_remote_file_mode"]
     exec_binding = bindings["toggle_remote_exec"]
 
-    assert dummy_app.get_binding_description(file_binding) == "Read-only"
+    assert dummy_app.get_binding_description(file_binding) == "Read&Write"
     assert dummy_app.get_binding_description(exec_binding) == "Code-exec OFF"
 
-    dummy_app._set_remote_file_write_enabled(True)
+    dummy_app._set_remote_file_write_enabled(False)
     dummy_app._set_remote_exec_enabled(True)
 
-    assert dummy_app.get_binding_description(file_binding) == "Read&Write"
+    assert dummy_app.get_binding_description(file_binding) == "Read-only"
     assert dummy_app.get_binding_description(exec_binding) == "Code-exec ON"
 
 
@@ -1380,18 +1380,18 @@ async def test_project_command_reports_missing_project(
 async def test_remote_safety_toggles_update_local_permissions(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
-    assert dummy_app._remote_files.allow_writes is False
+    assert dummy_app._remote_files.allow_writes is True
     assert dummy_app._python_tty.enabled is False
-    assert dummy_app._python_tty.allow_writes is False
+    assert dummy_app._python_tty.allow_writes is True
 
     await dummy_app.action_toggle_remote_file_mode()
     await dummy_app.action_toggle_remote_exec()
 
-    assert dummy_app._remote_file_write_enabled is True
+    assert dummy_app._remote_file_write_enabled is False
     assert dummy_app._remote_exec_enabled is True
-    assert dummy_app._remote_files.allow_writes is True
+    assert dummy_app._remote_files.allow_writes is False
     assert dummy_app._python_tty.enabled is True
-    assert dummy_app._python_tty.allow_writes is True
+    assert dummy_app._python_tty.allow_writes is False
 
 
 async def test_computer_use_slash_commands_update_notice_and_status(
@@ -1465,8 +1465,8 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": False,
-                "mode": "read_only",
+                "write_enabled": True,
+                "mode": "read_write",
             },
             "remote_exec": {
                 "enabled": False,
@@ -1483,8 +1483,8 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": False,
-                "mode": "read_only",
+                "write_enabled": True,
+                "mode": "read_write",
             },
             "remote_exec": {
                 "enabled": False,
@@ -1703,8 +1703,8 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": False,
-                "mode": "read_only",
+                "write_enabled": True,
+                "mode": "read_write",
             },
             "remote_exec": {
                 "enabled": False,
@@ -1721,8 +1721,8 @@ async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": False,
-                "mode": "read_only",
+                "write_enabled": True,
+                "mode": "read_write",
             },
             "remote_exec": {
                 "enabled": False,
@@ -1774,8 +1774,8 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": True,
-                "mode": "read_write",
+                "write_enabled": False,
+                "mode": "read_only",
             },
             "remote_exec": {
                 "enabled": False,
@@ -1792,8 +1792,8 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
-                "write_enabled": True,
-                "mode": "read_write",
+                "write_enabled": False,
+                "mode": "read_only",
             },
             "remote_exec": {
                 "enabled": True,
