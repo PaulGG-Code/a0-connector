@@ -264,26 +264,34 @@ class FakeHostBrowserManager:
         self.handled_ops: list[dict[str, object]] = []
         self.playwright_available = True
         self.install_calls = 0
+        self.remote_debugging = False
 
     def metadata(self) -> dict[str, object]:
+        supported = self.playwright_available or self.remote_debugging
         return {
-            "supported": self.playwright_available,
+            "supported": supported,
             "enabled": self.enabled,
-            "status": "ready" if self.enabled and self.playwright_available else "disabled",
-            "browser_family": "chrome",
-            "profile_label": "Default",
+            "status": "ready" if self.enabled and supported else "disabled",
+            "browser_family": "chrome-cdp" if self.remote_debugging else "chrome",
+            "profile_label": "localhost:9222" if self.remote_debugging else "Default",
             "features": ["open", "content"],
-            "support_reason": "" if self.playwright_available else "missing playwright",
+            "support_reason": "" if supported else "missing playwright",
         }
 
     def status_text(self) -> str:
-        if not self.playwright_available:
+        if not self.playwright_available and not self.remote_debugging:
             return "Host browser unsupported: missing playwright"
+        if self.remote_debugging:
+            state = "ready" if self.enabled else "disabled"
+            return f"Host browser {state}: remote debugging browser at ws://localhost:9222/devtools/browser/test."
         state = "ready" if self.enabled else "disabled"
         return f"Host browser {state}: chrome profile Default (/tmp/profile)."
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
+
+    def selected_profile(self) -> SimpleNamespace:
+        return SimpleNamespace(is_remote_debugging=self.remote_debugging)
 
     def has_playwright_dependency(self) -> bool:
         return self.playwright_available
@@ -1498,6 +1506,23 @@ async def test_browser_host_on_repairs_missing_playwright(
     assert "Installing now: /tmp/python -m pip install playwright" in notices[0][0]
     assert "Python Playwright installed for host browser control" in notices[1][0]
     assert notices[-1][0].startswith("Host browser enabled.")
+
+
+async def test_browser_host_on_skips_playwright_for_remote_debugging(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    host_browser = dummy_app._host_browser
+    host_browser.playwright_available = False
+    host_browser.remote_debugging = True
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+
+    await dummy_app._dispatch_command("/browser host on")
+
+    assert host_browser.enabled is True
+    assert host_browser.install_calls == 0
+    assert not any("Installing now" in notice[0] for notice in notices)
 
 
 async def test_browser_repair_command_installs_missing_playwright(

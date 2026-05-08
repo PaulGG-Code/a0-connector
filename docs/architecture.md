@@ -142,8 +142,10 @@ same `vision_load` shape used by the container browser.
 
 `connector_hello.host_browser` advertises:
 - `supported`, `enabled`, and `status`
+- `can_prepare` when the CLI can repair or launch host control on first use
 - `browser_family`
 - `profile_label` and `profile_path`
+- `cdp_endpoint` when Chrome has exposed a user-authorized DevTools endpoint
 - `features`
 - `support_reason`
 
@@ -163,13 +165,27 @@ For those browsers, the CLI advertises an A0-controlled local profile such as
 `chrome-a0 Default` under the user's data directory. Cookies and site data stay
 inside that separate browser profile on the host; A0 does not copy them out.
 
-Host browser support requires Python Playwright in the A0 CLI host environment.
-The Playwright runtime under the Agent Zero Docker container, including
-`/a0/tmp/playwright`, powers the container browser backend and cannot control a
-host Chrome-family profile from inside Docker. If the host Python dependency is
-missing, `/browser host on`, `/browser relaunch`, and `/browser repair` surface
-the install command in the TUI and run `python -m pip install playwright` in the
-A0 CLI environment.
+When Chrome itself exposes a user-authorized debugging server, the CLI prefers
+that explicit consent path. The user opens
+Chrome's Remote debugging page (`chrome://inspect/#remote-debugging`, or
+`chrome://inspect/#devices` on older Chrome builds) and allows remote debugging
+for the current browser instance. Chrome writes `DevToolsActivePort` in its user
+data directory; the CLI reads that file, advertises a `chrome-cdp` profile, and
+uses a built-in DevTools Protocol WebSocket helper. Discovery never opens a
+probe connection, so status/profile checks do not trigger extra Chrome **Allow**
+prompts. The first real Browser operation opens one long-lived connection for
+that chat. A0 disconnect does not close the user's browser tabs; explicit
+Browser close actions still act on tabs the agent can see.
+
+The local-profile launch path requires Python Playwright in the A0 CLI host
+environment. The Playwright runtime under the Agent Zero Docker container,
+including `/a0/tmp/playwright`, powers the container browser backend and cannot
+control a host Chrome-family profile from inside Docker. User-authorized Chrome
+remote debugging does not require the Chrome DevTools MCP package or Playwright
+CDP attach; the connector carries the small CDP helper directly. If the host
+Python dependency is missing for the launch path, `/browser host on`,
+`/browser relaunch`, and `/browser repair` surface the install command in the
+TUI and run `python -m pip install playwright` in the A0 CLI environment.
 
 ## Event bridge
 

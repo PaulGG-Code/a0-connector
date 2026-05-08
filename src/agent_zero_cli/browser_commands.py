@@ -53,7 +53,7 @@ async def _cmd_browser_host(app: "AgentZeroCLI", args: list[str]) -> None:
 
     enabled = args[0].lower() in {"on", "enable"}
     app._host_browser.set_enabled(enabled)
-    if enabled and not await _ensure_playwright_dependency(app):
+    if enabled and _selected_profile_needs_playwright(app) and not await _ensure_playwright_dependency(app):
         await _refresh_browser_metadata_notice(app, "Host browser is enabled but still unsupported.")
         return
     synced = await app._refresh_remote_tool_metadata()
@@ -78,7 +78,7 @@ async def _cmd_browser_profile(app: "AgentZeroCLI", args: list[str]) -> None:
         selected = app._host_browser.selected_profile()
         selected_text = ""
         if selected is not None:
-            selected_text = f"\nSelected: {selected.family} {selected.profile_label} ({selected.profile_path})"
+            selected_text = f"\nSelected: {selected.family} {selected.profile_label} ({selected.profile_path_display})"
         app._show_notice(
             "Detected host browser profiles:\n"
             + "\n".join(rows[:12])
@@ -96,7 +96,7 @@ async def _cmd_browser_profile(app: "AgentZeroCLI", args: list[str]) -> None:
         return
 
     synced = await app._refresh_remote_tool_metadata()
-    message = f"Selected {profile.family} profile {profile.profile_label} ({profile.profile_path})."
+    message = f"Selected {profile.family} profile {profile.profile_label} ({profile.profile_path_display})."
     if synced:
         app._show_notice(message)
     else:
@@ -107,7 +107,7 @@ async def _cmd_browser_profile(app: "AgentZeroCLI", args: list[str]) -> None:
 
 
 async def _cmd_browser_relaunch(app: "AgentZeroCLI") -> None:
-    if not await _ensure_playwright_dependency(app):
+    if _selected_profile_needs_playwright(app) and not await _ensure_playwright_dependency(app):
         await _refresh_browser_metadata_notice(app, "Host browser relaunch is blocked.")
         return
     try:
@@ -130,7 +130,12 @@ async def _cmd_browser_relaunch(app: "AgentZeroCLI") -> None:
             "Host browser relaunched locally, but Agent Zero did not acknowledge "
             f"the update: {app._remote_tool_metadata_error}",
             error=True,
-        )
+    )
+
+
+def _selected_profile_needs_playwright(app: "AgentZeroCLI") -> bool:
+    profile = app._host_browser.selected_profile()
+    return profile is None or not profile.is_remote_debugging
 
 
 async def _ensure_playwright_dependency(app: "AgentZeroCLI") -> bool:

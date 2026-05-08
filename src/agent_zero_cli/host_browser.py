@@ -20,6 +20,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
+import aiohttp
+
 from agent_zero_cli.config import (
     CLIConfig,
     normalize_host_browser_relaunch_preference,
@@ -35,6 +37,8 @@ HOST_BROWSER_ARTIFACT_ROOT_ENV = "A0_HOST_BROWSER_ARTIFACT_ROOT"
 DEFAULT_HOST_BROWSER_ARTIFACT_ROOT = Path(tempfile.gettempdir()) / "_a0_connector" / "host_browser"
 PLAYWRIGHT_PYTHON_PACKAGE = "playwright"
 HOST_BROWSER_OZONE_PLATFORM_ENV = "A0_HOST_BROWSER_OZONE_PLATFORM"
+HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS_ENV = "A0_HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS"
+REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS = 60.0
 REMOTE_DEBUGGING_RESTRICTED_MAJOR = 136
 RELAUNCH_CONTEXT_ID = "_a0_cli_browser_check"
 MAX_INSTALL_OUTPUT_CHARS = 4000
@@ -108,24 +112,34 @@ class BrowserProfile:
     user_data_dir: Path
     profile_directory: str
     display_name: str
+    cdp_endpoint: str = ""
 
     @property
     def profile_path(self) -> Path:
         return self.user_data_dir
 
     @property
+    def profile_path_display(self) -> str:
+        return self.cdp_endpoint or str(self.profile_path)
+
+    @property
     def profile_label(self) -> str:
         return self.profile_directory
+
+    @property
+    def is_remote_debugging(self) -> bool:
+        return bool(self.cdp_endpoint)
 
     def as_dict(self) -> dict[str, Any]:
         return {
             "family": self.family,
             "family_label": self.family_label,
             "executable_path": self.executable_path,
-            "profile_path": str(self.profile_path),
+            "profile_path": self.profile_path_display,
             "profile_label": self.profile_label,
             "display_name": self.display_name,
-            "locked": is_profile_locked(self.profile_path),
+            "cdp_endpoint": self.cdp_endpoint,
+            "locked": False if self.is_remote_debugging else is_profile_locked(self.profile_path),
         }
 
 
@@ -149,12 +163,396 @@ class HostBrowserPage:
     page: Any
 
 
+class CDPError(RuntimeError):
+    pass
+
+
+class CDPConnection:
+    def __init__(self, endpoint: str) -> None:
+        self.endpoint = endpoint
+        self._session: aiohttp.ClientSession | None = None
+        self._ws: aiohttp.ClientWebSocketResponse | None = None
+        self._reader_task: asyncio.Task[None] | None = None
+        self._next_id = 1
+        self._pending: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        self._send_lock = asyncio.Lock()
+
+    async def connect(self) -> None:
+        timeout = aiohttp.ClientTimeout(total=REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS)
+        self._session = aiohttp.ClientSession(timeout=timeout)
+        try:
+            self._ws = await self._session.ws_connect(
+                self.endpoint,
+                timeout=REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS,
+                autoclose=True,
+                autoping=True,
+            )
+        except Exception:
+            await self.close()
+            raise
+        self._reader_task = asyncio.create_task(self._read_loop())
+
+    async def command(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        *,
+        session_id: str | None = None,
+        timeout: float = 30.0,
+    ) -> dict[str, Any]:
+        if self._ws is None:
+            raise CDPError("Chrome DevTools connection is not open.")
+        async with self._send_lock:
+            msg_id = self._next_id
+            self._next_id += 1
+            future: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+            self._pending[msg_id] = future
+            payload: dict[str, Any] = {"id": msg_id, "method": method}
+            if params:
+                payload["params"] = params
+            if session_id:
+                payload["sessionId"] = session_id
+            await self._ws.send_json(payload)
+        try:
+            response = await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._pending.pop(msg_id, None)
+        if "error" in response:
+            error = response.get("error") or {}
+            message = error.get("message") if isinstance(error, dict) else str(error)
+            raise CDPError(str(message or f"CDP command failed: {method}"))
+        result = response.get("result")
+        return result if isinstance(result, dict) else {}
+
+    async def close(self) -> None:
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._reader_task
+            self._reader_task = None
+        if self._ws is not None:
+            with contextlib.suppress(Exception):
+                await self._ws.close()
+            self._ws = None
+        if self._session is not None:
+            with contextlib.suppress(Exception):
+                await self._session.close()
+            self._session = None
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.set_result({"error": {"message": "Chrome DevTools connection closed."}})
+        self._pending.clear()
+
+    async def _read_loop(self) -> None:
+        assert self._ws is not None
+        async for message in self._ws:
+            if message.type == aiohttp.WSMsgType.TEXT:
+                try:
+                    payload = json.loads(message.data)
+                except Exception:
+                    continue
+                msg_id = payload.get("id")
+                if isinstance(msg_id, int):
+                    future = self._pending.get(msg_id)
+                    if future is not None and not future.done():
+                        future.set_result(payload)
+            elif message.type in {aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR}:
+                break
+        for future in list(self._pending.values()):
+            if not future.done():
+                future.set_result({"error": {"message": "Chrome DevTools connection closed."}})
+
+
+class CDPMouse:
+    def __init__(self, page: "CDPPage") -> None:
+        self.page = page
+        self._x = 0.0
+        self._y = 0.0
+
+    async def move(self, x: float, y: float, steps: int | None = None) -> None:
+        del steps
+        self._x = float(x)
+        self._y = float(y)
+        await self.page.send("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": self._x, "y": self._y})
+
+    async def click(self, x: float, y: float, button: str = "left") -> None:
+        self._x = float(x)
+        self._y = float(y)
+        params = {"x": float(x), "y": float(y), "button": _cdp_mouse_button(button), "clickCount": 1}
+        await self.page.send("Input.dispatchMouseEvent", {"type": "mousePressed", **params})
+        await self.page.send("Input.dispatchMouseEvent", {"type": "mouseReleased", **params})
+
+    async def dblclick(self, x: float, y: float, button: str = "left") -> None:
+        self._x = float(x)
+        self._y = float(y)
+        params = {"x": float(x), "y": float(y), "button": _cdp_mouse_button(button), "clickCount": 2}
+        await self.page.send("Input.dispatchMouseEvent", {"type": "mousePressed", **params})
+        await self.page.send("Input.dispatchMouseEvent", {"type": "mouseReleased", **params})
+
+    async def down(self) -> None:
+        await self.page.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mousePressed", "x": self._x, "y": self._y, "button": "left", "clickCount": 1},
+        )
+
+    async def up(self) -> None:
+        await self.page.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseReleased", "x": self._x, "y": self._y, "button": "left", "clickCount": 1},
+        )
+
+    async def wheel(self, delta_x: float, delta_y: float) -> None:
+        await self.page.send(
+            "Input.dispatchMouseEvent",
+            {"type": "mouseWheel", "x": self._x, "y": self._y, "deltaX": float(delta_x), "deltaY": float(delta_y)},
+        )
+
+
+class CDPKeyboard:
+    def __init__(self, page: "CDPPage") -> None:
+        self.page = page
+
+    async def type(self, text: str) -> None:
+        await self.insert_text(text)
+
+    async def insert_text(self, text: str) -> None:
+        await self.page.send("Input.insertText", {"text": str(text or "")})
+
+    async def press(self, key: str) -> None:
+        key_text = str(key or "")
+        if len(key_text) == 1:
+            await self.page.send("Input.dispatchKeyEvent", {"type": "keyDown", "text": key_text, "key": key_text})
+            await self.page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key_text})
+            return
+        await self.page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": key_text})
+        await self.page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": key_text})
+
+    async def down(self, key: str) -> None:
+        await self.page.send("Input.dispatchKeyEvent", {"type": "keyDown", "key": str(key or "")})
+
+    async def up(self, key: str) -> None:
+        await self.page.send("Input.dispatchKeyEvent", {"type": "keyUp", "key": str(key or "")})
+
+
+class CDPPage:
+    def __init__(self, context: "CDPContext", target_id: str, session_id: str, url: str = "") -> None:
+        self.context = context
+        self.connection = context.connection
+        self.target_id = target_id
+        self.session_id = session_id
+        self.url = url or "about:blank"
+        self.mouse = CDPMouse(self)
+        self.keyboard = CDPKeyboard(self)
+        self.viewport_size = dict(DEFAULT_VIEWPORT)
+        self._handlers: dict[str, Any] = {}
+
+    def on(self, event: str, callback: Any) -> None:
+        self._handlers[event] = callback
+
+    async def send(self, method: str, params: dict[str, Any] | None = None, *, timeout: float = 30.0) -> dict[str, Any]:
+        return await self.connection.command(method, params, session_id=self.session_id, timeout=timeout)
+
+    async def goto(self, url: str, **_: object) -> None:
+        await self.send("Page.navigate", {"url": url})
+        self.url = url
+
+    async def go_back(self, **_: object) -> None:
+        await self.evaluate("() => history.back()")
+
+    async def go_forward(self, **_: object) -> None:
+        await self.evaluate("() => history.forward()")
+
+    async def reload(self, **_: object) -> None:
+        await self.send("Page.reload", {})
+
+    async def wait_for_load_state(self, *_: object, **__: object) -> None:
+        await asyncio.sleep(0.15)
+
+    async def bring_to_front(self) -> None:
+        await self.connection.command("Target.activateTarget", {"targetId": self.target_id})
+
+    async def title(self) -> str:
+        result = await self.evaluate("() => document.title")
+        return str(result or "")
+
+    async def evaluate(self, script: str, arg: object = None) -> object:
+        result = await self.send(
+            "Runtime.evaluate",
+            {
+                "expression": _cdp_evaluate_expression(script, arg),
+                "awaitPromise": True,
+                "returnByValue": True,
+            },
+        )
+        if result.get("exceptionDetails"):
+            raise CDPError(str(result["exceptionDetails"]))
+        remote = result.get("result") if isinstance(result.get("result"), dict) else {}
+        if "value" in remote:
+            return remote.get("value")
+        if remote.get("type") == "undefined":
+            return None
+        return remote.get("description")
+
+    async def screenshot(self, **kwargs: object) -> bytes:
+        image_type = str(kwargs.get("type") or "jpeg")
+        params: dict[str, Any] = {"format": image_type}
+        if image_type == "jpeg":
+            params["quality"] = int(kwargs.get("quality") or 80)
+        if kwargs.get("full_page"):
+            params["captureBeyondViewport"] = True
+        result = await self.send("Page.captureScreenshot", params, timeout=60.0)
+        data = base64.b64decode(str(result.get("data") or ""))
+        path = kwargs.get("path")
+        if path:
+            Path(str(path)).write_bytes(data)
+        return data
+
+    async def close(self) -> None:
+        await self.connection.command("Target.closeTarget", {"targetId": self.target_id})
+
+    async def set_viewport_size(self, viewport: dict[str, int]) -> None:
+        self.viewport_size = dict(viewport)
+        await self.send(
+            "Emulation.setDeviceMetricsOverride",
+            {
+                "width": int(viewport["width"]),
+                "height": int(viewport["height"]),
+                "deviceScaleFactor": 1,
+                "mobile": False,
+            },
+        )
+
+    async def evaluate_handle(self, *_: object, **__: object) -> None:
+        return None
+
+    async def set_input_files(self, *_: object, **__: object) -> None:
+        raise NotImplementedError("File uploads are not supported for user-authorized Chrome remote debugging yet.")
+
+
+class CDPContext:
+    def __init__(self, connection: CDPConnection) -> None:
+        self.connection = connection
+        self.pages: list[CDPPage] = []
+        self._pages_by_target: dict[str, CDPPage] = {}
+        self._handlers: dict[str, Any] = {}
+        self._init_scripts: list[str] = []
+
+    def set_default_timeout(self, timeout: int) -> None:
+        del timeout
+
+    def set_default_navigation_timeout(self, timeout: int) -> None:
+        del timeout
+
+    def on(self, event: str, callback: Any) -> None:
+        self._handlers[event] = callback
+
+    async def add_init_script(self, script: str | None = None, *, path: str | None = None) -> None:
+        source = script if script is not None else Path(str(path)).read_text(encoding="utf-8")
+        self._init_scripts.append(str(source))
+        for page in list(self.pages):
+            with contextlib.suppress(Exception):
+                await page.send("Page.addScriptToEvaluateOnNewDocument", {"source": str(source)})
+
+    async def new_page(self) -> CDPPage:
+        result = await self.connection.command("Target.createTarget", {"url": "about:blank"})
+        target_id = str(result.get("targetId") or "")
+        return await self._attach_page(target_id, "about:blank")
+
+    async def close(self) -> None:
+        return None
+
+    async def discover_pages(self) -> list[CDPPage]:
+        result = await self.connection.command("Target.getTargets", {})
+        infos = result.get("targetInfos") if isinstance(result.get("targetInfos"), list) else []
+        visible_targets: set[str] = set()
+        for info in infos:
+            if not isinstance(info, dict) or info.get("type") != "page":
+                continue
+            target_id = str(info.get("targetId") or "")
+            url = str(info.get("url") or "about:blank")
+            if not target_id or not _cdp_target_visible(url):
+                continue
+            visible_targets.add(target_id)
+            page = self._pages_by_target.get(target_id)
+            if page is None:
+                page = await self._attach_page(target_id, url)
+            else:
+                page.url = url
+        for target_id in list(self._pages_by_target):
+            if target_id not in visible_targets:
+                self._pages_by_target.pop(target_id, None)
+        self.pages = [page for page in self.pages if page.target_id in self._pages_by_target]
+        return list(self.pages)
+
+    async def _attach_page(self, target_id: str, url: str) -> CDPPage:
+        attach = await self.connection.command("Target.attachToTarget", {"targetId": target_id, "flatten": True})
+        session_id = str(attach.get("sessionId") or "")
+        if not target_id or not session_id:
+            raise CDPError(f"Could not attach to Chrome target {target_id}.")
+        page = CDPPage(self, target_id, session_id, url)
+        self._pages_by_target[target_id] = page
+        self.pages.append(page)
+        with contextlib.suppress(Exception):
+            await page.send("Page.enable", {})
+        with contextlib.suppress(Exception):
+            await page.send("Runtime.enable", {})
+        for source in self._init_scripts:
+            with contextlib.suppress(Exception):
+                await page.send("Page.addScriptToEvaluateOnNewDocument", {"source": source})
+        return page
+
+
+def _cdp_mouse_button(button: str) -> str:
+    normalized = str(button or "left").strip().lower()
+    if normalized == "right":
+        return "right"
+    if normalized in {"middle", "auxiliary"}:
+        return "middle"
+    return "left"
+
+
+def _cdp_evaluate_expression(script: str, arg: object = None) -> str:
+    source = str(script or "undefined")
+    if arg is not None:
+        return f"({source})({json.dumps(arg)})"
+    stripped = source.strip()
+    if _cdp_expression_is_iife(stripped):
+        return source
+    if _cdp_expression_is_function(stripped):
+        return f"({source})()"
+    return source
+
+
+def _cdp_expression_is_function(source: str) -> bool:
+    return bool(
+        re.match(r"^(?:async\s+)?function\b", source)
+        or re.match(r"^(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>", source)
+    )
+
+
+def _cdp_expression_is_iife(source: str) -> bool:
+    compact = source.rstrip()
+    return compact.endswith(")();") or compact.endswith("})();")
+
+
+def _cdp_target_visible(url: str) -> bool:
+    normalized = str(url or "")
+    if normalized in {"", "about:blank", "chrome://newtab/"}:
+        return True
+    if normalized.startswith("chrome://inspect"):
+        return True
+    return not normalized.startswith(
+        ("chrome://", "chrome-untrusted://", "chrome-extension://", "devtools://")
+    )
+
+
 @dataclass
 class HostBrowserSession:
     context_id: str
     profile: BrowserProfile
     playwright_starter: Callable[[], Any] | None = None
     playwright: Any = None
+    browser: Any = None
     context: Any = None
     pages: dict[int, HostBrowserPage] = field(default_factory=dict)
     next_browser_id: int = 1
@@ -345,7 +743,7 @@ class HostBrowserSession:
             await self._start()
 
     async def _start(self) -> None:
-        lock = profile_lock_state(self.profile.profile_path)
+        lock = profile_lock_state_for_profile(self.profile)
         if lock.locked:
             raise ProfileLockedError(
                 "Chrome profile is already in use. Run /browser relaunch after closing that browser, "
@@ -353,30 +751,40 @@ class HostBrowserSession:
                 lock_state=lock,
             )
 
-        if self.playwright_starter is not None:
-            starter = self.playwright_starter
-        else:
-            from playwright.async_api import async_playwright
-
-            starter = async_playwright
-
-        self.playwright = await starter().start()
-        launch_args = chromium_launch_args(self.profile.profile_directory)
-
         try:
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=str(self.profile.user_data_dir),
-                executable_path=self.profile.executable_path,
-                headless=False,
-                accept_downloads=True,
-                viewport=DEFAULT_VIEWPORT,
-                screen=DEFAULT_VIEWPORT,
-                no_viewport=False,
-                args=launch_args,
-            )
+            if self.profile.is_remote_debugging:
+                connection = CDPConnection(self.profile.cdp_endpoint)
+                await connection.connect()
+                self.browser = connection
+                self.context = CDPContext(connection)
+                await self.context.discover_pages()
+            else:
+                if self.playwright_starter is not None:
+                    starter = self.playwright_starter
+                else:
+                    from playwright.async_api import async_playwright
+
+                    starter = async_playwright
+                self.playwright = await starter().start()
+                launch_args = chromium_launch_args(self.profile.profile_directory)
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(self.profile.user_data_dir),
+                    executable_path=self.profile.executable_path,
+                    headless=False,
+                    accept_downloads=True,
+                    viewport=DEFAULT_VIEWPORT,
+                    screen=DEFAULT_VIEWPORT,
+                    no_viewport=False,
+                    args=launch_args,
+                )
         except BaseException:
-            with contextlib.suppress(Exception):
-                await self.playwright.stop()
+            if isinstance(self.browser, CDPConnection):
+                with contextlib.suppress(Exception):
+                    await self.browser.close()
+            self.browser = None
+            if self.playwright is not None:
+                with contextlib.suppress(Exception):
+                    await self.playwright.stop()
             self.playwright = None
             self.context = None
             raise
@@ -384,8 +792,10 @@ class HostBrowserSession:
         self.context.set_default_navigation_timeout(30000)
         self.context.on("close", self._on_context_closed)
         self.context.on("page", self._on_new_page_sync)
-        await self.context.add_init_script(self._shadow_dom_script())
-        await self.context.add_init_script(path=str(CONTENT_HELPER_PATH))
+        with contextlib.suppress(Exception):
+            await self.context.add_init_script(self._shadow_dom_script())
+        with contextlib.suppress(Exception):
+            await self.context.add_init_script(path=str(CONTENT_HELPER_PATH))
 
         for page in list(getattr(self.context, "pages", []) or []):
             if getattr(page, "url", "") == "about:blank":
@@ -406,6 +816,18 @@ class HostBrowserSession:
 
     async def list(self, include_content: bool = False) -> dict[str, Any]:
         await self.ensure_started()
+        if isinstance(self.context, CDPContext):
+            discovered_pages = await self.context.discover_pages()
+            visible_pages = set(discovered_pages)
+            for browser_id, browser_page in list(self.pages.items()):
+                if browser_page.page not in visible_pages:
+                    self.pages.pop(browser_id, None)
+                    if self.last_interacted_browser_id == browser_id:
+                        self.last_interacted_browser_id = None
+            for page in discovered_pages:
+                await self._register_page(page)
+            if self.last_interacted_browser_id not in self.pages:
+                self.last_interacted_browser_id = next(iter(sorted(self.pages)), None)
         ids = sorted(self.pages)
         if not ids:
             return {"browsers": [], "last_interacted_browser_id": self.last_interacted_browser_id}
@@ -955,18 +1377,24 @@ class HostBrowserSession:
 
     async def close(self) -> None:
         self._closing = True
-        for browser_id in list(self.pages):
-            with contextlib.suppress(Exception):
-                await self.pages[browser_id].page.close()
+        if not self.profile.is_remote_debugging:
+            for browser_id in list(self.pages):
+                with contextlib.suppress(Exception):
+                    await self.pages[browser_id].page.close()
         self.pages.clear()
-        if self.context is not None:
+        if self.context is not None and not self.profile.is_remote_debugging:
             with contextlib.suppress(Exception):
                 await self.context.close()
             self.context = None
+        if isinstance(self.browser, CDPConnection):
+            with contextlib.suppress(Exception):
+                await self.browser.close()
+        self.browser = None
         if self.playwright is not None:
             with contextlib.suppress(Exception):
                 await self.playwright.stop()
             self.playwright = None
+        self.context = None
         self.last_interacted_browser_id = None
 
     def _maybe_promote(self, resolved_id: int) -> None:
@@ -1059,6 +1487,11 @@ class HostBrowserSession:
         if not browser_page:
             raise KeyError(f"Browser {browser_id} is not open.")
         page = browser_page.page
+        if isinstance(page, CDPPage):
+            with contextlib.suppress(Exception):
+                current_url = await page.evaluate("() => location.href")
+                if current_url:
+                    page.url = str(current_url)
         try:
             title = await page.title()
         except Exception:
@@ -1210,14 +1643,17 @@ class HostBrowserManager:
         status = self.status_snapshot(profile=profile)
         return {
             "supported": bool(status["supported"]),
+            "can_prepare": bool(status["can_prepare"]),
             "enabled": bool(status["enabled"]),
             "status": status["status"],
             "browser_family": profile.family if profile else "",
             "profile_label": profile.profile_label if profile else "",
-            "profile_path": str(profile.profile_path) if profile else "",
+            "profile_path": profile.profile_path_display if profile else "",
+            "cdp_endpoint": profile.cdp_endpoint if profile else "",
             "features": [
                 "existing_profile",
                 "dedicated_profile",
+                "user_authorized_remote_debugging",
                 "playwright",
                 "artifacts",
                 "background_tabs",
@@ -1234,12 +1670,13 @@ class HostBrowserManager:
         profile = profile if profile is not None else self.selected_profile()
         support_reason = self._support_reason(profile)
         supported = not support_reason
-        lock = profile_lock_state(profile.profile_path) if profile else ProfileLockState(False)
+        can_prepare = self._can_prepare(profile)
+        lock = profile_lock_state_for_profile(profile) if profile else ProfileLockState(False)
         if not supported:
             status = "unsupported"
         elif not self.enabled:
             status = "disabled"
-        elif self._sessions:
+        elif profile is not None and self._active_context_for_profile(profile):
             status = "active"
         elif lock.locked:
             status = "relaunch_required"
@@ -1247,11 +1684,13 @@ class HostBrowserManager:
             status = "ready"
         return {
             "supported": supported,
+            "can_prepare": can_prepare,
             "enabled": self.enabled and supported,
             "status": status,
             "browser_family": profile.family if profile else "",
             "profile_label": profile.profile_label if profile else "",
-            "profile_path": str(profile.profile_path) if profile else "",
+            "profile_path": profile.profile_path_display if profile else "",
+            "cdp_endpoint": profile.cdp_endpoint if profile else "",
             "profile_locked": lock.locked,
             "lock": lock.as_dict(),
             "support_reason": support_reason,
@@ -1262,10 +1701,19 @@ class HostBrowserManager:
     def status_text(self) -> str:
         status = self.status_snapshot()
         if not status["supported"]:
+            if status["can_prepare"]:
+                return (
+                    "Host browser can be prepared automatically when Agent Zero first uses "
+                    "the Browser tool."
+                )
             return f"Host browser unsupported: {status['support_reason']}"
         if status["status"] == "disabled":
             return "Host browser is disabled. Use /browser host on to advertise it to Agent Zero."
-        profile_text = f"{status['browser_family']} profile {status['profile_label']} ({status['profile_path']})"
+        profile_text = (
+            f"remote debugging browser at {status['cdp_endpoint']}"
+            if status.get("cdp_endpoint")
+            else f"{status['browser_family']} profile {status['profile_label']} ({status['profile_path']})"
+        )
         if status["status"] == "relaunch_required":
             return (
                 f"Host browser needs relaunch consent for {profile_text}. "
@@ -1316,11 +1764,21 @@ class HostBrowserManager:
         family = str(self.config.host_browser_family or "").strip().lower()
         profile_path = str(self.config.host_browser_profile_path or "").strip()
         profile_label = str(self.config.host_browser_profile_label or "").strip()
+        remote_profiles = [profile for profile in profiles if profile.is_remote_debugging]
+        if remote_profiles:
+            matching_remote = self._matching_remote_profile(
+                remote_profiles,
+                family=family,
+                profile_label=profile_label,
+                profile_path=profile_path,
+            )
+            if matching_remote is not None:
+                return matching_remote
         if family or profile_path or profile_label:
             for profile in profiles:
                 if family and profile.family != family:
                     continue
-                if profile_path and str(profile.profile_path) != profile_path:
+                if profile_path and profile.profile_path_display != profile_path:
                     continue
                 if profile_label and profile.profile_label != profile_label:
                     continue
@@ -1331,8 +1789,9 @@ class HostBrowserManager:
         return profiles[0] if profiles else None
 
     def available_profiles(self) -> list[BrowserProfile]:
-        profiles: list[BrowserProfile] = []
-        for candidate in self._candidate_provider():
+        candidates = self._candidate_provider()
+        profiles: list[BrowserProfile] = discover_remote_debugging_profiles(candidates)
+        for candidate in candidates:
             profiles.extend(discover_profiles(candidate))
         return profiles
 
@@ -1345,7 +1804,7 @@ class HostBrowserManager:
                 continue
             if profile_label and profile.profile_label.lower() != profile_label.lower():
                 continue
-            if profile_path and str(profile.profile_path) != profile_path:
+            if profile_path and profile.profile_path_display != profile_path:
                 continue
             self._persist_selected_profile(profile)
             return profile
@@ -1355,15 +1814,15 @@ class HostBrowserManager:
         return await self.ensure_available()
 
     async def ensure_available(self) -> dict[str, Any]:
-        if not self._has_playwright():
-            await self.ensure_playwright_dependency()
         profile = self._auto_start_profile()
         if profile is None:
             raise RuntimeError("No Chrome-family browser profile was found.")
+        if not profile.is_remote_debugging and not self._has_playwright():
+            await self.ensure_playwright_dependency()
         support_reason = self._support_reason(profile)
         if support_reason:
             raise RuntimeError(support_reason)
-        lock = profile_lock_state(profile.profile_path)
+        lock = profile_lock_state_for_profile(profile)
         active_context = self._active_context_for_profile(profile)
         if active_context:
             self.set_enabled(True)
@@ -1430,7 +1889,7 @@ class HostBrowserManager:
         if profile is None:
             return self._error(op_id, "HOST_BROWSER_NO_PROFILE", "No Chrome-family browser profile was found.")
 
-        lock = profile_lock_state(profile.profile_path)
+        lock = profile_lock_state_for_profile(profile)
         active_context = self._active_context_for_profile(profile)
         if lock.locked and context_id not in self._sessions and active_context != RELAUNCH_CONTEXT_ID:
             if active_context:
@@ -1497,7 +1956,20 @@ class HostBrowserManager:
                 return context_id
         return ""
 
+    def _active_profile(self) -> BrowserProfile | None:
+        for session in self._sessions.values():
+            if session.context is not None:
+                return session.profile
+        return None
+
     def _auto_start_profile(self) -> BrowserProfile | None:
+        active_profile = self._active_profile()
+        if active_profile is not None:
+            return active_profile
+        remote_profile = self._first_remote_debugging_profile()
+        if remote_profile is not None:
+            self._persist_selected_profile(remote_profile)
+            return remote_profile
         profile = self.selected_profile()
         if profile is not None and self._profile_support_reason(profile) == "":
             return profile
@@ -1513,17 +1985,61 @@ class HostBrowserManager:
                 return profile
         return None
 
+    def _first_remote_debugging_profile(self) -> BrowserProfile | None:
+        for profile in self.available_profiles():
+            if profile.is_remote_debugging and self._profile_support_reason(profile) == "":
+                return profile
+        return None
+
+    def _matching_remote_profile(
+        self,
+        remote_profiles: list[BrowserProfile],
+        *,
+        family: str,
+        profile_label: str,
+        profile_path: str,
+    ) -> BrowserProfile | None:
+        if not family or is_a0_managed_family(family) or is_remote_debugging_family(family):
+            if profile_label:
+                for profile in remote_profiles:
+                    if profile.profile_label.lower() == profile_label.lower():
+                        return profile
+            return remote_profiles[0]
+        base_family = base_browser_family(family)
+        for profile in remote_profiles:
+            if base_browser_family(profile.family) != base_family:
+                continue
+            profile_path_matches = profile_path in {profile.profile_path_display, str(profile.user_data_dir)}
+            if profile_path and not profile_path_matches:
+                continue
+            if profile_label and profile_label.lower() != profile.profile_label.lower() and not profile_path_matches:
+                continue
+            return profile
+        return None
+
+    def _can_prepare(self, profile: BrowserProfile | None = None) -> bool:
+        if not CONTENT_HELPER_PATH.exists():
+            return False
+        if profile is not None and self._profile_support_reason(profile) == "":
+            return True
+        return self._first_supported_profile() is not None
+
     def _persist_selected_profile(self, profile: BrowserProfile) -> None:
         self.config.host_browser_family = profile.family
-        self.config.host_browser_profile_path = str(profile.profile_path)
+        self.config.host_browser_profile_path = profile.profile_path_display
         self.config.host_browser_profile_label = profile.profile_label
         save_host_browser_profile(
             family=profile.family,
-            profile_path=str(profile.profile_path),
+            profile_path=profile.profile_path_display,
             profile_label=profile.profile_label,
         )
 
     def _support_reason(self, profile: BrowserProfile | None = None) -> str:
+        if not CONTENT_HELPER_PATH.exists():
+            return "Host browser content helper is missing from the A0 CLI package."
+        profile = profile if profile is not None else self.selected_profile()
+        if profile is not None and profile.is_remote_debugging:
+            return self._profile_support_reason(profile)
         if not self._has_playwright():
             return (
                 f"Python Playwright is not installed in the A0 CLI host environment ({sys.executable}). "
@@ -1532,14 +2048,13 @@ class HostBrowserManager:
                 "The Playwright runtime inside the Agent Zero Docker container is used by the "
                 "container browser backend and cannot control host Chrome-family profiles."
             )
-        if not CONTENT_HELPER_PATH.exists():
-            return "Host browser content helper is missing from the A0 CLI package."
-        profile = profile if profile is not None else self.selected_profile()
         return self._profile_support_reason(profile)
 
     def _profile_support_reason(self, profile: BrowserProfile | None) -> str:
         if profile is None:
             return "No installed Chrome-family browser profile was detected."
+        if profile.is_remote_debugging:
+            return ""
         if not profile.executable_path or not Path(profile.executable_path).exists():
             return "Selected Chrome-family browser executable was not found."
         restriction_reason = remote_debugging_restriction_reason(profile)
@@ -1737,6 +2252,18 @@ def is_a0_managed_family(family: str) -> bool:
     return str(family or "").strip().lower().endswith("-a0")
 
 
+def is_remote_debugging_family(family: str) -> bool:
+    return str(family or "").strip().lower().endswith("-cdp")
+
+
+def base_browser_family(family: str) -> str:
+    normalized = str(family or "").strip().lower()
+    for suffix in ("-a0", "-cdp"):
+        if normalized.endswith(suffix):
+            return normalized[: -len(suffix)]
+    return normalized
+
+
 def discover_profiles(candidate: BrowserCandidate) -> list[BrowserProfile]:
     root = candidate.user_data_dir.expanduser()
     if is_a0_managed_family(candidate.family):
@@ -1768,6 +2295,100 @@ def discover_profiles(candidate: BrowserCandidate) -> list[BrowserProfile]:
             )
         )
     return profiles
+
+
+def discover_remote_debugging_profiles(candidates: Iterable[BrowserCandidate] | None = None) -> list[BrowserProfile]:
+    profiles: list[BrowserProfile] = []
+    seen: set[str] = set()
+    candidate_list = list(candidates) if candidates is not None else detect_browser_candidates()
+    for candidate in candidate_list:
+        if is_a0_managed_family(candidate.family):
+            continue
+        endpoint = remote_debugging_endpoint_from_user_data_dir(candidate.user_data_dir)
+        if not endpoint or endpoint in seen:
+            continue
+        seen.add(endpoint)
+        profiles.append(remote_debugging_profile_from_candidate(candidate, endpoint))
+    for endpoint in remote_debugging_endpoint_candidates():
+        if endpoint in seen:
+            continue
+        seen.add(endpoint)
+        profiles.append(
+            BrowserProfile(
+                family="chrome-cdp",
+                family_label="Chrome-family browser (remote debugging)",
+                executable_path="",
+                user_data_dir=Path(),
+                profile_directory=remote_debugging_endpoint_label(endpoint),
+                display_name="Remote debugging allowed",
+                cdp_endpoint=endpoint,
+            )
+        )
+    return profiles
+
+
+def remote_debugging_endpoint_candidates() -> list[str]:
+    raw = os.environ.get(HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS_ENV, "")
+    values = re.split(r"[\s,]+", raw.strip()) if raw.strip() else []
+    endpoints: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        endpoint = normalize_remote_debugging_endpoint(value)
+        if not endpoint or endpoint in seen:
+            continue
+        seen.add(endpoint)
+        endpoints.append(endpoint)
+    return endpoints
+
+
+def normalize_remote_debugging_endpoint(value: object) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if "://" not in raw:
+        raw = f"ws://{raw}"
+    parsed = urlsplit(raw)
+    if parsed.scheme not in {"ws", "wss"} or not parsed.netloc or not parsed.path:
+        return ""
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
+
+
+def remote_debugging_endpoint_from_user_data_dir(user_data_dir: Path | str) -> str:
+    return remote_debugging_endpoint_from_active_port_file(Path(user_data_dir).expanduser() / "DevToolsActivePort")
+
+
+def remote_debugging_endpoint_from_active_port_file(active_port_file: Path | str) -> str:
+    path = Path(active_port_file).expanduser()
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    if len(lines) < 2:
+        return ""
+    port = lines[0].strip()
+    devtools_path = lines[1].strip()
+    if not port.isdigit() or not devtools_path.startswith("/"):
+        return ""
+    return normalize_remote_debugging_endpoint(f"ws://localhost:{int(port)}{devtools_path}")
+
+
+def remote_debugging_profile_from_candidate(candidate: BrowserCandidate, endpoint: str) -> BrowserProfile:
+    family = f"{base_browser_family(candidate.family)}-cdp"
+    return BrowserProfile(
+        family=family,
+        family_label=f"{candidate.label} (remote debugging)",
+        executable_path="",
+        user_data_dir=candidate.user_data_dir.expanduser(),
+        profile_directory=remote_debugging_endpoint_label(endpoint),
+        display_name="Remote debugging allowed",
+        cdp_endpoint=endpoint,
+    )
+
+
+def remote_debugging_endpoint_label(endpoint: str) -> str:
+    normalized = normalize_remote_debugging_endpoint(endpoint) or str(endpoint or "")
+    parsed = urlsplit(normalized if "://" in normalized else f"ws://{normalized}")
+    return parsed.netloc or "remote debugging"
 
 
 def _profile_directories(user_data_dir: Path) -> list[Path]:
@@ -1815,6 +2436,12 @@ def profile_lock_state(profile_path: Path | str) -> ProfileLockState:
     return ProfileLockState(locked=bool(lock_files), lock_files=tuple(lock_files), owner_pid=owner_pid)
 
 
+def profile_lock_state_for_profile(profile: BrowserProfile) -> ProfileLockState:
+    if profile.is_remote_debugging:
+        return ProfileLockState(False)
+    return profile_lock_state(profile.profile_path)
+
+
 def is_profile_locked(profile_path: Path | str) -> bool:
     return profile_lock_state(profile_path).locked
 
@@ -1857,6 +2484,8 @@ def chromium_launch_args(profile_directory: str) -> list[str]:
 
 
 def remote_debugging_restriction_reason(profile: BrowserProfile) -> str:
+    if profile.is_remote_debugging:
+        return ""
     if is_a0_managed_family(profile.family):
         return ""
     major = browser_major_version(profile.executable_path)
@@ -2070,9 +2699,9 @@ def _trim_install_output(output: str) -> str:
 def format_profile_rows(profiles: Iterable[BrowserProfile]) -> list[str]:
     rows = []
     for profile in profiles:
-        lock = "locked" if is_profile_locked(profile.profile_path) else "ready"
+        lock = "allowed" if profile.is_remote_debugging else "locked" if is_profile_locked(profile.profile_path) else "ready"
         rows.append(
             f"{profile.family} {profile.profile_label} - {profile.display_name} "
-            f"({profile.profile_path}) [{lock}]"
+            f"({profile.profile_path_display}) [{lock}]"
         )
     return rows

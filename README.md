@@ -132,8 +132,8 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 | `/browser status` | Show host-browser connector status |
 | `/browser host on` / `/browser host off` | Manually advertise or disable host-browser control from this CLI |
 | `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
-| `/browser relaunch` | Start the selected profile under explicit A0 CLI control once it is not locked |
-| `/browser repair` | Install missing Python Playwright into the A0 CLI host environment |
+| `/browser relaunch` | Prepare the host browser now, either by attaching to allowed Chrome remote debugging or by starting the selected local profile |
+| `/browser repair` | Install missing Python Playwright for the local-profile launch path |
 | `/browser privacy` | Show where host-browser content policy is configured |
 | `/disconnect` | Disconnect and return to the current host connection flow |
 | `/keys` | Toggle key help |
@@ -146,14 +146,17 @@ Agent Zero can route its existing `browser` tool through A0 CLI so the CLI contr
 Happy path:
 
 1. Keep A0 CLI connected to the Agent Zero chat.
-2. In Agent Zero Browser settings, choose `host_when_available` or `host_required`.
-3. Ask the agent to use the browser.
+2. If you want Agent Zero to use your already-open personal Chrome, visit `chrome://inspect/#remote-debugging` and click **Allow**.
+3. In Agent Zero Browser settings, choose `host_when_available` or `host_required`.
+4. Ask the agent to use the browser.
 
-When a subscribed CLI supports host-browser control, the first browser action can enable and launch the local browser automatically. The CLI slash commands remain available for diagnostics and manual override.
+When a subscribed CLI supports host-browser control, the first browser action can enable and prepare the local browser automatically. The CLI slash commands remain available for diagnostics and manual override.
 
-The CLI uses Python Playwright in the A0 CLI host environment against an installed Chrome, Chromium, or Edge executable. It does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If the selected profile is already locked by normal Chrome, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually.
+The CLI does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If Chrome's Remote debugging page has been allowed, A0 reads Chrome's local `DevToolsActivePort` file and keeps one DevTools Protocol connection open for browser actions. Status checks and profile listing do not connect to Chrome, so they should not create repeated **Allow** prompts.
 
-Chrome 136+ blocks remote debugging against the default personal Chrome data directory. On those versions, A0 exposes and auto-selects a separate local profile such as `chrome-a0 Default` under the user's data directory. Site data stays in that local browser profile, and the user may need to sign in once there. You can still select it manually with `/browser profile chrome-a0 Default`.
+If the selected profile must be launched by A0 and is already locked by normal Chrome, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses Python Playwright in the A0 CLI host environment against an installed Chrome, Chromium, or Edge executable.
+
+Chrome 136+ blocks Playwright remote debugging against the default personal Chrome data directory. If Chrome's own Remote debugging consent path is not available, A0 exposes and auto-selects a separate local profile such as `chrome-a0 Default` under the user's data directory. Site data stays in that local browser profile, and the user may need to sign in once there. You can still select it manually with `/browser profile chrome-a0 Default`.
 
 The Playwright runtime and Chromium binary under the Agent Zero Docker container, such as `/a0/tmp/playwright`, belong to the container browser backend. They are useful when Browser settings use `container`, but they cannot control a host Chrome-family profile from inside Docker.
 
