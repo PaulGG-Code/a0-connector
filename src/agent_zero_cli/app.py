@@ -871,8 +871,15 @@ class AgentZeroCLI(App):
         splash_helpers.sync_composer_visibility(self)
 
     def _apply_computer_use_status(self, label: str, detail: str) -> None:
-        del label, detail
+        normalized = str(label or "").strip().lower()
+        del detail
         self._sync_computer_use_status()
+        if normalized == "rearm required" and self.connected and self.client.connected:
+            self.run_worker(
+                self._refresh_remote_tool_metadata(),
+                exclusive=True,
+                name="computer-use-metadata-refresh",
+            )
 
     def _sync_computer_use_status(self) -> None:
         show_composer = self.connected and (

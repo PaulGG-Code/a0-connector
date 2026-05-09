@@ -206,7 +206,10 @@ async def test_free_run_without_restore_token_returns_rearm_required(
 
     assert result["ok"] is False
     assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert "desktop-control backend is not armed" in result["error"]
     assert manager.status_label == "rearm required"
+    assert manager.hello_metadata()["status"] == "rearm required"
+    assert manager.hello_metadata()["restore_token_present"] is False
 
 
 async def test_start_session_persists_restore_token_in_persistent_mode(
@@ -391,6 +394,9 @@ async def test_capture_strips_inline_png_base64_response_when_artifact_path_is_a
 
     assert result["ok"] is True
     assert "png_base64" not in result["result"]
+    assert result["result"]["artifact"]["encoding"] == "base64"
+    assert result["result"]["artifact"]["mime"] == "image/png"
+    assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
     assert result["result"]["host_path"].startswith(str(computer_use_mod.HOST_ARTIFACT_ROOT / "ctx-1"))
     assert result["result"]["capture_path"] == result["result"]["host_path"]
     assert result["result"]["container_path"].startswith(f"{computer_use_mod.CONTAINER_ARTIFACT_ROOT}/ctx-1/")
@@ -425,7 +431,45 @@ async def test_capture_preserves_path_based_result_without_reinlining_png(
 
     assert result["ok"] is True
     assert "png_base64" not in result["result"]
+    assert result["result"]["artifact"]["encoding"] == "base64"
+    assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
     assert result["result"]["host_path"] == str(capture_path)
+
+
+async def test_capture_includes_base64_artifact_from_written_capture_path(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(enabled=True)
+    payload = b"written-capture-bytes"
+
+    async def helper_request(_session: _HelperSession, request: dict[str, object]) -> dict[str, object]:
+        capture_path = Path(str(request.get("capture_path") or ""))
+        capture_path.parent.mkdir(parents=True, exist_ok=True)
+        capture_path.write_bytes(payload)
+        return {
+            "ok": True,
+            "result": {
+                "capture_path": str(capture_path),
+                "width": 640,
+                "height": 480,
+                "session_id": "sess-1",
+            },
+        }
+
+    manager._helper_request = helper_request  # type: ignore[method-assign]
+    session = _HelperSession(context_id="ctx-1", session_id="sess-1", active=True)
+    session.process = type("FakeProcess", (), {"returncode": None})()
+    manager._sessions["ctx-1"] = session
+
+    result = await manager.handle_op(
+        {"op_id": "cap-1", "action": "capture", "context_id": "ctx-1", "session_id": "sess-1"}
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["artifact"]["filename"] == Path(str(result["result"]["capture_path"])).name
+    assert result["result"]["artifact"]["mime"] == "image/png"
+    assert result["result"]["artifact"]["encoding"] == "base64"
+    assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
 
 
 async def test_capture_requests_shared_artifact_path_and_adds_container_path(
@@ -865,8 +909,37 @@ async def test_free_run_with_invalid_restore_token_returns_rearm_required(
 
     assert result["ok"] is False
     assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert "desktop-control backend is not armed" in result["error"]
     manager._helper_request.assert_not_awaited()
     assert manager.restore_token == ""
+
+
+async def test_free_run_silent_restore_rearm_preserves_helper_message(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="free_run",
+        restore_token="123e4567-e89b-12d3-a456-426614174000",
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+        }
+    )
+
+    result = await manager.handle_op({"op_id": "start-1", "action": "start_session", "context_id": "ctx-1"})
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert result["error"] == "Silent restore was not available. Re-arm computer use with Confirm with User."
+    assert result["result"]["status"] == "rearm required"
+    assert result["result"]["last_error"] == result["error"]
+    assert result["result"]["restore_token_present"] is True
+    assert manager.status_label == "rearm required"
+    assert manager.status_detail == result["error"]
 
 
 async def test_stop_session_normalizes_success_and_closes_helper(

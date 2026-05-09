@@ -5,6 +5,7 @@ import base64
 import importlib
 import os
 import sys
+import tempfile
 import types
 from pathlib import Path
 
@@ -195,15 +196,6 @@ def _install_fake_helpers(
     sys.modules["helpers.ws"] = ws_mod
     sys.modules["helpers.ws_manager"] = ws_manager_mod
 
-    helpers_pkg.api = api_mod
-    helpers_pkg.history = history_mod
-    helpers_pkg.login = login_mod
-    helpers_pkg.plugins = plugins_mod
-    helpers_pkg.print_style = print_style_mod
-    helpers_pkg.tool = tool_mod
-    helpers_pkg.ws = ws_mod
-    helpers_pkg.ws_manager = ws_manager_mod
-
     for module_name in (
         "helpers.settings",
         "helpers.subagents",
@@ -216,6 +208,28 @@ def _install_fake_helpers(
         "plugins._chat_compaction.helpers.compactor",
     ):
         sys.modules[module_name] = types.ModuleType(module_name)
+
+    files_mod = sys.modules["helpers.files"]
+    fake_base_dir = Path(tempfile.gettempdir()) / "a0-connector-plugin-tests"
+    files_mod.get_abs_path = lambda *parts: str(fake_base_dir.joinpath(*map(str, parts)))
+    files_mod.normalize_a0_path = lambda path: str(path)
+
+    def _write_file_base64(relative_path: str, content: str) -> None:
+        target = Path(files_mod.get_abs_path(relative_path))
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(base64.b64decode(content))
+
+    files_mod.write_file_base64 = _write_file_base64
+
+    helpers_pkg.api = api_mod
+    helpers_pkg.files = files_mod
+    helpers_pkg.history = history_mod
+    helpers_pkg.login = login_mod
+    helpers_pkg.plugins = plugins_mod
+    helpers_pkg.print_style = print_style_mod
+    helpers_pkg.tool = tool_mod
+    helpers_pkg.ws = ws_mod
+    helpers_pkg.ws_manager = ws_manager_mod
 
     plugins_pkg._model_config = sys.modules["plugins._model_config"]
     plugins_pkg._chat_compaction = sys.modules["plugins._chat_compaction"]
@@ -686,6 +700,9 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
                     "supported": True,
                     "enabled": True,
                     "trust_mode": "persistent",
+                    "status": "active",
+                    "last_error": "",
+                    "restore_token_present": True,
                     "artifact_root": "/a0/tmp/_a0_connector/computer_use",
                     "backend_id": "wayland",
                     "backend_family": "linux",
@@ -703,6 +720,9 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
         "supported": True,
         "enabled": True,
         "trust_mode": "persistent",
+        "status": "active",
+        "last_error": "",
+        "restore_token_present": True,
         "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         "backend_id": "wayland",
         "backend_family": "linux",
@@ -1278,7 +1298,101 @@ def test_computer_use_remote_rejects_when_no_enabled_cli_is_subscribed() -> None
         _create_computer_use_remote(tool_mod, agent, action="status").execute()
     )
 
-    assert "no subscribed CLI" in response.message
+    assert "no connected CLI currently advertises enabled local computer use" in response.message
+
+
+def test_computer_use_remote_rearm_metadata_tells_agent_to_stop_without_dispatch() -> None:
+    calls: list[dict[str, object]] = []
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        calls.append(dict(payload))
+        return {
+            "op_id": payload["op_id"],
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "result": {
+                "status": "rearm required",
+                "trust_mode": "free_run",
+                "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "free_run",
+            "status": "rearm required",
+            "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "restore_token_present": True,
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="start_session").execute()
+    )
+
+    assert "COMPUTER_USE_REARM_REQUIRED" in response.message
+    assert "Stop using computer_use_remote for now" in response.message
+    assert "platform permission prompt" in response.message
+    assert "Do not retry or use screenshot fallbacks" in response.message
+    assert calls == []
+
+
+def test_computer_use_remote_runtime_rearm_result_tells_agent_to_stop() -> None:
+    calls: list[dict[str, object]] = []
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        calls.append(dict(payload))
+        return {
+            "op_id": payload["op_id"],
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "result": {
+                "status": "rearm required",
+                "trust_mode": "free_run",
+                "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "free_run",
+            "status": "free_run",
+            "last_error": "",
+            "restore_token_present": True,
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="start_session").execute()
+    )
+
+    assert "COMPUTER_USE_REARM_REQUIRED" in response.message
+    assert "Stop using computer_use_remote for now" in response.message
+    assert "platform permission prompt" in response.message
+    assert "Do not retry or use screenshot fallbacks" in response.message
+    assert [call["action"] for call in calls] == ["start_session"]
 
 
 def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path: Path) -> None:
@@ -1372,6 +1486,112 @@ def test_computer_use_remote_capture_uses_shared_png_path(
     assert raw_message["raw_content"][1]["image_url"]["url"] == str(image_path)
 
 
+def test_computer_use_remote_capture_materializes_base64_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_path = _write_png_fixture(tmp_path)
+    capture_bytes = image_path.read_bytes()
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/host-only.png",
+                "container_path": "/a0/tmp/_a0_connector/computer_use/ctx-1/host-only.png",
+                "artifact": {
+                    "filename": "host-only.png",
+                    "mime": "image/png",
+                    "encoding": "base64",
+                    "data": base64.b64encode(capture_bytes).decode("ascii"),
+                },
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    monkeypatch.setattr(tool_mod.files, "get_abs_path", lambda *parts: str(tmp_path.joinpath(*parts)))
+    monkeypatch.setattr(tool_mod.files, "normalize_a0_path", lambda path: str(path))
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "persistent",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1").execute()
+    )
+
+    expected_summary = _expected_capture_summary("host-only")
+    assert response.message == f"Current screen attached: {expected_summary}"
+    assert len(agent.history_messages) == 1
+    raw_message = agent.history_messages[0]["content"]
+    materialized_path = Path(raw_message["raw_content"][1]["image_url"]["url"])
+    assert materialized_path == (
+        tmp_path
+        / "tmp"
+        / "_a0_connector"
+        / "computer_use"
+        / "captures"
+        / agent.context.id
+        / "host-only.png"
+    )
+    assert materialized_path.read_bytes() == capture_bytes
+
+
+def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/missing.png",
+                "container_path": "/a0/tmp/_a0_connector/computer_use/ctx-1/missing.png",
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "persistent",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1").execute()
+    )
+
+    assert response.message.startswith("computer_use_remote: error sending action='capture': ")
+    assert "Capture artifact was not found in any advertised path" in response.message
+    assert agent.history_messages == []
+
+
 def test_computer_use_remote_start_session_auto_refreshes_screen(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1432,6 +1652,64 @@ def test_computer_use_remote_start_session_auto_refreshes_screen(
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["start_session", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
     assert len(agent.history_messages) == 1
+
+
+def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        if payload["action"] == "start_session":
+            return {
+                "op_id": payload["op_id"],
+                "ok": True,
+                "result": {
+                    "status": "active",
+                    "session_id": "sess-1",
+                    "width": 1,
+                    "height": 1,
+                },
+            }
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/missing.png",
+                "fresh": bool(payload.get("fresh")),
+                "fresh_after_satisfied": True,
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    monkeypatch.setattr(tool_mod.asyncio, "sleep", _no_sleep)
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "persistent",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="start_session").execute()
+    )
+
+    assert response.message.startswith(
+        "Computer-use session started: session_id=sess-1 size=1x1 "
+        "Automatic screen refresh failed: Capture artifact was not found in any advertised path"
+    )
+    assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["start_session", "capture"]
+    assert agent.history_messages == []
 
 
 def test_computer_use_remote_click_auto_refreshes_screen(

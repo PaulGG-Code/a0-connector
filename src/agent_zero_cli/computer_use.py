@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import json
 import os
@@ -52,6 +53,11 @@ _DISABLED_ERROR = "COMPUTER_USE_DISABLED"
 _REARM_REQUIRED_ERROR = "COMPUTER_USE_REARM_REQUIRED"
 _SESSION_REQUIRED_ERROR = "COMPUTER_USE_SESSION_REQUIRED"
 _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
+_REARM_REQUIRED_MESSAGE = (
+    "Computer use is configured, but the installed desktop-control backend is not armed. "
+    "Re-arm it in the A0 CLI with Confirm with User, approve the platform permission "
+    "prompt if shown, then switch back to Free Run if desired."
+)
 
 
 def _env_flag(name: str) -> bool:
@@ -127,6 +133,58 @@ def _response_debug_fields(payload: dict[str, Any]) -> dict[str, Any]:
         if "restore_token" in result:
             fields["restore_token_present"] = bool(str(result.get("restore_token", "") or "").strip())
     return fields
+
+
+def _capture_artifact_from_path(path: str) -> dict[str, str] | None:
+    capture_path = Path(str(path or "").strip())
+    if not capture_path.is_file():
+        return None
+    try:
+        payload = capture_path.read_bytes()
+    except OSError:
+        return None
+    return {
+        "filename": capture_path.name,
+        "mime": "image/png",
+        "encoding": "base64",
+        "data": base64.b64encode(payload).decode("ascii"),
+    }
+
+
+def _capture_artifact_from_result(result: dict[str, Any], *, fallback_path: str = "") -> dict[str, str] | None:
+    artifact = result.get("artifact")
+    if isinstance(artifact, dict) and str(artifact.get("encoding", "")).lower() == "base64":
+        data = str(artifact.get("data") or "")
+        if not data:
+            return None
+        return {
+            "filename": str(artifact.get("filename") or "computer-use-capture.png"),
+            "mime": str(artifact.get("mime") or "image/png"),
+            "encoding": "base64",
+            "data": data,
+        }
+
+    inline_png = str(result.get("png_base64") or "")
+    if inline_png:
+        capture_id = str(result.get("capture_id") or "").strip()
+        filename = f"{capture_id or uuid.uuid4().hex}.png"
+        return {
+            "filename": filename,
+            "mime": "image/png",
+            "encoding": "base64",
+            "data": inline_png,
+        }
+
+    candidates = [
+        fallback_path,
+        str(result.get("capture_path", "") or ""),
+        str(result.get("host_path", "") or ""),
+    ]
+    for candidate in candidates:
+        artifact = _capture_artifact_from_path(candidate)
+        if artifact is not None:
+            return artifact
+    return None
 
 
 def _normalize_container_artifact_root(value: object) -> str:
@@ -274,8 +332,7 @@ class ComputerUseManager:
         self._backend_spec = self._backend_selection.spec
         self._backend_metadata = _backend_metadata_from_selection(self._backend_selection)
         self.supported = self._backend_selection.supported
-        self.status = "disabled" if not self.enabled else self.trust_mode
-        self.last_error = ""
+        self.status, self.last_error = self._configured_status()
         self._sessions: dict[str, _HelperSession] = {}
         self._status_callback: Callable[[str, str], None] | None = None
         self._debug_enabled = _env_flag(_DEBUG_ENV)
@@ -294,6 +351,9 @@ class ComputerUseManager:
             "supported": self.supported,
             "enabled": self.enabled and self.supported,
             "trust_mode": self.trust_mode,
+            "status": self.status,
+            "last_error": self.last_error,
+            "restore_token_present": bool(_normalize_restore_token(self.restore_token)),
             "artifact_root": CONTAINER_ARTIFACT_ROOT,
         }
         metadata.update(self._backend_metadata)
@@ -307,23 +367,28 @@ class ComputerUseManager:
         if callback is not None:
             callback(self.status, self.last_error)
 
+    def _configured_status(self) -> tuple[str, str]:
+        if not self.enabled:
+            return "disabled", ""
+        if self.trust_mode == "free_run" and not _normalize_restore_token(self.restore_token):
+            return "rearm required", _REARM_REQUIRED_MESSAGE
+        return self.trust_mode, ""
+
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
         self.config.computer_use_enabled = self.enabled
         save_computer_use_enabled(self.enabled)
-        if not self.enabled:
-            self._set_status("disabled")
-            return
-        if self.status == "disabled":
-            self._set_status(self.trust_mode)
+        status, error = self._configured_status()
+        self._set_status(status, error=error)
 
     def set_trust_mode(self, mode: str) -> str:
         normalized = normalize_computer_use_trust_mode(mode)
         self.trust_mode = normalized
         self.config.computer_use_trust_mode = normalized
         save_computer_use_trust_mode(normalized)
-        if self.enabled and self.status in {"interactive", "persistent", "free_run"}:
-            self._set_status(normalized)
+        if self.enabled and self.status in {"interactive", "persistent", "free_run", "rearm required"}:
+            status, error = self._configured_status()
+            self._set_status(status, error=error)
         return normalized
 
     def update_restore_token(self, token: str) -> None:
@@ -406,10 +471,8 @@ class ComputerUseManager:
             await self._close_helper_session(session)
         self._sessions.clear()
         self._prune_capture_artifacts()
-        if self.enabled:
-            self._set_status(self.trust_mode)
-        else:
-            self._set_status("disabled")
+        status, error = self._configured_status()
+        self._set_status(status, error=error)
 
     async def disconnect(self) -> None:
         await self.close()
@@ -759,6 +822,9 @@ class ComputerUseManager:
             result_dict.setdefault("coordinate_space", _CAPTURE_COORDINATE_SPACE)
             result_dict.setdefault("coordinate_origin", "top_left")
             result_dict.setdefault("coordinate_range", [0.0, 1.0])
+            artifact = _capture_artifact_from_result(result_dict, fallback_path=capture_host_path)
+            if artifact is not None:
+                result_dict["artifact"] = artifact
             if _coerce_bool(helper_request.get("fresh")):
                 result_dict.setdefault("fresh", True)
                 fresh_after = helper_request.get("fresh_after")
@@ -787,8 +853,13 @@ class ComputerUseManager:
             restore_token_present=bool(restore_token),
         )
         if self.trust_mode == "free_run" and not restore_token:
-            self._set_status("rearm required", error=_REARM_REQUIRED_ERROR)
-            return self._error(op_id, _REARM_REQUIRED_ERROR, result=self._session_snapshot())
+            self._set_status("rearm required", error=_REARM_REQUIRED_MESSAGE)
+            return self._error(
+                op_id,
+                _REARM_REQUIRED_ERROR,
+                message=_REARM_REQUIRED_MESSAGE,
+                result=self._session_snapshot(),
+            )
 
         if session.active and session.session_id:
             result = dict(session.session_result)
@@ -939,8 +1010,14 @@ class ComputerUseManager:
             return self._success(op_id, result_dict)
 
         if code == _REARM_REQUIRED_ERROR or error == _REARM_REQUIRED_ERROR:
-            self._set_status("rearm required", error=_REARM_REQUIRED_ERROR)
-            return self._error(op_id, _REARM_REQUIRED_ERROR, result=self._session_snapshot())
+            message = error or _REARM_REQUIRED_MESSAGE
+            self._set_status("rearm required", error=message)
+            return self._error(
+                op_id,
+                _REARM_REQUIRED_ERROR,
+                message=message,
+                result=self._session_snapshot(),
+            )
 
         if code == _DISABLED_ERROR or error == _DISABLED_ERROR:
             self._set_status("disabled", error=_DISABLED_ERROR)
