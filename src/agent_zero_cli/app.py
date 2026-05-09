@@ -327,6 +327,15 @@ class AgentZeroCLI(App):
             ),
         )
         yield SystemCommand(
+            "Computer Use: Re-arm",
+            "Open the platform permission flow and attach an approved computer-use session.",
+            lambda: self.run_worker(
+                self._rearm_computer_use(),
+                exclusive=True,
+                name="palette-computer-use-rearm",
+            ),
+        )
+        yield SystemCommand(
             "Computer Use: Free Run",
             "Use previously approved computer-use access without prompting.",
             lambda: self.run_worker(
@@ -1588,6 +1597,24 @@ class AgentZeroCLI(App):
             )
         self._sync_computer_use_status()
 
+    async def _rearm_computer_use(self) -> None:
+        result = await self._computer_use.rearm(context_id=self.current_context)
+        synced = await self._refresh_remote_tool_metadata()
+        if bool(result.get("ok")):
+            mode = _computer_use_mode_label(self._computer_use.trust_mode)
+            self._show_notice(f"Computer use re-armed for this chat ({mode}).")
+        else:
+            message = str(result.get("error") or "Computer use could not be re-armed.")
+            if synced:
+                self._show_notice(message, error=True)
+            else:
+                self._show_notice(
+                    f"{message} Agent Zero did not acknowledge the update: "
+                    f"{self._remote_tool_metadata_error}",
+                    error=True,
+                )
+        self._sync_computer_use_status()
+
     async def _cmd_computer_use(self, *, query: str = "") -> None:
         tokens = query.split()
         action = "-".join(token.strip().lower().replace("_", "-") for token in tokens) if tokens else "status"
@@ -1597,7 +1624,7 @@ class AgentZeroCLI(App):
                 "Computer use is "
                 f"{state} for this CLI session "
                 f"({_computer_use_mode_label(self._computer_use.trust_mode)}). "
-                "Use /computer-use on|off|confirm|free-run."
+                "Use /computer-use on|off|confirm|free-run|rearm."
             )
             return
         if action in {"on", "enable", "enabled", "true", "yes", "1"}:
@@ -1612,9 +1639,12 @@ class AgentZeroCLI(App):
         if action in {"free", "free-run", "freerun"}:
             await self._set_computer_use_mode("free_run")
             return
+        if action in {"rearm", "re-arm", "arm", "authorize", "authorise", "approval"}:
+            await self._rearm_computer_use()
+            return
 
         self._show_notice(
-            "Usage: /computer-use on|off|confirm|free-run|status",
+            "Usage: /computer-use on|off|confirm|free-run|rearm|status",
             error=True,
         )
 

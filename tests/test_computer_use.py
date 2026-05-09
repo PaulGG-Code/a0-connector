@@ -942,6 +942,70 @@ async def test_free_run_silent_restore_rearm_preserves_helper_message(
     assert manager.status_detail == result["error"]
 
 
+async def test_rearm_forces_prompt_then_restores_free_run_mode(
+    _temp_env: Path,
+) -> None:
+    old_restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    new_restore_token = "123e4567-e89b-12d3-a456-426614174001"
+    manager = _manager(
+        enabled=True,
+        trust_mode="free_run",
+        restore_token=old_restore_token,
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": True,
+            "result": {
+                "active": True,
+                "status": "active",
+                "session_id": "sess-1",
+                "restore_token": new_restore_token,
+                "width": 1280,
+                "height": 720,
+            },
+        }
+    )
+
+    result = await manager.rearm("ctx-1")
+
+    assert result["ok"] is True
+    assert manager.trust_mode == "free_run"
+    assert manager.status_label == "active"
+    assert manager.restore_token == new_restore_token
+    request = manager._helper_request.await_args.args[1]
+    assert request["trust_mode"] == "persistent"
+    assert request["allow_prompt"] is True
+    assert request["restore_token"] == ""
+    assert request["context_id"] == "ctx-1"
+
+
+async def test_rearm_failure_preserves_previous_free_run_token_but_marks_rearm_required(
+    _temp_env: Path,
+) -> None:
+    restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    manager = _manager(
+        enabled=True,
+        trust_mode="free_run",
+        restore_token=restore_token,
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "User approval is required.",
+        }
+    )
+
+    result = await manager.rearm("ctx-1")
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert manager.trust_mode == "free_run"
+    assert manager.restore_token == restore_token
+    assert manager.status_label == "rearm required"
+    assert manager.status_detail == "User approval is required."
+
+
 async def test_stop_session_normalizes_success_and_closes_helper(
     _temp_env: Path,
 ) -> None:

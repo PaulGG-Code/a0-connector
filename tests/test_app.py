@@ -222,6 +222,7 @@ class FakeComputerUseManager:
         self.status_label = "disabled"
         self.status_detail = ""
         self.disconnect_calls = 0
+        self.rearm_calls: list[str | None] = []
         self.handled_ops: list[dict[str, object]] = []
         self._status_callback = None
 
@@ -259,6 +260,14 @@ class FakeComputerUseManager:
         self.disconnect_calls += 1
         self.status_label = "disabled" if not self.enabled else self.trust_mode
         self._emit()
+
+    async def rearm(self, context_id: str | None = None) -> dict[str, object]:
+        self.rearm_calls.append(context_id)
+        self.enabled = True
+        self.status_label = "active"
+        self.status_detail = ""
+        self._emit()
+        return {"ok": True, "result": {"status": "active"}}
 
     async def handle_op(self, data: dict[str, object]) -> dict[str, object]:
         self.handled_ops.append(dict(data))
@@ -1681,6 +1690,7 @@ def test_system_commands_include_confirm_with_user_and_free_run(
     assert "Computer Use: On" in titles
     assert "Computer Use: Off" in titles
     assert "Computer Use: Confirm with User" in titles
+    assert "Computer Use: Re-arm" in titles
     assert "Computer Use: Free Run" in titles
     assert "Browser: Use Host" in titles
     assert "Browser: Docker Container" in titles
@@ -1709,6 +1719,24 @@ async def test_computer_use_slash_commands_set_trust_mode(
         ("Computer use set to Free Run.", False),
         ("Computer use set to Confirm with User.", False),
     ]
+
+
+async def test_computer_use_rearm_slash_command_arms_current_chat(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+    dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-cua"
+
+    await dummy_app._dispatch_command("/computer-use rearm")
+
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+    assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
+    assert dummy_app._computer_use.enabled is True
+    assert status.computer_use_status == "Active"
+    assert notices == [("Computer use re-armed for this chat (Confirm with User).", False)]
 
 
 async def test_set_computer_use_mode_updates_status_for_free_run_and_confirm(

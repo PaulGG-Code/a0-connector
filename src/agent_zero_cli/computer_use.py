@@ -374,6 +374,13 @@ class ComputerUseManager:
             return "rearm required", _REARM_REQUIRED_MESSAGE
         return self.trust_mode, ""
 
+    def _store_trust_mode(self, mode: str) -> str:
+        normalized = normalize_computer_use_trust_mode(mode)
+        self.trust_mode = normalized
+        self.config.computer_use_trust_mode = normalized
+        save_computer_use_trust_mode(normalized)
+        return normalized
+
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
         self.config.computer_use_enabled = self.enabled
@@ -382,10 +389,7 @@ class ComputerUseManager:
         self._set_status(status, error=error)
 
     def set_trust_mode(self, mode: str) -> str:
-        normalized = normalize_computer_use_trust_mode(mode)
-        self.trust_mode = normalized
-        self.config.computer_use_trust_mode = normalized
-        save_computer_use_trust_mode(normalized)
+        normalized = self._store_trust_mode(mode)
         if self.enabled and self.status in {"interactive", "persistent", "free_run", "rearm required"}:
             status, error = self._configured_status()
             self._set_status(status, error=error)
@@ -476,6 +480,44 @@ class ComputerUseManager:
 
     async def disconnect(self) -> None:
         await self.close()
+
+    async def rearm(self, context_id: str | None = None) -> dict[str, Any]:
+        """Prompt the user once and keep the resulting approved session attached."""
+        op_id = f"rearm-{uuid.uuid4().hex}"
+        context_id = _normalize_context_id(context_id)
+
+        if not self.supported:
+            self._set_status("error", error=_UNSUPPORTED_ERROR)
+            return self._error(op_id, _UNSUPPORTED_ERROR, result=self._session_snapshot())
+
+        if not self.enabled:
+            self.set_enabled(True)
+
+        previous_trust_mode = self.trust_mode
+        previous_restore_token = self.restore_token
+        if self.trust_mode != "persistent":
+            self._store_trust_mode("persistent")
+            self._set_status("persistent")
+
+        # Re-arming is an intentional user-approved flow. Do not try to
+        # silently revive the old token; force the backend to ask the platform.
+        self.restore_token = ""
+        session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
+        result = await self._start_session(op_id, session)
+        if bool(result.get("ok")):
+            if not _normalize_restore_token(self.restore_token):
+                self.update_restore_token("")
+        elif not self.restore_token:
+            self.restore_token = previous_restore_token
+
+        if previous_trust_mode == "free_run":
+            self._store_trust_mode("free_run")
+            if bool(result.get("ok")):
+                self._set_status("active" if session.active else "free_run")
+            elif result.get("code") == _REARM_REQUIRED_ERROR:
+                self._set_status("rearm required", error=str(result.get("error") or _REARM_REQUIRED_MESSAGE))
+
+        return result
 
     async def handle_op(self, payload: dict[str, Any]) -> dict[str, Any]:
         op_id = str(payload.get("op_id", "")).strip()
