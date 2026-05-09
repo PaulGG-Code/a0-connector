@@ -30,6 +30,8 @@ HOST_BROWSER_OZONE_PLATFORM_ENV = "A0_HOST_BROWSER_OZONE_PLATFORM"
 HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS_ENV = "A0_HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS"
 REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS = 60.0
 REMOTE_DEBUGGING_RESTRICTED_MAJOR = 136
+REMOTE_DEBUGGING_ENABLE_URL = "chrome://inspect/#remote-debugging"
+REMOTE_DEBUGGING_ENABLE_LABEL = "Allow remote debugging for this browser instance"
 RELAUNCH_CONTEXT_ID = "_a0_cli_browser_check"
 MAX_INSTALL_OUTPUT_CHARS = 4000
 _URL_SCHEME_RE = re.compile(r"^[a-z][a-z\d+\-.]*:", re.I)
@@ -86,6 +88,8 @@ BROWSER_REEXPORTS = [
     "HOST_BROWSER_REMOTE_DEBUGGING_ENDPOINTS_ENV",
     "REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS",
     "REMOTE_DEBUGGING_RESTRICTED_MAJOR",
+    "REMOTE_DEBUGGING_ENABLE_URL",
+    "REMOTE_DEBUGGING_ENABLE_LABEL",
     "RELAUNCH_CONTEXT_ID",
     "MAX_INSTALL_OUTPUT_CHARS",
     "BrowserCandidate",
@@ -112,6 +116,7 @@ BROWSER_REEXPORTS = [
     "is_profile_locked",
     "chromium_launch_args",
     "remote_debugging_restriction_reason",
+    "remote_debugging_enable_hint",
     "browser_major_version",
     "is_default_user_data_dir",
     "default_user_data_dirs",
@@ -622,11 +627,20 @@ def remote_debugging_restriction_reason(profile: BrowserProfile) -> str:
         managed_family = f"{profile.family}-a0"
         return (
             "This Chrome-family browser blocks Playwright remote debugging for its default "
-            f"data directory in version {major}+. Select the A0-controlled local profile with "
-            f"/browser profile {managed_family} Default, then run /browser relaunch. "
+            f"data directory in version {major}+. {remote_debugging_enable_hint()} "
+            "Or choose Clean Agent profile in Browser settings, or select the "
+            f"A0-controlled local profile with /browser profile "
+            f"{managed_family} Default, then run /browser relaunch. "
             "Cookies and site data stay inside that separate browser profile on this host."
         )
     return ""
+
+
+def remote_debugging_enable_hint() -> str:
+    return (
+        f"Open {REMOTE_DEBUGGING_ENABLE_URL} in the browser you want Agent Zero to use, "
+        f"enable \"{REMOTE_DEBUGGING_ENABLE_LABEL}\", then run /browser host on again."
+    )
 
 
 @lru_cache(maxsize=32)

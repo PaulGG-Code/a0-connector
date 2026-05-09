@@ -472,6 +472,7 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
         "autofocus_active_page": False,
         "runtime_backend": "container",
         "host_browser_privacy_policy": "warn",
+        "host_browser_profile_mode": "existing",
         "model_preset": "Research",
     }
     plugins_mod.save_plugin_config = (
@@ -491,7 +492,8 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
 
     assert payload["ok"] is True
     assert payload["runtime_backend"] == "host_required"
-    assert "GDPR/content policy" in payload["privacy_notice"]
+    assert payload["host_browser_profile_mode"] == "existing"
+    assert "Browser model-use settings" in payload["privacy_notice"]
     assert saved == [
         (
             "_browser",
@@ -503,10 +505,38 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
                 "autofocus_active_page": False,
                 "runtime_backend": "host_required",
                 "host_browser_privacy_policy": "warn",
+                "host_browser_profile_mode": "existing",
                 "model_preset": "Research",
             },
         )
     ]
+
+
+def test_browser_runtime_endpoint_defaults_missing_profile_mode() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+
+    plugins_mod.get_plugin_config = lambda plugin_name, **kwargs: {
+        "extension_paths": ["/tmp/ext"],
+        "default_homepage": "https://example.com",
+        "autofocus_active_page": False,
+        "runtime_backend": "host_required",
+        "host_browser_privacy_policy": "warn",
+        "model_preset": "Research",
+    }
+    _reload("plugins._a0_connector.api.v1.base")
+    browser_runtime_mod = _reload("plugins._a0_connector.api.v1.browser_runtime")
+
+    payload = asyncio.run(
+        browser_runtime_mod.BrowserRuntime(None, None).process(
+            {"action": "get"},
+            object(),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["runtime_backend"] == "host_required"
+    assert payload["host_browser_profile_mode"] == "existing"
 
 
 def test_capabilities_reflect_core_login_requirement() -> None:

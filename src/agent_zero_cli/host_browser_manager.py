@@ -35,6 +35,18 @@ from agent_zero_cli.host_browser_common import (
 )
 from agent_zero_cli.host_browser_session import HostBrowserSession, ProfileLockedError
 
+
+def normalize_host_browser_profile_mode(value: object, *, default: str = "") -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return default
+    if normalized in {"agent", "clean", "clean_agent", "a0", "dedicated"}:
+        return "agent"
+    if normalized in {"existing", "user", "personal", "current"}:
+        return "existing"
+    return default
+
+
 class HostBrowserManager:
     def __init__(
         self,
@@ -90,11 +102,17 @@ class HostBrowserManager:
     def metadata(self) -> dict[str, Any]:
         return self.hello_metadata()
 
-    def status_snapshot(self, profile: BrowserProfile | None = None) -> dict[str, Any]:
-        profile = profile if profile is not None else self.selected_profile()
+    def status_snapshot(
+        self,
+        profile: BrowserProfile | None = None,
+        *,
+        profile_mode: object = "",
+    ) -> dict[str, Any]:
+        mode = normalize_host_browser_profile_mode(profile_mode)
+        profile = profile if profile is not None else self.selected_profile(profile_mode=mode)
         support_reason = self._support_reason(profile)
         supported = not support_reason
-        can_prepare = self._can_prepare(profile)
+        can_prepare = self._can_prepare(profile, profile_mode=mode)
         lock = profile_lock_state_for_profile(profile) if profile else ProfileLockState(False)
         if not supported:
             status = "unsupported"
@@ -183,11 +201,41 @@ class HostBrowserManager:
             )
         return {"installed": True, "command": command, "output": _trim_install_output(output)}
 
-    def selected_profile(self) -> BrowserProfile | None:
+    def selected_profile(self, profile_mode: object = "") -> BrowserProfile | None:
+        mode = normalize_host_browser_profile_mode(profile_mode)
         profiles = self.available_profiles()
         family = str(self.config.host_browser_family or "").strip().lower()
         profile_path = str(self.config.host_browser_profile_path or "").strip()
         profile_label = str(self.config.host_browser_profile_label or "").strip()
+        if mode == "agent":
+            return self._selected_agent_profile(
+                profiles,
+                family=family,
+                profile_path=profile_path,
+                profile_label=profile_label,
+            )
+        if mode == "existing":
+            return self._selected_existing_profile(
+                profiles,
+                family=family,
+                profile_path=profile_path,
+                profile_label=profile_label,
+            )
+        return self._selected_automatic_profile(
+            profiles,
+            family=family,
+            profile_path=profile_path,
+            profile_label=profile_label,
+        )
+
+    def _selected_automatic_profile(
+        self,
+        profiles: list[BrowserProfile],
+        *,
+        family: str,
+        profile_path: str,
+        profile_label: str,
+    ) -> BrowserProfile | None:
         remote_profiles = [profile for profile in profiles if profile.is_remote_debugging]
         if remote_profiles:
             matching_remote = self._matching_remote_profile(
@@ -211,6 +259,76 @@ class HostBrowserManager:
             if self._profile_support_reason(profile) == "":
                 return profile
         return profiles[0] if profiles else None
+
+    def _selected_existing_profile(
+        self,
+        profiles: list[BrowserProfile],
+        *,
+        family: str,
+        profile_path: str,
+        profile_label: str,
+    ) -> BrowserProfile | None:
+        remote_profiles = [profile for profile in profiles if profile.is_remote_debugging]
+        if remote_profiles:
+            matching_remote = self._matching_remote_profile(
+                remote_profiles,
+                family=family,
+                profile_label=profile_label,
+                profile_path=profile_path,
+            )
+            if matching_remote is not None:
+                return matching_remote
+        if family or profile_path or profile_label:
+            for profile in profiles:
+                if profile.is_remote_debugging or is_a0_managed_family(profile.family):
+                    continue
+                if family and profile.family != family:
+                    continue
+                if profile_path and profile.profile_path_display != profile_path:
+                    continue
+                if profile_label and profile.profile_label != profile_label:
+                    continue
+                return profile
+        for profile in profiles:
+            if profile.is_remote_debugging or is_a0_managed_family(profile.family):
+                continue
+            if self._profile_support_reason(profile) == "":
+                return profile
+        return next(
+            (
+                profile
+                for profile in profiles
+                if not profile.is_remote_debugging and not is_a0_managed_family(profile.family)
+            ),
+            None,
+        )
+
+    def _selected_agent_profile(
+        self,
+        profiles: list[BrowserProfile],
+        *,
+        family: str,
+        profile_path: str,
+        profile_label: str,
+    ) -> BrowserProfile | None:
+        agent_profiles = [
+            profile
+            for profile in profiles
+            if not profile.is_remote_debugging and is_a0_managed_family(profile.family)
+        ]
+        if family or profile_path or profile_label:
+            for profile in agent_profiles:
+                if family and profile.family != family:
+                    continue
+                if profile_path and profile.profile_path_display != profile_path:
+                    continue
+                if profile_label and profile.profile_label != profile_label:
+                    continue
+                return profile
+        for profile in agent_profiles:
+            if self._profile_support_reason(profile) == "":
+                return profile
+        return agent_profiles[0] if agent_profiles else None
 
     def available_profiles(self) -> list[BrowserProfile]:
         candidates = self._candidate_provider()
@@ -237,8 +355,9 @@ class HostBrowserManager:
     async def relaunch(self) -> dict[str, Any]:
         return await self.ensure_available()
 
-    async def ensure_available(self) -> dict[str, Any]:
-        profile = self._auto_start_profile()
+    async def ensure_available(self, *, profile_mode: object = "") -> dict[str, Any]:
+        mode = normalize_host_browser_profile_mode(profile_mode)
+        profile = self._auto_start_profile(profile_mode=mode)
         if profile is None:
             raise RuntimeError("No Chrome-family browser profile was found.")
         if not profile.is_remote_debugging and not self._has_playwright():
@@ -250,7 +369,7 @@ class HostBrowserManager:
         active_context = self._active_context_for_profile(profile)
         if active_context:
             self.set_enabled(True)
-            return self.status_snapshot(profile=profile)
+            return self.status_snapshot(profile=profile, profile_mode=mode)
         if lock.locked:
             raise ProfileLockedError(
                 "The selected profile is still locked. Close the normal browser window first, "
@@ -260,7 +379,7 @@ class HostBrowserManager:
         self.set_enabled(True)
         session = await self._session(RELAUNCH_CONTEXT_ID, profile=profile)
         await session.ensure_started()
-        return self.status_snapshot(profile=profile)
+        return self.status_snapshot(profile=profile, profile_mode=mode)
 
     async def close(self) -> None:
         sessions = list(self._sessions.values())
@@ -276,6 +395,10 @@ class HostBrowserManager:
         op_id = str(payload.get("op_id", "") or "").strip()
         action = normalize_action(payload.get("action"))
         context_id = str(payload.get("context_id", "") or "").strip() or "default"
+        profile_mode = normalize_host_browser_profile_mode(
+            payload.get("profile_mode", payload.get("host_browser_profile_mode")),
+            default="existing",
+        )
 
         if not op_id:
             return {"op_id": "", "ok": False, "error": "op_id is required", "code": "MISSING_OP_ID"}
@@ -288,10 +411,10 @@ class HostBrowserManager:
             return self._error(op_id, "HOST_BROWSER_CONTENT_HELPER_INVALID", str(exc))
         if action == "ensure":
             try:
-                return self._success(op_id, await self.ensure_available())
+                return self._success(op_id, await self.ensure_available(profile_mode=profile_mode))
             except ProfileLockedError as exc:
                 self.last_error = str(exc)
-                profile = self.selected_profile()
+                profile = self.selected_profile(profile_mode=profile_mode)
                 return self._error(
                     op_id,
                     "HOST_BROWSER_RELAUNCH_REQUIRED",
@@ -305,13 +428,13 @@ class HostBrowserManager:
                 self.last_error = str(exc)
                 return self._error(op_id, "HOST_BROWSER_ERROR", str(exc))
         if action == "status":
-            snapshot = self.status_snapshot()
+            snapshot = self.status_snapshot(profile_mode=profile_mode)
             snapshot["context_id"] = context_id
             return self._success(op_id, snapshot)
         if not self.enabled:
             return self._error(op_id, "HOST_BROWSER_DISABLED", "Host browser is disabled in the A0 CLI.")
 
-        profile = self.selected_profile()
+        profile = self.selected_profile(profile_mode=profile_mode)
         support_reason = self._support_reason(profile)
         if support_reason:
             return self._error(op_id, "HOST_BROWSER_UNSUPPORTED", support_reason)
@@ -404,34 +527,38 @@ class HostBrowserManager:
                 return session.profile
         return None
 
-    def _auto_start_profile(self) -> BrowserProfile | None:
+    def _auto_start_profile(self, *, profile_mode: object = "") -> BrowserProfile | None:
+        mode = normalize_host_browser_profile_mode(profile_mode)
         active_profile = self._active_profile()
-        if active_profile is not None:
+        if active_profile is not None and self._profile_matches_mode(active_profile, mode):
             return active_profile
-        remote_profile = self._first_remote_debugging_profile()
-        if remote_profile is not None:
-            self._persist_selected_profile(remote_profile)
-            return remote_profile
-        profile = self.selected_profile()
+        profile = self.selected_profile(profile_mode=mode)
         if profile is not None and self._profile_support_reason(profile) == "":
+            if mode:
+                self._persist_selected_profile(profile)
             return profile
-        fallback = self._first_supported_profile()
+        fallback = self._first_supported_profile(profile_mode=mode)
         if fallback is not None:
             self._persist_selected_profile(fallback)
             return fallback
         return profile
 
-    def _first_supported_profile(self) -> BrowserProfile | None:
+    def _first_supported_profile(self, *, profile_mode: object = "") -> BrowserProfile | None:
+        mode = normalize_host_browser_profile_mode(profile_mode)
         for profile in self.available_profiles():
+            if not self._profile_matches_mode(profile, mode):
+                continue
             if self._profile_support_reason(profile) == "":
                 return profile
         return None
 
-    def _first_remote_debugging_profile(self) -> BrowserProfile | None:
-        for profile in self.available_profiles():
-            if profile.is_remote_debugging and self._profile_support_reason(profile) == "":
-                return profile
-        return None
+    @staticmethod
+    def _profile_matches_mode(profile: BrowserProfile, mode: str) -> bool:
+        if not mode:
+            return True
+        if mode == "agent":
+            return not profile.is_remote_debugging and is_a0_managed_family(profile.family)
+        return profile.is_remote_debugging or not is_a0_managed_family(profile.family)
 
     def _matching_remote_profile(
         self,
@@ -459,10 +586,16 @@ class HostBrowserManager:
             return profile
         return None
 
-    def _can_prepare(self, profile: BrowserProfile | None = None) -> bool:
+    def _can_prepare(
+        self,
+        profile: BrowserProfile | None = None,
+        *,
+        profile_mode: object = "",
+    ) -> bool:
+        mode = normalize_host_browser_profile_mode(profile_mode)
         if profile is not None and self._profile_support_reason(profile) == "":
             return True
-        return self._first_supported_profile() is not None
+        return self._first_supported_profile(profile_mode=mode) is not None
 
     def _persist_selected_profile(self, profile: BrowserProfile) -> None:
         self.config.host_browser_family = profile.family

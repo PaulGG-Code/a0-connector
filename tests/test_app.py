@@ -1669,7 +1669,7 @@ async def test_browser_runtime_commands_update_agent_zero_config(
     ]
     assert "Browser set to Bring Your Own Browser for project Research." in notices[0][0]
     assert "Browser set to Docker browser for project Research." in notices[1][0]
-    assert all("GDPR/content policy" in notice[0] for notice in notices)
+    assert all("Browser model-use settings" in notice[0] for notice in notices)
 
 
 def test_system_commands_include_confirm_with_user_and_free_run(

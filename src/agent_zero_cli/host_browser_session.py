@@ -25,6 +25,7 @@ from agent_zero_cli.host_browser_common import (
     normalize_upload_paths,
     normalize_url,
     profile_lock_state_for_profile,
+    remote_debugging_enable_hint,
     require_ref,
     screenshot_output_path,
 )
@@ -92,7 +93,16 @@ class _CDPRuntimeAdapter(_RuntimeAdapter):
 
     async def start(self, session: "HostBrowserSession") -> None:
         connection = CDPConnection(session.profile.cdp_endpoint)
-        await connection.connect()
+        try:
+            await connection.connect()
+        except Exception as exc:
+            with contextlib.suppress(Exception):
+                await connection.close()
+            raise RuntimeError(
+                "Cannot connect to the host browser remote-debugging endpoint "
+                f"{session.profile.cdp_endpoint}. {remote_debugging_enable_hint()} "
+                f"Original error: {exc}"
+            ) from exc
         session.browser = connection
         session.context = CDPContext(connection)
         await session.context.discover_pages()

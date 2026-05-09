@@ -383,7 +383,7 @@ def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
         playwright_available=True,
     )
 
-    selected = manager.selected_profile()
+    selected = manager.selected_profile(profile_mode="existing")
 
     assert selected is not None
     assert selected.family == "chrome-cdp"
@@ -420,7 +420,7 @@ def test_saved_default_profile_uses_authorized_remote_debugging(tmp_path: Path) 
         playwright_available=False,
     )
 
-    selected = manager.selected_profile()
+    selected = manager.selected_profile(profile_mode="existing")
 
     assert selected is not None
     assert selected.family == "chrome-cdp"
@@ -510,6 +510,8 @@ def test_remote_debugging_restriction_blocks_default_chrome_profile(
     reason = remote_debugging_restriction_reason(profile)
 
     assert "blocks Playwright remote debugging" in reason
+    assert "chrome://inspect/#remote-debugging" in reason
+    assert "Allow remote debugging for this browser instance" in reason
     assert "/browser profile chrome-a0 Default" in reason
 
 
@@ -525,7 +527,7 @@ def test_remote_debugging_restriction_allows_a0_managed_profile(
     assert remote_debugging_restriction_reason(profile) == ""
 
 
-def test_selected_profile_prefers_supported_a0_profile_when_default_is_restricted(
+def test_selected_profile_keeps_existing_profile_as_default_when_restricted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -548,7 +550,37 @@ def test_selected_profile_prefers_supported_a0_profile_when_default_is_restricte
         playwright_available=True,
     )
 
-    selected = manager.selected_profile()
+    selected = manager.selected_profile(profile_mode="existing")
+
+    assert selected is not None
+    assert selected.family == "chrome"
+    assert "A0-controlled local profile" in manager._profile_support_reason(selected)
+
+
+def test_agent_profile_mode_selects_supported_a0_profile_when_default_is_restricted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import agent_zero_cli.host_browser_common as host_browser_common_module
+
+    executable = tmp_path / "chrome"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    config_root = tmp_path / "config"
+    default_root = config_root / "google-chrome"
+    (default_root / "Default").mkdir(parents=True)
+    a0_root = tmp_path / "a0-chrome"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
+    manager = HostBrowserManager(
+        CLIConfig(),
+        candidate_provider=lambda: [
+            BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
+            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), a0_root),
+        ],
+        playwright_available=True,
+    )
+
+    selected = manager.selected_profile(profile_mode="agent")
 
     assert selected is not None
     assert selected.family == "chrome-a0"
@@ -613,7 +645,7 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
     assert metadata["supported"] is False
     assert metadata["can_prepare"] is True
     assert metadata["browser_family"] == "chrome"
-    assert "Select the A0-controlled local profile" in metadata["support_reason"]
+    assert "A0-controlled local profile" in metadata["support_reason"]
 
 
 async def test_host_browser_manager_dispatches_open_and_screenshot_artifact(tmp_path: Path) -> None:
@@ -721,7 +753,13 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
     )
 
     opened = await manager.handle_op(
-        {"op_id": "op-open", "context_id": "chat-1", "action": "open", "url": "https://example.com/"}
+        {
+            "op_id": "op-open",
+            "context_id": "chat-1",
+            "action": "open",
+            "url": "https://example.com/",
+            "profile_mode": "agent",
+        }
     )
 
     assert opened["ok"] is True
@@ -800,6 +838,47 @@ async def test_remote_debugging_session_attaches_without_closing_user_context(
 
     assert instances[0].endpoint == "ws://127.0.0.1:9222/devtools/browser/test"
     assert listed["browsers"][0]["currentUrl"] == "https://example.com/"
+    assert instances[0].closed is True
+
+
+async def test_remote_debugging_connection_failure_reports_enable_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import agent_zero_cli.host_browser_session as host_browser_session_module
+
+    instances = []
+
+    class FailingCDPConnection:
+        def __init__(self, endpoint: str) -> None:
+            self.endpoint = endpoint
+            self.closed = False
+            instances.append(self)
+
+        async def connect(self) -> None:
+            raise OSError("connect failed")
+
+        async def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setattr(host_browser_session_module, "CDPConnection", FailingCDPConnection)
+    profile = BrowserProfile(
+        "chrome-cdp",
+        "Chrome (remote debugging)",
+        "",
+        Path(),
+        "127.0.0.1:9222",
+        "Remote debugging allowed",
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
+    )
+    session = HostBrowserSession(context_id="ctx-cdp-fail", profile=profile)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        await session.ensure_started()
+
+    message = str(excinfo.value)
+    assert "chrome://inspect/#remote-debugging" in message
+    assert "Allow remote debugging for this browser instance" in message
+    assert "connect failed" in message
     assert instances[0].closed is True
 
 
@@ -935,7 +1014,12 @@ async def test_ensure_action_enables_and_starts_host_browser(tmp_path: Path) -> 
     )
 
     result = await manager.handle_op(
-        {"op_id": "op-ensure", "context_id": "chat-1", "action": "ensure"}
+        {
+            "op_id": "op-ensure",
+            "context_id": "chat-1",
+            "action": "ensure",
+            "profile_mode": "agent",
+        }
     )
 
     assert result["ok"] is True
@@ -944,7 +1028,7 @@ async def test_ensure_action_enables_and_starts_host_browser(tmp_path: Path) -> 
     assert RELAUNCH_CONTEXT_ID in manager._sessions
 
 
-async def test_ensure_auto_selects_supported_managed_profile(
+async def test_ensure_existing_mode_reports_restricted_saved_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -974,7 +1058,57 @@ async def test_ensure_auto_selects_supported_managed_profile(
     )
 
     result = await manager.handle_op(
-        {"op_id": "op-ensure", "context_id": "chat-1", "action": "ensure"}
+        {
+            "op_id": "op-ensure",
+            "context_id": "chat-1",
+            "action": "ensure",
+            "profile_mode": "existing",
+        }
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "HOST_BROWSER_ERROR"
+    assert "A0-controlled local profile" in result["error"]
+    assert manager.config.host_browser_family == "chrome"
+    assert manager.config.host_browser_profile_path == str(default_root)
+
+
+async def test_ensure_agent_mode_auto_selects_supported_managed_profile(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import agent_zero_cli.host_browser_common as host_browser_common_module
+
+    executable = tmp_path / "chrome"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    config_root = tmp_path / "config"
+    default_root = config_root / "google-chrome"
+    (default_root / "Default").mkdir(parents=True)
+    managed_root = tmp_path / "a0-chrome"
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
+    manager = HostBrowserManager(
+        CLIConfig(
+            host_browser_enabled=False,
+            host_browser_family="chrome",
+            host_browser_profile_path=str(default_root),
+            host_browser_profile_label="Default",
+        ),
+        candidate_provider=lambda: [
+            BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
+            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), managed_root),
+        ],
+        playwright_available=True,
+        playwright_starter=lambda: FakeStarter(FakePlaywright()),
+    )
+
+    result = await manager.handle_op(
+        {
+            "op_id": "op-ensure",
+            "context_id": "chat-1",
+            "action": "ensure",
+            "profile_mode": "agent",
+        }
     )
 
     assert result["ok"] is True
@@ -1008,7 +1142,13 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
         playwright_starter=lambda: FakeStarter(playwright),
     )
     await manager.handle_op(
-        {"op_id": "op-open-1", "context_id": "chat-1", "action": "open", "url": "https://example.com/"}
+        {
+            "op_id": "op-open-1",
+            "context_id": "chat-1",
+            "action": "open",
+            "url": "https://example.com/",
+            "profile_mode": "agent",
+        }
     )
     monkeypatch.setattr(
         host_browser_common_module,
@@ -1017,7 +1157,13 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
     )
 
     result = await manager.handle_op(
-        {"op_id": "op-open-2", "context_id": "chat-2", "action": "open", "url": "https://example.org/"}
+        {
+            "op_id": "op-open-2",
+            "context_id": "chat-2",
+            "action": "open",
+            "url": "https://example.org/",
+            "profile_mode": "agent",
+        }
     )
 
     assert result["ok"] is False

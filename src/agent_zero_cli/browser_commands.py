@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 _CONTENT_POLICY_NOTICE = (
-    "For GDPR/content policy, visit Agent Zero WebUI > Browser settings to choose "
+    "For Browser model-use settings, visit Agent Zero WebUI > Browser settings to choose "
     "Local models only, Warn when using cloud, or Allow."
 )
 
