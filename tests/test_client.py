@@ -384,6 +384,42 @@ async def test_connect_websocket_forwards_session_cookie_and_handler_auth() -> N
     ]
 
 
+async def test_set_model_override_posts_complete_model_payload() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(return_value=FakeResponse(json_data={"ok": True}))
+
+    main_model = {
+        "provider": "openrouter",
+        "name": "anthropic/claude-sonnet",
+        "api_key": "sk-main",
+        "api_base": "https://example.test/main/v1",
+    }
+    utility_model = {
+        "provider": "openai",
+        "name": "gpt-5.4-mini",
+        "api_key": "sk-utility",
+        "api_base": "https://example.test/utility/v1",
+    }
+
+    result = await client.set_model_override(
+        "ctx-1",
+        main_model=main_model,
+        utility_model=utility_model,
+    )
+
+    assert result == {"ok": True}
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_a0_connector/v1/model_switcher",
+        json={
+            "action": "set_override",
+            "context_id": "ctx-1",
+            "main_model": main_model,
+            "utility_model": utility_model,
+        },
+    )
+
+
 async def test_connect_websocket_resets_existing_socket_without_disconnect_callback() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.http = Mock()
