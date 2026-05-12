@@ -130,7 +130,7 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
 | `/browser status` | Show host-browser connector status |
-| `/browser host on` / `/browser host off` | Manually advertise or disable host-browser control from this CLI |
+| `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |
 | `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
 | `/browser relaunch` | Prepare the host browser now, either by attaching to allowed Chrome remote debugging or by starting the selected local profile |
 | `/browser repair` | Install missing Python Playwright for the local-profile launch path |

@@ -517,6 +517,7 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
                 "extension_paths": ["/tmp/ext"],
                 "default_homepage": "https://example.com",
                 "autofocus_active_page": False,
+                "max_open_tabs": 32,
                 "runtime_backend": "host_required",
                 "host_browser_privacy_policy": "warn",
                 "host_browser_profile_mode": "existing",

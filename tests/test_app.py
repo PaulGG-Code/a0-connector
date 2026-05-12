@@ -1719,6 +1719,48 @@ async def test_browser_host_on_skips_playwright_for_remote_debugging(
     assert not any("Installing now" in notice[0] for notice in notices)
 
 
+async def test_browser_host_on_off_syncs_agent_zero_browser_mode(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, str]] = []
+    notices: list[tuple[str, bool]] = []
+
+    async def fake_set_browser_runtime(
+        context_id: str | None,
+        runtime_backend: str,
+    ) -> dict[str, object]:
+        calls.append((context_id, runtime_backend))
+        return {
+            "ok": True,
+            "runtime_backend": runtime_backend,
+            "project_name": "Research",
+        }
+
+    dummy_app.connector_features = {"browser_runtime_config"}
+    dummy_app.current_context = "ctx-browser"
+    dummy_app.client.set_browser_runtime = fake_set_browser_runtime  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app._dispatch_command("/browser host on")
+    await dummy_app._dispatch_command("/browser host off")
+
+    assert calls == [
+        ("ctx-browser", "host_required"),
+        ("ctx-browser", "container"),
+    ]
+    assert dummy_app._host_browser.enabled is False
+    assert "Host browser enabled." in notices[0][0]
+    assert "Browser set to Bring Your Own Browser for project Research." in notices[0][0]
+    assert "Browser model-use settings" in notices[0][0]
+    assert "Host browser disabled." in notices[1][0]
+    assert "Browser set to Docker browser for project Research." in notices[1][0]
+
+
 async def test_browser_repair_command_installs_missing_playwright(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,

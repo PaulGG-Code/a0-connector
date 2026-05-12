@@ -126,14 +126,70 @@ async def _cmd_browser_host(app: "AgentZeroCLI", args: list[str]) -> None:
         return
     synced = await app._refresh_remote_tool_metadata()
     state = "enabled" if enabled else "disabled"
-    if synced:
-        app._show_notice(f"Host browser {state}. {app._host_browser.status_text()}")
-    else:
+    if not synced:
         app._show_notice(
             "Host browser changed locally, but Agent Zero did not acknowledge "
             f"the update: {app._remote_tool_metadata_error}",
             error=True,
         )
+        return
+
+    runtime_payload, runtime_message, runtime_error = await _sync_browser_runtime_for_host_toggle(
+        app,
+        enabled=enabled,
+    )
+    if runtime_error:
+        app._show_notice(
+            f"Host browser {state}, but {runtime_message}",
+            error=True,
+        )
+        return
+
+    message = f"Host browser {state}. {app._host_browser.status_text()}"
+    if runtime_payload:
+        label = _browser_mode_label(runtime_payload.get("runtime_backend"))
+        scope = _browser_scope_label(runtime_payload)
+        message += f" Browser set to {label}{scope}."
+        if enabled:
+            message += f" {_CONTENT_POLICY_NOTICE}"
+    elif runtime_message:
+        message += f" {runtime_message}"
+    app._show_notice(message)
+
+
+async def _sync_browser_runtime_for_host_toggle(
+    app: "AgentZeroCLI",
+    *,
+    enabled: bool,
+) -> tuple[dict | None, str, bool]:
+    if not _browser_runtime_config_available(app):
+        return None, "", False
+    if not app.current_context:
+        return (
+            None,
+            "Open or create a chat context before syncing Browser mode in Agent Zero.",
+            False,
+        )
+    if app.agent_active:
+        return (
+            None,
+            "Wait for the current run to finish before syncing Browser mode in Agent Zero.",
+            False,
+        )
+
+    runtime_backend = "host_required" if enabled else "container"
+    try:
+        payload = await app.client.set_browser_runtime(app.current_context, runtime_backend)
+    except Exception as exc:
+        return None, f"could not update Browser mode: {exc}", True
+
+    if not payload.get("ok"):
+        return (
+            None,
+            str(payload.get("error") or "could not update Browser mode."),
+            True,
+        )
+    return payload, "", False
 
 
 async def _cmd_browser_profile(app: "AgentZeroCLI", args: list[str]) -> None:
