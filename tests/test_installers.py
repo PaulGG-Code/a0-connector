@@ -17,7 +17,11 @@ def test_package_keeps_python_floor_at_310() -> None:
 def test_unix_installer_pins_managed_python() -> None:
     installer = (ROOT / "install.sh").read_text(encoding="utf-8")
     assert "--no-python-downloads" not in installer
-    assert 'PACKAGE_SPEC="${A0_PACKAGE_SPEC:-a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v1.6.zip}"' in installer
+    assert "LATEST_RELEASE_API_URL=" in installer
+    assert "releases/latest" in installer
+    assert "A0_PACKAGE_SPEC" in installer
+    assert "fetch_latest_release_tag" in installer
+    assert "refs/tags/%s.zip" in installer
     assert 'PYTHON_SPEC="${A0_PYTHON_SPEC:-3.11}"' in installer
     assert 'uv tool install --python "$PYTHON_SPEC" --managed-python --upgrade "$PACKAGE_SPEC"' in installer
 
@@ -35,7 +39,11 @@ def test_unix_installer_is_sh_compatible() -> None:
 def test_windows_installer_pins_managed_python() -> None:
     installer = (ROOT / "install.ps1").read_text(encoding="utf-8")
     assert "--no-python-downloads" not in installer
-    assert '"a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v1.6.zip"' in installer
+    assert "$LatestReleaseApiUrl" in installer
+    assert "releases/latest" in installer
+    assert "A0_PACKAGE_SPEC" in installer
+    assert "Resolve-PackageSpec" in installer
+    assert "EscapeDataString" in installer
     assert '$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.11" }' in installer
     assert '$installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade", $PackageSpec)' in installer
     assert 'if ($LASTEXITCODE -ne 0)' in installer
@@ -105,8 +113,8 @@ def test_readme_documents_uv_managed_python_and_git_install() -> None:
     compact = " ".join(readme.split())
     assert "raw.githubusercontent.com/agent0ai/a0-connector/main/install.sh" in compact
     assert "raw.githubusercontent.com/agent0ai/a0-connector/main/install.ps1" in compact
-    assert "install the stable `a0` release directly from the GitHub release archive" in compact
-    assert "refs/tags/v1.6.zip" in compact
+    assert "resolve the latest published GitHub release at runtime" in compact
+    assert "refs/tags/v1.6.zip" not in compact
     assert "Computer-use backends are embedded in the `a0` wheel" in compact
     assert "managed CPython 3.11 tool environment" in compact
     assert "download it automatically" in compact

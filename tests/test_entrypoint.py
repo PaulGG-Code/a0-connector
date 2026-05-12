@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tomllib
+
 import pytest
 
 from agent_zero_cli import __main__
 from agent_zero_cli import __version__
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_package_version_matches_cli_version() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["version"] == __version__
 
 
 def test_main_prints_version_without_launching_app(

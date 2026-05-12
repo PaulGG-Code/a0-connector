@@ -1,8 +1,32 @@
 $ErrorActionPreference = "Stop"
 
-$PackageSpec = if ($env:A0_PACKAGE_SPEC) { $env:A0_PACKAGE_SPEC } else { "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v1.6.zip" }
+$LatestReleaseApiUrl = if ($env:A0_LATEST_RELEASE_API_URL) { $env:A0_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/agent0ai/a0-connector/releases/latest" }
 $PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.11" }
 $UvInstallUrl = if ($env:UV_INSTALL_URL) { $env:UV_INSTALL_URL } else { "https://astral.sh/uv/install.ps1" }
+
+function Resolve-PackageSpec {
+    if ($env:A0_PACKAGE_SPEC) {
+        return $env:A0_PACKAGE_SPEC
+    }
+
+    try {
+        $headers = @{
+            Accept = "application/vnd.github+json"
+            "User-Agent" = "a0-cli-installer"
+        }
+        $release = Invoke-RestMethod -Uri $LatestReleaseApiUrl -Headers $headers
+    } catch {
+        throw "Could not resolve the latest a0 release from GitHub. Set A0_PACKAGE_SPEC to install from a specific package source. $($_.Exception.Message)"
+    }
+
+    $tag = [string]$release.tag_name
+    if (-not $tag.Trim()) {
+        throw "GitHub latest-release response did not include tag_name. Set A0_PACKAGE_SPEC to install from a specific package source."
+    }
+
+    $escapedTag = [uri]::EscapeDataString($tag.Trim())
+    return "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/$escapedTag.zip"
+}
 
 function Ensure-Uv {
     if (Get-Command uv -ErrorAction SilentlyContinue) {
@@ -22,6 +46,7 @@ function Ensure-Uv {
 }
 
 Ensure-Uv
+$PackageSpec = Resolve-PackageSpec
 
 $toolBin = (& uv tool dir --bin).Trim()
 if ($toolBin) {
