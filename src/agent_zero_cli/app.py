@@ -77,6 +77,7 @@ from agent_zero_cli.token_usage import (
 
 _HIDDEN_SLASH_COMMANDS = frozenset({"/pause", "/resume", "/nudge"})
 _SPLASH_HIDDEN_COMMANDS = frozenset({"/profile"})
+_NO_AUTO_SLASH_PALETTE_COMMANDS = frozenset({"/attach", "/image", "/img"})
 _COMPUTER_USE_MODE_LABELS = {
     "interactive": "Confirm with User",
     "persistent": "Confirm with User",
@@ -1210,6 +1211,8 @@ class AgentZeroCLI(App):
         token = text.split(maxsplit=1)[0]
         if not token.startswith("/"):
             return None
+        if token == "/":
+            return None
         if len(text) != len(token):
             return None
         return token.lower()
@@ -1381,6 +1384,8 @@ class AgentZeroCLI(App):
         if query is None:
             return
         if query in _HIDDEN_SLASH_COMMANDS:
+            return
+        if any(command.startswith(query) for command in _NO_AUTO_SLASH_PALETTE_COMMANDS):
             return
 
         self._open_command_palette(initial_query=query, from_slash=True)

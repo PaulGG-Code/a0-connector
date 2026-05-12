@@ -2,11 +2,23 @@ from __future__ import annotations
 
 import pytest
 from textual import events
+from textual.app import App, ComposeResult
 
 from agent_zero_cli.widgets import ChatInput
 
 
 pytestmark = pytest.mark.anyio
+
+
+class ChatInputHarness(App[None]):
+    CSS = """
+    #message-input {
+        width: 40;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield ChatInput(id="message-input")
 
 
 async def test_chat_input_ctrl_j_inserts_newline_and_grows() -> None:
@@ -19,6 +31,24 @@ async def test_chat_input_ctrl_j_inserts_newline_and_grows() -> None:
 
     assert input_widget.value == "one\ntwo"
     assert input_widget.styles.height.cells == 4
+
+
+async def test_chat_input_soft_wrapped_text_grows_to_four_rows() -> None:
+    app = ChatInputHarness()
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        input_widget = app.query_one("#message-input", ChatInput)
+        await pilot.pause()
+
+        input_widget.value = (
+            "This is a long draft typed into the Agent Zero CLI composer to verify "
+            "whether soft wrapped text makes the input box grow to three or four "
+            "visible rows instead of staying constrained to a single line."
+        )
+        await pilot.pause()
+
+        assert input_widget.wrapped_document.height > 4
+        assert input_widget.styles.height.cells == 6
 
 
 async def test_chat_input_shift_enter_inserts_newline_and_grows() -> None:

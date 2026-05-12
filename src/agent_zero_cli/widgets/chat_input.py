@@ -33,7 +33,8 @@ class ChatInput(TextArea):
     """A multi-line text input that auto-grows up to 4 lines.
 
     * **Enter** submits the message.
-    * **Shift+Enter** / **Ctrl+J** inserts a newline.
+    * **Ctrl+J** inserts a newline (`Shift+Enter` also works in terminals
+      that report it distinctly).
     * Scrolls internally when content exceeds 4 lines.
     * While the agent is busy, progress appears as placeholder text inside the
       input (when it is empty), matching the core WebUI behavior.
@@ -247,7 +248,7 @@ class ChatInput(TextArea):
         self._history_draft = ""
 
     def _is_newline_key(self, event: events.Key) -> bool:
-        aliases = set(event.aliases)
+        aliases = {event.key, *event.aliases}
         return bool({"shift+enter", "ctrl+j", "newline", "alt+enter"} & aliases)
 
     def _selection_is_collapsed_at(self, location: tuple[int, int]) -> bool:
@@ -305,11 +306,18 @@ class ChatInput(TextArea):
     # ---- dynamic height ---------------------------------------------
 
     def _update_height(self) -> None:
-        line_count = self.document.line_count
-        # Clamp between 1 and MAX_CONTENT_LINES
+        line_count = (
+            self.wrapped_document.height
+            if self.soft_wrap and self.wrap_width
+            else self.document.line_count
+        )
         visible = max(1, min(line_count, _MAX_CONTENT_LINES))
         new_h = visible + 2  # +2 for border
         self.styles.height = new_h
+
+    def _on_resize(self) -> None:
+        super()._on_resize()
+        self._update_height()
 
     # ---- disabled state ----------------------------------------------
 

@@ -538,6 +538,9 @@ async def test_send_message_includes_attachment_refs() -> None:
 async def test_upload_attachments_posts_files_to_core_upload_endpoint() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(json_data={"ok": True, "token": "csrf-1"})
+    )
     client.http.post = AsyncMock(
         return_value=FakeResponse(json_data={"filenames": ["stored-image.png"]})
     )
@@ -552,18 +555,65 @@ async def test_upload_attachments_posts_files_to_core_upload_endpoint() -> None:
         ]
     )
 
+    client.http.get.assert_awaited_once_with(
+        "http://localhost:5080/api/csrf_token",
+        headers={
+            "Origin": "http://localhost:5080",
+            "Referer": "http://localhost:5080/",
+        },
+    )
     client.http.post.assert_awaited_once_with(
         "http://localhost:5080/api/upload",
         files=[("file", ("local-image.png", b"png-bytes", "image/png"))],
+        headers={
+            "Origin": "http://localhost:5080",
+            "Referer": "http://localhost:5080/",
+            "X-CSRF-Token": "csrf-1",
+        },
     )
     assert refs[0].path == "/a0/usr/uploads/stored-image.png"
     assert refs[0].name == "stored-image.png"
     assert refs[0].mime_type == "image/png"
 
 
+async def test_upload_attachments_refreshes_csrf_after_forbidden_response() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        side_effect=[
+            FakeResponse(json_data={"ok": True, "token": "csrf-old"}),
+            FakeResponse(json_data={"ok": True, "token": "csrf-new"}),
+        ]
+    )
+    client.http.post = AsyncMock(
+        side_effect=[
+            FakeResponse(status_code=403, text="CSRF token missing or invalid"),
+            FakeResponse(json_data={"filenames": ["stored-image.png"]}),
+        ]
+    )
+
+    refs = await client.upload_attachments(
+        [
+            AttachmentUpload(
+                filename="local-image.png",
+                content=b"png-bytes",
+                mime_type="image/png",
+            )
+        ]
+    )
+
+    assert refs[0].path == "/a0/usr/uploads/stored-image.png"
+    assert client.http.get.await_count == 2
+    assert client.http.post.await_args_list[0].kwargs["headers"]["X-CSRF-Token"] == "csrf-old"
+    assert client.http.post.await_args_list[1].kwargs["headers"]["X-CSRF-Token"] == "csrf-new"
+
+
 async def test_upload_attachments_rejects_invalid_response() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(json_data={"ok": True, "token": "csrf-1"})
+    )
     client.http.post = AsyncMock(return_value=FakeResponse(json_data={"filenames": []}))
 
     with pytest.raises(A0ProtocolError, match="invalid attachment response"):

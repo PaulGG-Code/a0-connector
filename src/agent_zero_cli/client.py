@@ -103,6 +103,7 @@ class A0Client:
         )
         self.sio = socketio.AsyncClient(**_socketio_client_kwargs())
         self.connected = False
+        self._csrf_token: str | None = None
         self._events_registered = False
         self._last_connect_error: Any = None
         self._suppress_disconnect_callback = False
@@ -151,6 +152,12 @@ class A0Client:
         if cookie_header:
             headers["Cookie"] = cookie_header
         return headers
+
+    def _browser_headers(self) -> dict[str, str]:
+        return {
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}/",
+        }
 
     def _unwrap_envelope(self, payload: dict[str, Any] | None) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -692,6 +699,36 @@ class A0Client:
             payload["attachments"] = list(attachments)
         return await self._call(_EVENT_SEND_MESSAGE, payload)
 
+    async def fetch_csrf_token(self) -> str:
+        if self._csrf_token:
+            return self._csrf_token
+
+        response = await self.http.get(
+            self._core_api_url("csrf_token"),
+            headers=self._browser_headers(),
+        )
+        if self._is_login_redirect(response):
+            raise A0ProtocolError("CSRF token request requires an authenticated Agent Zero session.")
+        if response.status_code >= 400:
+            raise A0ProtocolError(f"CSRF token request failed: {self._response_message(response)}")
+
+        data = self._json(response)
+        if not data.get("ok"):
+            message = data.get("error") or data.get("message") or "CSRF token request failed."
+            raise A0ProtocolError(str(message))
+
+        token = data.get("token")
+        if not isinstance(token, str) or not token:
+            raise A0ProtocolError("CSRF token response did not include a token.")
+
+        self._csrf_token = token
+        return token
+
+    async def _csrf_headers(self) -> dict[str, str]:
+        headers = self._browser_headers()
+        headers["X-CSRF-Token"] = await self.fetch_csrf_token()
+        return headers
+
     async def upload_attachments(self, uploads: list[AttachmentUpload]) -> list[AttachmentRef]:
         if not uploads:
             return []
@@ -700,7 +737,18 @@ class A0Client:
             ("file", (upload.filename, upload.content, upload.mime_type))
             for upload in uploads
         ]
-        response = await self.http.post(self._core_api_url("upload"), files=files)
+        response = await self.http.post(
+            self._core_api_url("upload"),
+            files=files,
+            headers=await self._csrf_headers(),
+        )
+        if response.status_code == 403:
+            self._csrf_token = None
+            response = await self.http.post(
+                self._core_api_url("upload"),
+                files=files,
+                headers=await self._csrf_headers(),
+            )
         if self._is_login_redirect(response):
             raise A0ProtocolError("Upload requires an authenticated Agent Zero session.")
         if response.status_code >= 400:
@@ -1027,6 +1075,8 @@ class A0Client:
 
     async def logout(self) -> None:
         await self.http.get(self._logout_url(), follow_redirects=False)
+        self._csrf_token = None
 
     def clear_session(self) -> None:
         self.http.cookies.clear()
+        self._csrf_token = None
