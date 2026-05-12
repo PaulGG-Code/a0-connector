@@ -1044,6 +1044,62 @@ async def test_attachment_only_submission_sends_attachment_refs(
     assert dummy_app.current_context_has_messages is True
 
 
+async def test_chat_submission_refreshes_remote_tool_metadata_before_send(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app._host_browser.enabled = True
+    dummy_app._host_browser.remote_debugging = True
+    calls: list[tuple[str, object]] = []
+
+    async def fake_send_hello(
+        *,
+        context_id: str | None = None,
+        computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
+        remote_files: dict[str, object] | None = None,
+        remote_exec: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        del computer_use, remote_files, remote_exec
+        calls.append(("hello", {"context_id": context_id, "host_browser": dict(host_browser or {})}))
+        return {"exec_config": {"version": 1}}
+
+    async def fake_send_message(
+        text: str,
+        context_id: str | None,
+        attachments: list[str] | None = None,
+    ) -> None:
+        calls.append(("message", (text, context_id, attachments)))
+
+    dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
+    monkeypatch.setattr(dummy_app.client, "send_message", fake_send_message)
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+
+    await dummy_app.on_chat_input_submitted(
+        ChatInput.Submitted(value="visit LinkedIn in my browser", input=input_widget)
+    )
+
+    assert calls[0] == (
+        "hello",
+        {
+            "context_id": "ctx-1",
+            "host_browser": {
+                "supported": True,
+                "enabled": True,
+                "status": "ready",
+                "browser_family": "chrome-cdp",
+                "profile_label": "localhost:9222",
+                "features": ["open", "content"],
+                "support_reason": "",
+            },
+        },
+    )
+    assert calls[1] == ("message", ("visit LinkedIn in my browser", "ctx-1", []))
+
+
 async def test_attach_clipboard_image_adds_pending_attachment(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,

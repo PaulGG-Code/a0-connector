@@ -1346,6 +1346,8 @@ class AgentZeroCLI(App):
             self._show_notice("No active chat context.", error=True)
             return
 
+        await self._refresh_remote_tool_metadata()
+
         previous_agent_active = self.agent_active
         previous_pause_latched = self._pause_latched
         previous_context_has_messages = self.current_context_has_messages
