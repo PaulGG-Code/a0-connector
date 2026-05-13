@@ -185,7 +185,11 @@ remote debugging does not require the Chrome DevTools MCP package or Playwright
 CDP attach; the connector carries the small CDP helper directly. If the host
 Python dependency is missing for the launch path, `/browser host on`,
 `/browser relaunch`, and `/browser repair` surface the install command in the
-TUI and run `python -m pip install playwright` in the A0 CLI environment.
+TUI and run `uv pip install --python <a0-python> playwright` when uv is
+available. Manual/non-uv installs fall back to `python -m pip install
+playwright`, bootstrapping `pip` with `ensurepip` if the interpreter supports it.
+This matters for uv-managed tool environments, which may not include a `pip`
+module inside the tool Python.
 
 ## Event bridge
 

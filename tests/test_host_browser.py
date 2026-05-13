@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+import agent_zero_cli.host_browser_common as host_browser_common
+import agent_zero_cli.host_browser_manager as host_browser_manager_module
 from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.host_browser import (
     BrowserCandidate,
@@ -404,6 +406,39 @@ def test_remote_debugging_profile_does_not_require_playwright(tmp_path: Path) ->
     assert metadata["supported"] is True
     assert metadata["browser_family"] == "chrome-cdp"
     assert metadata["cdp_endpoint"] == "ws://localhost:9222/devtools/browser/test"
+
+
+def test_playwright_install_command_targets_a0_python_with_uv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        host_browser_common.shutil,
+        "which",
+        lambda name: "/opt/uv/bin/uv" if name == "uv" else None,
+    )
+
+    assert host_browser_common.playwright_python_install_command("/tmp/a0-python") == [
+        "/opt/uv/bin/uv",
+        "pip",
+        "install",
+        "--python",
+        "/tmp/a0-python",
+        "playwright",
+    ]
+
+
+def test_playwright_install_command_falls_back_to_python_pip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(host_browser_common.shutil, "which", lambda name: None)
+
+    assert host_browser_common.playwright_python_install_command("/tmp/a0-python") == [
+        "/tmp/a0-python",
+        "-m",
+        "pip",
+        "install",
+        "playwright",
+    ]
 
 
 def test_saved_default_profile_uses_authorized_remote_debugging(tmp_path: Path) -> None:
@@ -1290,6 +1325,40 @@ async def test_host_browser_manager_can_repair_missing_playwright(tmp_path: Path
 
     assert result["installed"] is True
     assert calls == [manager.playwright_install_command()]
+    assert manager.has_playwright_dependency() is True
+
+
+async def test_host_browser_manager_bootstraps_pip_when_uv_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pip_command = [host_browser_manager_module.sys.executable, "-m", "pip", "install", "playwright"]
+    ensurepip_command = [host_browser_manager_module.sys.executable, "-m", "ensurepip", "--upgrade"]
+    calls: list[list[str]] = []
+
+    async def fake_installer(command: list[str]) -> tuple[int, str]:
+        calls.append(command)
+        if command == pip_command and calls.count(pip_command) == 1:
+            return 1, "No module named pip"
+        if command == ensurepip_command:
+            return 0, "pip installed"
+        manager._playwright_available = True
+        return 0, "installed"
+
+    monkeypatch.setattr(
+        host_browser_manager_module,
+        "playwright_python_install_commands",
+        lambda python_executable: [[python_executable, "-m", "pip", "install", "playwright"]],
+    )
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        playwright_available=False,
+        playwright_installer=fake_installer,
+    )
+
+    result = await manager.ensure_playwright_dependency()
+
+    assert result["installed"] is True
+    assert calls == [pip_command, ensurepip_command, pip_command]
     assert manager.has_playwright_dependency() is True
 
 

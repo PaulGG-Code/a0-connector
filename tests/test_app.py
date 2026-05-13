@@ -314,7 +314,7 @@ class FakeHostBrowserManager:
         return self.playwright_available
 
     def playwright_install_command(self) -> list[str]:
-        return ["/tmp/python", "-m", "pip", "install", "playwright"]
+        return ["uv", "pip", "install", "--python", "/tmp/python", "playwright"]
 
     async def ensure_playwright_dependency(self) -> dict[str, object]:
         self.install_calls += 1
@@ -1697,7 +1697,7 @@ async def test_browser_host_on_repairs_missing_playwright(
     assert host_browser.enabled is True
     assert host_browser.install_calls == 1
     assert host_browser.playwright_available is True
-    assert "Installing now: /tmp/python -m pip install playwright" in notices[0][0]
+    assert "Installing now: uv pip install --python /tmp/python playwright" in notices[0][0]
     assert "Python Playwright installed for host browser control" in notices[1][0]
     assert notices[-1][0].startswith("Host browser enabled.")
 
@@ -1773,7 +1773,7 @@ async def test_browser_repair_command_installs_missing_playwright(
     await dummy_app._dispatch_command("/browser repair")
 
     assert host_browser.install_calls == 1
-    assert "Installing now: /tmp/python -m pip install playwright" in notices[0][0]
+    assert "Installing now: uv pip install --python /tmp/python playwright" in notices[0][0]
     assert notices[-1][0].startswith("Host browser repair completed.")
 
 

@@ -14,7 +14,6 @@ from agent_zero_cli.config import (
     save_host_browser_relaunch_preference,
 )
 from agent_zero_cli.host_browser_common import (
-    PLAYWRIGHT_PYTHON_PACKAGE,
     RELAUNCH_CONTEXT_ID,
     _SUPPORTED_ACTIONS,
     BrowserCandidate,
@@ -28,6 +27,8 @@ from agent_zero_cli.host_browser_common import (
     is_remote_debugging_family,
     normalize_action,
     parse_content_helper_payload,
+    playwright_python_install_command,
+    playwright_python_install_commands,
     profile_lock_state_for_profile,
     remote_debugging_restriction_reason,
     _run_install_command,
@@ -45,6 +46,22 @@ def normalize_host_browser_profile_mode(value: object, *, default: str = "") -> 
     if normalized in {"existing", "user", "personal", "current"}:
         return "existing"
     return default
+
+
+def _is_python_pip_install_command(command: list[str]) -> bool:
+    return len(command) >= 5 and command[1:4] == ["-m", "pip", "install"]
+
+
+def _pip_module_missing(output: str) -> bool:
+    normalized = str(output or "").lower()
+    return "no module named pip" in normalized or "no module named 'pip'" in normalized
+
+
+def _format_install_attempts(attempts: list[tuple[list[str], int, str]]) -> str:
+    return "; ".join(
+        f"{' '.join(command)} exited {returncode}: {_trim_install_output(output)}"
+        for command, returncode, output in attempts
+    )
 
 
 class HostBrowserManager:
@@ -178,28 +195,49 @@ class HostBrowserManager:
         return self._has_playwright()
 
     def playwright_install_command(self) -> list[str]:
-        return [sys.executable, "-m", "pip", "install", PLAYWRIGHT_PYTHON_PACKAGE]
+        return playwright_python_install_command(sys.executable)
 
     async def ensure_playwright_dependency(self) -> dict[str, object]:
-        command = self.playwright_install_command()
+        commands = playwright_python_install_commands(sys.executable)
+        command = commands[0]
         if self._has_playwright():
             return {"installed": False, "command": command, "output": ""}
 
-        returncode, output = await self._playwright_installer(command)
+        attempts: list[tuple[list[str], int, str]] = []
+        installed = False
+        for candidate in commands:
+            returncode, output = await self._playwright_installer(candidate)
+            attempts.append((candidate, returncode, output))
+            if returncode == 0:
+                command = candidate
+                installed = True
+                break
+            if _pip_module_missing(output) and _is_python_pip_install_command(candidate):
+                ensurepip_command = [sys.executable, "-m", "ensurepip", "--upgrade"]
+                ensurepip_returncode, ensurepip_output = await self._playwright_installer(ensurepip_command)
+                attempts.append((ensurepip_command, ensurepip_returncode, ensurepip_output))
+                if ensurepip_returncode == 0:
+                    returncode, output = await self._playwright_installer(candidate)
+                    attempts.append((candidate, returncode, output))
+                    if returncode == 0:
+                        command = candidate
+                        installed = True
+                        break
+
         importlib.invalidate_caches()
         if self._playwright_available is not True:
             self._playwright_available = None
-        if returncode != 0:
+        if not installed:
             raise RuntimeError(
                 "Python Playwright install failed with exit code "
-                f"{returncode}: {_trim_install_output(output)}"
+                f"{attempts[-1][1]}: {_format_install_attempts(attempts)}"
             )
         if not self._has_playwright():
             raise RuntimeError(
                 "Python Playwright install completed, but the package is still not importable "
                 f"from {sys.executable}."
             )
-        return {"installed": True, "command": command, "output": _trim_install_output(output)}
+        return {"installed": True, "command": command, "output": _trim_install_output(attempts[-1][2])}
 
     def selected_profile(self, profile_mode: object = "") -> BrowserProfile | None:
         mode = normalize_host_browser_profile_mode(profile_mode)
@@ -615,7 +653,7 @@ class HostBrowserManager:
             return (
                 f"Python Playwright is not installed in the A0 CLI host environment ({sys.executable}). "
                 "Run /browser repair in the A0 CLI, or install it with: "
-                f"{sys.executable} -m pip install {PLAYWRIGHT_PYTHON_PACKAGE}. "
+                f"{' '.join(self.playwright_install_command())}. "
                 "The Playwright runtime inside the Agent Zero Docker container is used by the "
                 "container browser backend and cannot control host Chrome-family profiles."
             )

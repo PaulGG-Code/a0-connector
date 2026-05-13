@@ -131,6 +131,8 @@ BROWSER_REEXPORTS = [
     "safe_context_id",
     "screenshot_output_path",
     "multi_group_key",
+    "playwright_python_install_command",
+    "playwright_python_install_commands",
     "content_helper_sha256",
     "parse_content_helper_payload",
     "format_profile_rows",
@@ -813,6 +815,26 @@ def multi_group_key(call: dict[str, Any]) -> Any:
         return int(raw)
     except ValueError:
         return raw
+
+
+def playwright_python_install_command(python_executable: str = sys.executable) -> list[str]:
+    return playwright_python_install_commands(python_executable)[0]
+
+
+def playwright_python_install_commands(python_executable: str = sys.executable) -> list[list[str]]:
+    uv = shutil.which("uv")
+    if uv:
+        return [
+            [
+                uv,
+                "pip",
+                "install",
+                "--python",
+                python_executable,
+                PLAYWRIGHT_PYTHON_PACKAGE,
+            ]
+        ]
+    return [[python_executable, "-m", "pip", "install", PLAYWRIGHT_PYTHON_PACKAGE]]
 
 
 async def _run_install_command(command: list[str]) -> tuple[int, str]:
