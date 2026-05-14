@@ -122,6 +122,66 @@ def test_resolve_python_spec_honors_environment_override() -> None:
     assert self_update.resolve_python_spec(env) == env["A0_PYTHON_SPEC"]
 
 
+def test_check_for_update_detects_newer_release() -> None:
+    result = self_update.check_for_update(
+        "1.9",
+        {},
+        latest_release_resolver=lambda: "v1.10",
+        provenance_resolver=lambda: self_update.InstallProvenance(),
+    )
+
+    assert result == self_update.UpdateCheckResult(
+        current_version="1.9",
+        latest_version="1.10",
+        latest_tag="v1.10",
+        is_local_checkout=False,
+    )
+
+
+def test_check_for_update_ignores_current_release() -> None:
+    result = self_update.check_for_update(
+        "1.9",
+        {},
+        latest_release_resolver=lambda: "v1.9",
+        provenance_resolver=lambda: self_update.InstallProvenance(editable=True),
+    )
+
+    assert result is None
+
+
+def test_check_for_update_can_be_disabled_by_environment() -> None:
+    resolver_calls = 0
+
+    def resolver() -> str:
+        nonlocal resolver_calls
+        resolver_calls += 1
+        return "v9.8"
+
+    result = self_update.check_for_update(
+        "1.9",
+        {"A0_UPDATE_CHECK": "off"},
+        latest_release_resolver=resolver,
+    )
+
+    assert result is None
+    assert resolver_calls == 0
+
+
+def test_format_update_available_message_mentions_local_checkout() -> None:
+    message = self_update.format_update_available_message(
+        self_update.UpdateCheckResult(
+            current_version="1.9",
+            latest_version="1.10",
+            latest_tag="v1.10",
+            is_local_checkout=True,
+        )
+    )
+
+    assert "current checkout reports 1.9" in message
+    assert "Pull this checkout" in message
+    assert "`a0 update`" in message
+
+
 def test_detect_install_provenance_flags_local_editable_checkout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -5,6 +5,7 @@ from importlib import metadata
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,8 @@ RELEASE_ARCHIVE_URL_TEMPLATE = (
 )
 DEFAULT_PYTHON_SPEC = "3.11"
 _GITHUB_API_TIMEOUT = 10.0
+_DISABLED_ENV_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
+_VERSION_PATTERN = re.compile(r"^v?(?P<version>\d+(?:\.\d+)*)(?:[-+].*)?$", re.IGNORECASE)
 
 
 class LatestReleaseError(RuntimeError):
@@ -38,6 +41,14 @@ class InstallProvenance:
     @property
     def is_local_checkout(self) -> bool:
         return self.editable or self.local_path is not None
+
+
+@dataclass(frozen=True)
+class UpdateCheckResult:
+    current_version: str
+    latest_version: str
+    latest_tag: str
+    is_local_checkout: bool = False
 
 
 def package_spec_for_release_tag(tag: str) -> str:
@@ -89,6 +100,69 @@ def resolve_python_spec(env: Mapping[str, str] | None = None) -> str:
     if "A0_PYTHON_SPEC" in source:
         return source["A0_PYTHON_SPEC"]
     return DEFAULT_PYTHON_SPEC
+
+
+def update_check_enabled(env: Mapping[str, str] | None = None) -> bool:
+    source = os.environ if env is None else env
+    value = source.get("A0_UPDATE_CHECK", "").strip().lower()
+    return value not in _DISABLED_ENV_VALUES
+
+
+def normalized_release_version(value: str) -> str:
+    text = value.strip()
+    match = _VERSION_PATTERN.match(text)
+    if match:
+        return match.group("version")
+    if text.lower().startswith("v"):
+        return text[1:]
+    return text
+
+
+def is_newer_release_version(latest: str, current: str) -> bool:
+    latest_key = _numeric_version_key(latest)
+    current_key = _numeric_version_key(current)
+    if latest_key is None or current_key is None:
+        return False
+    return latest_key > current_key
+
+
+def check_for_update(
+    current_version: str,
+    env: Mapping[str, str] | None = None,
+    *,
+    latest_release_resolver: Callable[[], str] | None = None,
+    provenance_resolver: Callable[[], InstallProvenance] | None = None,
+) -> UpdateCheckResult | None:
+    if not update_check_enabled(env):
+        return None
+
+    resolver = latest_release_resolver or fetch_latest_release_tag
+    latest_tag = resolver()
+    latest_version = normalized_release_version(latest_tag)
+    if not is_newer_release_version(latest_version, current_version):
+        return None
+
+    resolve_provenance = provenance_resolver or detect_install_provenance
+    provenance = resolve_provenance()
+    return UpdateCheckResult(
+        current_version=current_version,
+        latest_version=latest_version,
+        latest_tag=latest_tag,
+        is_local_checkout=provenance.is_local_checkout,
+    )
+
+
+def format_update_available_message(result: UpdateCheckResult) -> str:
+    if result.is_local_checkout:
+        return (
+            f"a0 CLI update available: {result.latest_version} "
+            f"(current checkout reports {result.current_version}). "
+            "Pull this checkout to update this runtime, or run `a0 update` for the standalone tool channel."
+        )
+    return (
+        f"a0 CLI update available: {result.latest_version} "
+        f"(installed {result.current_version}). Run `a0 update` after exiting to upgrade."
+    )
 
 
 def detect_install_provenance(distribution_name: str = "a0") -> InstallProvenance:
@@ -277,6 +351,15 @@ def _file_url_to_path(url: str) -> str | None:
     if parsed.netloc:
         return f"//{parsed.netloc}{path}"
     return path
+
+
+def _numeric_version_key(value: str) -> tuple[int, ...] | None:
+    version = normalized_release_version(value)
+    parts = version.split(".")
+    if not parts or any(not part.isdigit() for part in parts):
+        return None
+    numbers = tuple(int(part) for part in parts)
+    return numbers + (0,) * max(0, 3 - len(numbers))
 
 
 def _format_local_checkout_notice(provenance: InstallProvenance) -> str:

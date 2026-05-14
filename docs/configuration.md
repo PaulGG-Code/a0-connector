@@ -5,6 +5,7 @@
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `AGENT_ZERO_HOST` | Agent Zero base URL | `http://localhost:5080` |
+| `A0_UPDATE_CHECK` | Startup check for a newer CLI release. Set to `0`, `false`, `no`, or `off` to disable. | enabled |
 
 ## Resolution order
 

@@ -15,6 +15,7 @@ from textual.theme import Theme
 from textual.widgets import ContentSwitcher
 
 from agent_zero_cli import (
+    __version__,
     availability,
     browser_commands,
     chat_commands,
@@ -23,6 +24,7 @@ from agent_zero_cli import (
     event_handlers,
     profile_commands,
     project_commands,
+    self_update,
     splash_helpers,
     state_sync,
 )
@@ -225,6 +227,7 @@ class AgentZeroCLI(App):
         self._auto_connect_single_instance = auto_connect_single_instance
         self._discover_instances = discover_instances
         self._splash_hidden_commands = _SPLASH_HIDDEN_COMMANDS
+        self._cli_update_check_started = False
 
     def compose(self) -> ComposeResult:
         yield ConnectionStatus(id="connection-status")
@@ -285,6 +288,7 @@ class AgentZeroCLI(App):
         self._sync_connection_status("disconnected", self.config.instance_url or "")
         self._sync_body_mode()
         self._focus_splash_primary()
+        self._start_cli_update_check()
         self.run_worker(self._startup(), exclusive=True, name="startup")
 
     def get_system_commands(self, screen) -> Iterable[SystemCommand]:
@@ -1102,6 +1106,46 @@ class AgentZeroCLI(App):
 
     async def _startup(self) -> None:
         await connection.startup(self)
+
+    def _start_cli_update_check(self) -> None:
+        if self._cli_update_check_started or not self_update.update_check_enabled():
+            return
+        self._cli_update_check_started = True
+        self.run_worker(
+            self._check_for_cli_update(),
+            name="cli-update-check",
+            group="background",
+            exit_on_error=False,
+        )
+
+    async def _check_for_cli_update(self) -> None:
+        try:
+            result = await asyncio.to_thread(self_update.check_for_update, __version__)
+        except self_update.LatestReleaseError:
+            return
+        except Exception:
+            return
+
+        if result is None:
+            return
+        self._show_cli_update_notice(self_update.format_update_available_message(result))
+
+    def _show_cli_update_notice(self, message: str) -> None:
+        try:
+            self.notify(
+                message,
+                title="a0 CLI update available",
+                severity="information",
+                timeout=12,
+                markup=False,
+            )
+        except Exception:
+            pass
+
+        try:
+            self._show_notice(message)
+        except Exception:
+            pass
 
     async def _fetch_capabilities(self) -> tuple[dict[str, Any] | None, bool, str]:
         return await connection.fetch_capabilities(self)

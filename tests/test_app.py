@@ -10,7 +10,7 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.selection import SELECT_ALL
 
-from agent_zero_cli import chat_commands, connection, event_handlers
+from agent_zero_cli import __version__, chat_commands, connection, event_handlers, self_update
 from agent_zero_cli.app import AgentZeroCLI
 from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
@@ -482,6 +482,84 @@ def test_get_binding_description_reflects_remote_safety_toggle_state(
 
     assert dummy_app.get_binding_description(file_binding) == "Read-only"
     assert dummy_app.get_binding_description(exec_binding) == "Code-exec ON"
+
+
+async def test_cli_update_check_surfaces_available_release(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    notifications: list[tuple[str, dict[str, object]]] = []
+
+    def fake_check_for_update(current_version: str) -> self_update.UpdateCheckResult:
+        assert current_version == __version__
+        return self_update.UpdateCheckResult(
+            current_version=current_version,
+            latest_version="99.0",
+            latest_tag="v99.0",
+        )
+
+    monkeypatch.setattr(
+        "agent_zero_cli.app.self_update.check_for_update",
+        fake_check_for_update,
+    )
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+    monkeypatch.setattr(
+        dummy_app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    await dummy_app._check_for_cli_update()
+
+    message = (
+        f"a0 CLI update available: 99.0 (installed {__version__}). "
+        "Run `a0 update` after exiting to upgrade."
+    )
+    assert notices == [(message, False)]
+    assert notifications == [
+        (
+            message,
+            {
+                "title": "a0 CLI update available",
+                "severity": "information",
+                "timeout": 12,
+                "markup": False,
+            },
+        )
+    ]
+
+
+async def test_cli_update_check_stays_quiet_when_no_update(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    notifications: list[tuple[str, dict[str, object]]] = []
+
+    monkeypatch.setattr(
+        "agent_zero_cli.app.self_update.check_for_update",
+        lambda current_version: None,
+    )
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+    monkeypatch.setattr(
+        dummy_app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    await dummy_app._check_for_cli_update()
+
+    assert notices == []
+    assert notifications == []
 
 
 def test_apply_instance_discovery_result_autoconnects_single_instance(
