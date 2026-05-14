@@ -55,6 +55,7 @@ class RemoteFileUtility:
         max_lines: int = 250,
     ) -> None:
         self.scan_root = os.path.abspath(scan_root or os.getcwd())
+        self._scan_root_real = os.path.normcase(os.path.realpath(self.scan_root))
         self.allow_writes = allow_writes
         self.max_depth = max_depth
         self.max_files = max_files
@@ -96,7 +97,21 @@ class RemoteFileUtility:
         expanded = os.path.expanduser(normalized)
         if not os.path.isabs(expanded):
             expanded = os.path.join(self.scan_root, expanded)
-        return os.path.abspath(expanded)
+        target_path = os.path.abspath(expanded)
+        self._ensure_path_contained(target_path, original_path=path)
+        return target_path
+
+    def _ensure_path_contained(self, target_path: str, *, original_path: str) -> None:
+        target_real = os.path.normcase(os.path.realpath(target_path))
+        try:
+            contained = os.path.commonpath([self._scan_root_real, target_real]) == self._scan_root_real
+        except ValueError:
+            contained = False
+
+        if not contained:
+            raise PermissionError(
+                f"Path is outside the allowed local workspace: {original_path}"
+            )
 
     def _count_content_lines(self, content: str) -> int:
         return content.count("\n") + (

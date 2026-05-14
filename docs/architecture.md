@@ -212,6 +212,8 @@ module inside the tool Python.
 
 The `text_editor_remote` tool emits `connector_file_op` to the subscribed CLI client. The CLI performs the file read, write, or patch on the local machine and returns `connector_file_op_result`.
 
+All requested paths are resolved relative to the CLI-advertised local workspace and must remain inside that workspace after canonicalization. Absolute paths, `..` traversal, different Windows drives, and symlinks that escape the workspace are rejected before any read or write occurs.
+
 Supported public tool operations:
 - `read`
 - `write`

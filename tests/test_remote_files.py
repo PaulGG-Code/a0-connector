@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ntpath
 import os
 from pathlib import Path
 
 import pytest
 
+from agent_zero_cli import remote_files as remote_files_module
 from agent_zero_cli.remote_files import RemoteFileUtility
 
 
@@ -76,6 +78,97 @@ def test_remote_file_utility_roundtrips_read_write_and_patch(tmp_path: Path) -> 
     assert patch_result["result"]["file"]["realpath"] == os.path.realpath(str(target))
     assert patch_result["result"]["file"]["total_lines"] == 2
     assert target.read_text(encoding="utf-8") == "line-1\nline-2-updated\n"
+
+
+def test_remote_file_utility_blocks_absolute_read_outside_scan_root_in_read_only_mode(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("folder escape\n", encoding="utf-8")
+
+    utility = RemoteFileUtility(scan_root=str(root), allow_writes=False)
+    result = utility.handle_file_op(
+        {
+            "op_id": "op-read-escape",
+            "op": "read",
+            "path": str(outside),
+        }
+    )
+
+    assert result["ok"] is False
+    assert "outside the allowed local workspace" in result["error"]
+
+
+def test_remote_file_utility_blocks_windows_drive_escape_in_read_only_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(remote_files_module.os, "path", ntpath)
+
+    utility = RemoteFileUtility(
+        scan_root=r"C:\Users\alex\Desktop\dummy",
+        allow_writes=False,
+    )
+    result = utility.handle_file_op(
+        {
+            "op_id": "op-read-drive-escape",
+            "op": "read",
+            "path": r"E:\dummy.txt",
+        }
+    )
+
+    assert result["ok"] is False
+    assert "outside the allowed local workspace" in result["error"]
+
+
+def test_remote_file_utility_blocks_parent_traversal_outside_scan_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("folder escape\n", encoding="utf-8")
+
+    utility = RemoteFileUtility(scan_root=str(root))
+    result = utility.handle_file_op(
+        {
+            "op_id": "op-read-parent-escape",
+            "op": "read",
+            "path": "../outside.txt",
+        }
+    )
+
+    assert result["ok"] is False
+    assert "outside the allowed local workspace" in result["error"]
+
+
+def test_remote_file_utility_blocks_symlink_escape_outside_scan_root(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "workspace"
+    root.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "secret.txt").write_text("folder escape\n", encoding="utf-8")
+    link = root / "linked-outside"
+
+    try:
+        link.symlink_to(outside, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink creation is unavailable: {exc}")
+
+    utility = RemoteFileUtility(scan_root=str(root))
+    result = utility.handle_file_op(
+        {
+            "op_id": "op-read-symlink-escape",
+            "op": "read",
+            "path": "linked-outside/secret.txt",
+        }
+    )
+
+    assert result["ok"] is False
+    assert "outside the allowed local workspace" in result["error"]
 
 
 def test_remote_file_utility_context_patch_chains_after_line_shift(tmp_path: Path) -> None:
