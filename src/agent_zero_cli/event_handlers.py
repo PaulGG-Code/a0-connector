@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from textual.css.query import NoMatches
@@ -17,6 +18,9 @@ from agent_zero_cli.widgets.chat_log import ChatLog
 
 if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
+
+
+_REMOTE_TREE_KEEPALIVE_SECONDS = 60.0
 
 
 def _chat_log_or_none(app: AgentZeroCLI) -> ChatLog | None:
@@ -218,7 +222,7 @@ def stop_remote_tree_publisher(app: AgentZeroCLI) -> None:
 
 async def remote_tree_publish_loop(app: AgentZeroCLI) -> None:
     try:
-        await app._publish_remote_tree_snapshot()
+        await app._publish_remote_tree_snapshot(force=True)
         while app.connected:
             await asyncio.sleep(30.0)
             await app._publish_remote_tree_snapshot()
@@ -226,12 +230,17 @@ async def remote_tree_publish_loop(app: AgentZeroCLI) -> None:
         return
 
 
-async def publish_remote_tree_snapshot(app: AgentZeroCLI) -> None:
+async def publish_remote_tree_snapshot(app: AgentZeroCLI, *, force: bool = False) -> None:
     if not app.connected:
         return
 
     snapshot = app._remote_files.build_tree_snapshot()
-    if snapshot.tree_hash == app._last_remote_tree_hash:
+    now = monotonic()
+    if (
+        not force
+        and snapshot.tree_hash == app._last_remote_tree_hash
+        and now - app._last_remote_tree_published_at < _REMOTE_TREE_KEEPALIVE_SECONDS
+    ):
         return
 
     try:
@@ -240,3 +249,4 @@ async def publish_remote_tree_snapshot(app: AgentZeroCLI) -> None:
         return
 
     app._last_remote_tree_hash = snapshot.tree_hash
+    app._last_remote_tree_published_at = now

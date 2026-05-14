@@ -10,13 +10,14 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.selection import SELECT_ALL
 
-from agent_zero_cli import chat_commands, connection
+from agent_zero_cli import chat_commands, connection, event_handlers
 from agent_zero_cli.app import AgentZeroCLI
 from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
 from agent_zero_cli.rendering import render_connector_event
+from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.widgets.command_palette import is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import ChatInput, ConnectionStatus, ProfileMenuItem, ProjectMenuItem, SplashState
@@ -826,6 +827,7 @@ async def test_switch_context_persists_last_context(
     unsubscribed: list[str] = []
     subscribed: list[tuple[str, int]] = []
     remembered: list[str] = []
+    published: list[bool] = []
 
     async def async_noop(*args, **kwargs) -> None:
         del args, kwargs
@@ -836,12 +838,16 @@ async def test_switch_context_persists_last_context(
     async def fake_subscribe_context(context_id: str, from_seq: int = 0) -> None:
         subscribed.append((context_id, from_seq))
 
+    async def fake_publish_remote_tree_snapshot(*, force: bool = False) -> None:
+        published.append(force)
+
     monkeypatch.setattr(dummy_app, "_stop_token_refresh", lambda: None)
     monkeypatch.setattr(dummy_app, "_hide_project_menu", async_noop)
     monkeypatch.setattr(dummy_app, "_hide_profile_menu", async_noop)
     monkeypatch.setattr(dummy_app.client, "unsubscribe_context", fake_unsubscribe_context)
     monkeypatch.setattr(dummy_app.client, "subscribe_context", fake_subscribe_context)
     monkeypatch.setattr(dummy_app, "_remember_context", lambda context_id: remembered.append(context_id))
+    monkeypatch.setattr(dummy_app, "_publish_remote_tree_snapshot", fake_publish_remote_tree_snapshot)
     monkeypatch.setattr(dummy_app, "_refresh_projects", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_model_switcher", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
@@ -851,9 +857,46 @@ async def test_switch_context_persists_last_context(
 
     assert unsubscribed == ["ctx-old"]
     assert subscribed == [("ctx-2", 0)]
+    assert published == [True]
     assert remembered == ["ctx-2"]
     assert dummy_app.current_context == "ctx-2"
     assert dummy_app.current_context_has_messages is True
+
+
+async def test_remote_tree_snapshot_resends_unchanged_tree_before_backend_expiry(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    snapshot = RemoteTreeSnapshot(
+        root_path="/workspace",
+        tree="/workspace/\n└── pyproject.toml",
+        tree_hash="tree-hash",
+        generated_at="2026-05-15T00:00:00+00:00",
+    )
+    sent: list[dict[str, object]] = []
+
+    async def fake_send_remote_tree_update(payload: dict[str, object]) -> dict[str, object]:
+        sent.append(payload)
+        return {"accepted": True}
+
+    monotonic_values = iter([100.0, 120.0, 161.0, 162.0])
+
+    monkeypatch.setattr(dummy_app._remote_files, "build_tree_snapshot", lambda: snapshot)
+    monkeypatch.setattr(dummy_app.client, "send_remote_tree_update", fake_send_remote_tree_update)
+    monkeypatch.setattr(event_handlers, "monotonic", lambda: next(monotonic_values))
+
+    await dummy_app._publish_remote_tree_snapshot()
+    await dummy_app._publish_remote_tree_snapshot()
+    await dummy_app._publish_remote_tree_snapshot()
+    await dummy_app._publish_remote_tree_snapshot(force=True)
+
+    assert [payload["tree_hash"] for payload in sent] == [
+        "tree-hash",
+        "tree-hash",
+        "tree-hash",
+    ]
+    assert dummy_app._last_remote_tree_published_at == 162.0
 
 
 async def test_resolve_initial_context_restores_saved_chat_for_same_host(
@@ -1074,8 +1117,12 @@ async def test_chat_submission_refreshes_remote_tool_metadata_before_send(
     ) -> None:
         calls.append(("message", (text, context_id, attachments)))
 
+    async def fake_publish_remote_tree_snapshot(*, force: bool = False) -> None:
+        calls.append(("tree", {"force": force}))
+
     dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
     monkeypatch.setattr(dummy_app.client, "send_message", fake_send_message)
+    monkeypatch.setattr(dummy_app, "_publish_remote_tree_snapshot", fake_publish_remote_tree_snapshot)
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
 
     await dummy_app.on_chat_input_submitted(
@@ -1097,7 +1144,8 @@ async def test_chat_submission_refreshes_remote_tool_metadata_before_send(
             },
         },
     )
-    assert calls[1] == ("message", ("visit LinkedIn in my browser", "ctx-1", []))
+    assert calls[1] == ("tree", {"force": True})
+    assert calls[2] == ("message", ("visit LinkedIn in my browser", "ctx-1", []))
 
 
 async def test_attach_clipboard_image_adds_pending_attachment(

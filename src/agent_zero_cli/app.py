@@ -212,6 +212,7 @@ class AgentZeroCLI(App):
         }
         self._remote_tree_task: asyncio.Task[None] | None = None
         self._last_remote_tree_hash = ""
+        self._last_remote_tree_published_at = 0.0
         self._model_switch_allowed = False
         self._settings_snapshot_signature = ""
         self._model_switcher_signature = ""
@@ -1202,8 +1203,8 @@ class AgentZeroCLI(App):
     async def _remote_tree_publish_loop(self) -> None:
         await event_handlers.remote_tree_publish_loop(self)
 
-    async def _publish_remote_tree_snapshot(self) -> None:
-        await event_handlers.publish_remote_tree_snapshot(self)
+    async def _publish_remote_tree_snapshot(self, *, force: bool = False) -> None:
+        await event_handlers.publish_remote_tree_snapshot(self, force=force)
 
     def _slash_query(self, text: str) -> str | None:
         if not text:
@@ -1350,6 +1351,7 @@ class AgentZeroCLI(App):
             return
 
         await self._refresh_remote_tool_metadata()
+        await self._publish_remote_tree_snapshot(force=True)
 
         previous_agent_active = self.agent_active
         previous_pause_latched = self._pause_latched

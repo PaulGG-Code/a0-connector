@@ -127,6 +127,7 @@ async def begin_connection(
     await app._hide_profile_menu()
     app._clear_project_state()
     app._last_remote_tree_hash = ""
+    app._last_remote_tree_published_at = 0.0
     normalized_host = app._normalize_host(host)
     app.config.instance_url = normalized_host
     app.client.base_url = normalized_host.rstrip("/")
@@ -362,6 +363,8 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._set_workspace_context(remote_workspace="")
     app._settings_snapshot_signature = ""
     app._model_switcher_signature = ""
+    app._last_remote_tree_hash = ""
+    app._last_remote_tree_published_at = 0.0
     app._python_tty.set_exec_config(None)
     asyncio.create_task(app._python_tty.close())
     asyncio.create_task(app._computer_use.disconnect())
