@@ -267,6 +267,11 @@ Supported runtimes:
 - `reset`
 - `input`
 
+`terminal`, `python`, and `nodejs` payloads may include `reset: true`. The CLI
+must terminate the existing session process tree before running the replacement
+command, so stuck child processes cannot keep the session or CLI shutdown path
+blocked.
+
 `connector_hello` includes `exec_config` with:
 - `code_exec_timeouts`
 - `output_timeouts`

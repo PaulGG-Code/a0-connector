@@ -1154,6 +1154,48 @@ def test_code_execution_remote_allows_output_runtime_while_cli_is_read_only() ->
     assert shared_ws_manager.calls[0]["payload"]["runtime"] == "output"
 
 
+def test_code_execution_remote_forwards_reset_true_with_replacement_command() -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "message": "Session 0 completed.",
+                "output": "world",
+                "running": False,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_code_execution_remote_tool(
+        exec_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_remote_exec_metadata("sid-cli", {"enabled": True})
+    ws_runtime_mod.store_sid_remote_file_metadata(
+        "sid-cli",
+        {"enabled": True, "write_enabled": True, "mode": "read_write"},
+    )
+
+    response = asyncio.run(
+        _create_code_execution_remote(
+            tool_mod,
+            agent,
+            runtime="terminal",
+            session=0,
+            code="echo world",
+            reset=True,
+        ).execute()
+    )
+
+    payload = shared_ws_manager.calls[0]["payload"]
+    assert response.message == "Session 0 completed.\n\nworld"
+    assert payload["runtime"] == "terminal"
+    assert payload["code"] == "echo world"
+    assert payload["reset"] is True
+
+
 def test_select_remote_file_target_sid_requires_write_enabled_for_writes() -> None:
     _install_fake_helpers()
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")

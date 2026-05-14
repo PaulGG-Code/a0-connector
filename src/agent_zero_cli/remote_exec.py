@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import locale
 import os
 import re
+import signal
 import shlex
 import shutil
+import subprocess
 import sys
 import time
 import uuid
@@ -122,6 +125,16 @@ def _coerce_timeout_group(raw: Any, defaults: dict[str, int]) -> dict[str, int]:
     return result
 
 
+def _coerce_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return False
+
+
 def _default_exec_config() -> _ExecConfig:
     return _ExecConfig(
         version=1,
@@ -231,6 +244,7 @@ class LocalShellSession:
         self._marker_pattern: re.Pattern[str] | None = None
         self._command_completed = False
         self._closed = False
+        self._process_group_id: int | None = None
 
     @property
     def is_alive(self) -> bool:
@@ -245,13 +259,20 @@ class LocalShellSession:
             return
 
         cmd = self._shell_command()
+        kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        else:
+            kwargs["start_new_session"] = True
         self.process = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=self.cwd or None,
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            **kwargs,
         )
+        self._process_group_id = self._process_group_for(self.process)
         self._closed = False
         self._reader_task = asyncio.create_task(self._reader_loop())
 
@@ -260,21 +281,25 @@ class LocalShellSession:
         process = self.process
         self.process = None
 
-        if process is not None and process.returncode is None:
-            process.terminate()
-            try:
-                await asyncio.wait_for(process.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+        if process is not None:
+            await self._terminate_process_tree(process)
 
         reader = self._reader_task
         self._reader_task = None
         if reader is not None:
             try:
-                await reader
+                await asyncio.wait_for(reader, timeout=2.0)
+            except asyncio.TimeoutError:
+                reader.cancel()
+                try:
+                    await reader
+                except asyncio.CancelledError:
+                    pass
+            except asyncio.CancelledError:
+                pass
             except Exception:
                 pass
+        self._process_group_id = None
 
     async def send_command(self, command: str) -> None:
         if not self.is_alive or self.process is None or self.process.stdin is None:
@@ -363,6 +388,70 @@ class LocalShellSession:
         if os.path.basename(executable) == "bash":
             return [executable, "--noprofile", "--norc"]
         return [executable]
+
+    def _process_group_for(self, process: asyncio.subprocess.Process) -> int | None:
+        if os.name == "nt":
+            return None
+        try:
+            return os.getpgid(process.pid)
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            return None
+
+    async def _terminate_process_tree(self, process: asyncio.subprocess.Process) -> None:
+        if os.name == "nt":
+            await self._terminate_windows_process_tree(process)
+            return
+
+        group_id = self._process_group_id
+        if group_id is None:
+            group_id = self._process_group_for(process)
+
+        if group_id is not None:
+            with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                os.killpg(group_id, signal.SIGTERM)
+        elif process.returncode is None:
+            process.terminate()
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            if group_id is not None:
+                with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
+                    os.killpg(group_id, signal.SIGKILL)
+            elif process.returncode is None:
+                process.kill()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
+
+    async def _terminate_windows_process_tree(self, process: asyncio.subprocess.Process) -> None:
+        if process.returncode is not None:
+            return
+
+        taskkill = shutil.which("taskkill.exe") or shutil.which("taskkill")
+        if taskkill:
+            try:
+                killer = await asyncio.create_subprocess_exec(
+                    taskkill,
+                    "/PID",
+                    str(process.pid),
+                    "/T",
+                    "/F",
+                    stdout=asyncio.subprocess.DEVNULL,
+                    stderr=asyncio.subprocess.DEVNULL,
+                )
+                await asyncio.wait_for(killer.wait(), timeout=5.0)
+            except Exception:
+                pass
+        else:
+            process.terminate()
+
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+        except asyncio.TimeoutError:
+            with contextlib.suppress(Exception):
+                process.kill()
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(process.wait(), timeout=2.0)
 
     def _wrap_command(self, command: str) -> tuple[re.Pattern[str], str]:
         marker = f"{_MARKER_PREFIX}{uuid.uuid4().hex}__"
@@ -494,23 +583,36 @@ class RemoteExecManager:
                 "ok": False,
                 "error": "session must be an integer",
             }
+        reset_requested = _coerce_bool(data.get("reset"))
 
         try:
             if runtime == "terminal":
                 code = data.get("code")
                 if code is None or not str(code).strip():
                     raise ValueError("code is required for runtime=terminal")
-                result = await self.execute_terminal(session=session, command=str(code))
+                result = await self.execute_terminal(
+                    session=session,
+                    command=str(code),
+                    reset=reset_requested,
+                )
             elif runtime == "python":
                 code = data.get("code")
                 if code is None or not str(code).strip():
                     raise ValueError("code is required for runtime=python")
-                result = await self.execute_python(session=session, code=str(code))
+                result = await self.execute_python(
+                    session=session,
+                    code=str(code),
+                    reset=reset_requested,
+                )
             elif runtime == "nodejs":
                 code = data.get("code")
                 if code is None or not str(code).strip():
                     raise ValueError("code is required for runtime=nodejs")
-                result = await self.execute_nodejs(session=session, code=str(code))
+                result = await self.execute_nodejs(
+                    session=session,
+                    code=str(code),
+                    reset=reset_requested,
+                )
             elif runtime == "input":
                 keyboard = data.get("keyboard")
                 if keyboard is None:
@@ -530,25 +632,46 @@ class RemoteExecManager:
 
         return {"op_id": op_id, "ok": True, "result": result}
 
-    async def execute_terminal(self, *, session: int, command: str) -> dict[str, Any]:
+    async def execute_terminal(
+        self,
+        *,
+        session: int,
+        command: str,
+        reset: bool = False,
+    ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=command,
             timeouts=self._exec_config.code_exec_timeouts,
+            reset=reset,
         )
 
-    async def execute_python(self, *, session: int, code: str) -> dict[str, Any]:
+    async def execute_python(
+        self,
+        *,
+        session: int,
+        code: str,
+        reset: bool = False,
+    ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=_build_python_command(code),
             timeouts=self._exec_config.code_exec_timeouts,
+            reset=reset,
         )
 
-    async def execute_nodejs(self, *, session: int, code: str) -> dict[str, Any]:
+    async def execute_nodejs(
+        self,
+        *,
+        session: int,
+        code: str,
+        reset: bool = False,
+    ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=_build_node_command(code),
             timeouts=self._exec_config.code_exec_timeouts,
+            reset=reset,
         )
 
     async def send_input(self, *, session: int, keyboard: str) -> dict[str, Any]:
@@ -595,8 +718,9 @@ class RemoteExecManager:
         session: int,
         command: str,
         timeouts: dict[str, int],
+        reset: bool = False,
     ) -> dict[str, Any]:
-        state = await self._ensure_session(session)
+        state = await self._ensure_session(session, reset=reset)
         if response := await self._handle_running_session(session=session):
             return response
 

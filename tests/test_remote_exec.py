@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import asyncio
+import os
+import shlex
 import sys
 from pathlib import Path
 
 import pytest
 
-from agent_zero_cli.remote_exec import RemoteExecManager
+from agent_zero_cli.remote_exec import LocalShellSession, RemoteExecManager
 
 
 pytestmark = pytest.mark.anyio
@@ -216,6 +219,76 @@ async def test_input_runtime_sends_keystrokes_into_running_session(
     assert created_shells[0].inputs == ["y"]
 
     await manager.close()
+
+
+async def test_terminal_runtime_reset_true_closes_running_session_and_runs_replacement(
+    tmp_path: Path,
+    created_shells: list[FakeShellSession],
+) -> None:
+    manager = _manager(tmp_path)
+    manager.set_exec_config(
+        {
+            "version": 1,
+            "code_exec_timeouts": {
+                "first_output_timeout": 0,
+                "between_output_timeout": 1,
+                "max_exec_timeout": 5,
+                "dialog_timeout": 0,
+            },
+            "output_timeouts": {
+                "first_output_timeout": 0,
+                "between_output_timeout": 1,
+                "max_exec_timeout": 5,
+                "dialog_timeout": 0,
+            },
+            "dialog_patterns": [r"\?\s*$"],
+        }
+    )
+
+    running_result = await manager.handle_exec_op(
+        {
+            "op_id": "exec-ask",
+            "runtime": "terminal",
+            "session": 0,
+            "code": "ask",
+        }
+    )
+    replacement_result = await manager.handle_exec_op(
+        {
+            "op_id": "exec-reset-run",
+            "runtime": "terminal",
+            "session": 0,
+            "code": "ansi",
+            "reset": True,
+        }
+    )
+
+    assert running_result["ok"] is True
+    assert running_result["result"]["running"] is True
+    assert len(created_shells) == 2
+    assert created_shells[0].is_alive is False
+    assert created_shells[0].commands == ["ask"]
+    assert created_shells[1].commands == ["ansi"]
+    assert replacement_result["ok"] is True
+    assert replacement_result["result"]["output"] == "hello"
+    assert replacement_result["result"]["running"] is False
+
+    await manager.close()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="uses POSIX shell quoting")
+async def test_shell_close_terminates_child_process_that_keeps_stdout_open(
+    tmp_path: Path,
+) -> None:
+    shell = LocalShellSession(cwd=str(tmp_path))
+    sleeper = "import time; print('ready', flush=True); time.sleep(30)"
+
+    await shell.connect()
+    await shell.send_command(f"{shlex.quote(sys.executable)} -c {shlex.quote(sleeper)}")
+    output, _ = await shell.read_output(timeout=2)
+
+    assert "ready" in output
+    await asyncio.wait_for(shell.close(), timeout=5)
 
 
 async def test_mutating_exec_runtimes_are_blocked_when_local_access_is_read_only(
