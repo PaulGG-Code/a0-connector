@@ -240,6 +240,7 @@ async def begin_connection(
     app.client.on_context_snapshot = lambda data: app._run_on_ui(app._handle_context_snapshot, data)
     app.client.on_context_event = lambda data: app._run_on_ui(app._handle_context_event, data)
     app.client.on_context_complete = lambda data: app._run_on_ui(app._handle_context_complete, data)
+    app.client.on_message_queue_updated = lambda data: app._run_on_ui(app._handle_message_queue_updated, data)
     app.client.on_error = lambda data: app._run_on_ui(app._handle_connector_error, data)
     app.client.on_settings_updated = lambda data: app._run_on_ui(app._handle_settings_updated, data)
     app.client.on_file_op = app._handle_file_op
@@ -287,6 +288,7 @@ async def begin_connection(
     app._chat_intro_pending = True
     app.query_one("#chat-log", ChatLog).clear()
     app._set_idle()
+    app._set_message_queue([])
 
     try:
         await app.client.subscribe_context(context_id)

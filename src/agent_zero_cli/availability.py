@@ -68,6 +68,24 @@ def nudge_availability(app: AgentZeroCLI) -> CommandAvailability:
     return CommandAvailability(True)
 
 
+def message_queue_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("message_queue")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
+def message_queue_send_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = message_queue_availability(app)
+    if not base.available:
+        return base
+    if not app._has_message_queue():
+        return CommandAvailability(False, "There are no queued messages to send.")
+    return CommandAvailability(True)
+
+
 def attachments_availability(app: AgentZeroCLI) -> CommandAvailability:
     base = require_connection(app)
     if not base.available:

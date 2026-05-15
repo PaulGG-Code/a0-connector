@@ -89,6 +89,8 @@ def _install_fake_helpers(
     plugins_mod = types.ModuleType("helpers.plugins")
     print_style_mod = types.ModuleType("helpers.print_style")
     history_mod = types.ModuleType("helpers.history")
+    message_queue_mod = types.ModuleType("helpers.message_queue")
+    state_monitor_mod = types.ModuleType("helpers.state_monitor_integration")
     tool_mod = types.ModuleType("helpers.tool")
     ws_mod = types.ModuleType("helpers.ws")
     ws_manager_mod = types.ModuleType("helpers.ws_manager")
@@ -168,10 +170,123 @@ def _install_fake_helpers(
     def raw_message(*, raw_content, preview=None):
         return {"raw_content": raw_content, "preview": preview}
 
+    def _ctx_get_data(context: object, key: str, default: object = None) -> object:
+        getter = getattr(context, "get_data", None)
+        if callable(getter):
+            return getter(key) or default
+        return getattr(context, "_data", {}).get(key, default)
+
+    def _ctx_set_data(context: object, key: str, value: object) -> None:
+        setter = getattr(context, "set_data", None)
+        if callable(setter):
+            setter(key, value)
+            return
+        getattr(context, "_data", {})[key] = value
+
+    def _ctx_set_output_data(context: object, key: str, value: object) -> None:
+        setter = getattr(context, "set_output_data", None)
+        if callable(setter):
+            setter(key, value)
+            return
+        getattr(context, "_output_data", {})[key] = value
+
+    def _queue_get(context: object) -> list[dict[str, object]]:
+        queue = _ctx_get_data(context, "message_queue", [])
+        return queue if isinstance(queue, list) else []
+
+    def _queue_sync(context: object) -> None:
+        output_items = []
+        for item in _queue_get(context):
+            attachments = [str(path).split("/")[-1] for path in item.get("attachments", [])]
+            text = str(item.get("text", "") or "")
+            output_items.append(
+                {
+                    "id": item.get("id", ""),
+                    "seq": item.get("seq", 0),
+                    "text": text[:100] + "..." if len(text) > 100 else text,
+                    "attachments": attachments,
+                    "attachment_count": len(item.get("attachments", []) or []),
+                }
+            )
+        _ctx_set_output_data(context, "message_queue", output_items)
+
+    def _queue_add(
+        context: object,
+        text: str,
+        attachments: list[str] | None = None,
+        item_id: str | None = None,
+    ) -> dict[str, object]:
+        queue = list(_queue_get(context))
+        seq = int(_ctx_get_data(context, "message_queue_seq", 0) or 0) + 1
+        _ctx_set_data(context, "message_queue_seq", seq)
+        item = {
+            "id": item_id or f"item-{seq}",
+            "seq": seq,
+            "text": text,
+            "attachments": list(attachments or []),
+        }
+        queue.append(item)
+        _ctx_set_data(context, "message_queue", queue)
+        _queue_sync(context)
+        return item
+
+    def _queue_remove(context: object, item_id: str | None = None) -> int:
+        if not item_id:
+            _ctx_set_data(context, "message_queue", [])
+            _ctx_set_output_data(context, "message_queue", [])
+            return 0
+        queue = [item for item in _queue_get(context) if item.get("id") != item_id]
+        _ctx_set_data(context, "message_queue", queue)
+        _queue_sync(context)
+        return len(queue)
+
+    def _queue_pop_first(context: object) -> dict[str, object] | None:
+        queue = list(_queue_get(context))
+        if not queue:
+            return None
+        item = queue.pop(0)
+        _ctx_set_data(context, "message_queue", queue)
+        _queue_sync(context)
+        return item
+
+    def _queue_pop_item(context: object, item_id: str) -> dict[str, object] | None:
+        queue = list(_queue_get(context))
+        for index, item in enumerate(queue):
+            if item.get("id") == item_id:
+                queue.pop(index)
+                _ctx_set_data(context, "message_queue", queue)
+                _queue_sync(context)
+                return item
+        return None
+
+    def _queue_send_message(context: object, item: dict[str, object], source: str = " (from queue)") -> None:
+        del source
+        sender = getattr(context, "communicate", None)
+        if callable(sender):
+            sender(item)
+
+    def _queue_send_all_aggregated(context: object) -> int:
+        count = 0
+        while _queue_get(context):
+            item = _queue_pop_first(context)
+            if item is not None:
+                _queue_send_message(context, item)
+                count += 1
+        return count
+
     api_mod.ApiHandler = ApiHandler
     api_mod.Request = Request
     api_mod.Response = Response
     history_mod.RawMessage = raw_message
+    message_queue_mod.get_queue = _queue_get
+    message_queue_mod.add = _queue_add
+    message_queue_mod.remove = _queue_remove
+    message_queue_mod.pop_first = _queue_pop_first
+    message_queue_mod.pop_item = _queue_pop_item
+    message_queue_mod.has_queue = lambda context: bool(_queue_get(context))
+    message_queue_mod.send_message = _queue_send_message
+    message_queue_mod.send_all_aggregated = _queue_send_all_aggregated
+    state_monitor_mod.mark_dirty_for_context = lambda *args, **kwargs: None
     login_mod.is_login_required = lambda: auth_required
     plugins_mod.get_plugin_config = lambda plugin_name, **kwargs: (
         code_execution_config if plugin_name == "_code_execution" else {}
@@ -189,6 +304,8 @@ def _install_fake_helpers(
 
     sys.modules["helpers.api"] = api_mod
     sys.modules["helpers.history"] = history_mod
+    sys.modules["helpers.message_queue"] = message_queue_mod
+    sys.modules["helpers.state_monitor_integration"] = state_monitor_mod
     sys.modules["helpers.login"] = login_mod
     sys.modules["helpers.plugins"] = plugins_mod
     sys.modules["helpers.print_style"] = print_style_mod
@@ -224,6 +341,8 @@ def _install_fake_helpers(
     helpers_pkg.api = api_mod
     helpers_pkg.files = files_mod
     helpers_pkg.history = history_mod
+    helpers_pkg.message_queue = message_queue_mod
+    helpers_pkg.state_monitor_integration = state_monitor_mod
     helpers_pkg.login = login_mod
     helpers_pkg.plugins = plugins_mod
     helpers_pkg.print_style = print_style_mod
@@ -463,7 +582,14 @@ def test_capabilities_advertise_current_ws_contract() -> None:
     assert payload["auth_required"] is False
     assert payload["websocket_namespace"] == "/ws"
     assert payload["websocket_handlers"] == ["plugins/_a0_connector/ws_connector"]
-    assert {"pause", "nudge", "remote_file_tree", "code_execution_remote", "computer_use_remote"} <= set(payload["features"])
+    assert {
+        "pause",
+        "nudge",
+        "message_queue",
+        "remote_file_tree",
+        "code_execution_remote",
+        "computer_use_remote",
+    } <= set(payload["features"])
     assert {
         "settings_get",
         "settings_set",
@@ -632,6 +758,7 @@ def test_ws_connector_hello_advertises_remote_exec_and_tree_features() -> None:
 
     assert payload["protocol"] == "a0-connector.v1"
     assert "remote_file_tree" in payload["features"]
+    assert "message_queue" in payload["features"]
     assert "code_execution_remote" in payload["features"]
     assert "computer_use_remote" in payload["features"]
     assert payload["exec_config"]["version"] == 1
@@ -684,6 +811,140 @@ def test_ws_connector_rejects_base64_attachment_refs() -> None:
 
     assert refs == []
     assert "file paths or URLs" in error
+
+
+def test_ws_connector_queue_add_uses_core_message_queue() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.id = "ctx-queue"
+            self._data: dict[str, object] = {}
+            self._output_data: dict[str, object] = {}
+
+        def get_data(self, key: str) -> object:
+            return self._data.get(key)
+
+        def set_data(self, key: str, value: object) -> None:
+            self._data[key] = value
+
+        def set_output_data(self, key: str, value: object) -> None:
+            self._output_data[key] = value
+
+        def is_running(self) -> bool:
+            return False
+
+    context = FakeContext()
+    agent_mod = types.ModuleType("agent")
+    agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: context if context_id == context.id else None)
+    sys.modules["agent"] = agent_mod
+
+    class CapturingConnector(ws_connector_mod.WsConnector):
+        def __init__(self) -> None:
+            super().__init__(None, None)
+            self.emitted: list[tuple[str, str, dict[str, object]]] = []
+
+        async def emit_to(
+            self,
+            sid: str,
+            event: str,
+            payload: dict,
+            correlation_id: str | None = None,
+        ) -> None:
+            del correlation_id
+            self.emitted.append((sid, event, dict(payload)))
+
+    async def _scenario() -> None:
+        ws_runtime_mod.register_sid("sid-cli")
+        ws_runtime_mod.subscribe_sid_to_context("sid-cli", context.id)
+        handler = CapturingConnector()
+
+        result = await handler.process(
+            "connector_message_queue_add",
+            {
+                "context_id": context.id,
+                "message": "queued from cli",
+                "attachments": ["/a0/usr/uploads/capture.png"],
+                "client_message_id": "msg-1",
+            },
+            "sid-cli",
+        )
+
+        assert result["status"] == "queued"
+        assert result["message_queue"] == [
+            {
+                "id": "msg-1",
+                "seq": 1,
+                "text": "queued from cli",
+                "attachments": ["capture.png"],
+                "attachment_count": 1,
+            }
+        ]
+        assert context._data["message_queue"][0]["text"] == "queued from cli"
+        assert handler.emitted[-1] == (
+            "sid-cli",
+            "connector_message_queue_updated",
+            {
+                "context_id": context.id,
+                "message_queue": result["message_queue"],
+            },
+        )
+
+    asyncio.run(_scenario())
+
+
+def test_ws_connector_queue_send_flushes_all_items() -> None:
+    _install_fake_helpers()
+    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+
+    class FakeContext:
+        def __init__(self) -> None:
+            self.id = "ctx-queue"
+            self._data: dict[str, object] = {
+                "message_queue": [
+                    {"id": "item-1", "seq": 1, "text": "one", "attachments": []},
+                    {"id": "item-2", "seq": 2, "text": "two", "attachments": []},
+                ]
+            }
+            self._output_data: dict[str, object] = {}
+            self.sent: list[dict[str, object]] = []
+
+        def get_data(self, key: str) -> object:
+            return self._data.get(key)
+
+        def set_data(self, key: str, value: object) -> None:
+            self._data[key] = value
+
+        def set_output_data(self, key: str, value: object) -> None:
+            self._output_data[key] = value
+
+        def communicate(self, item: dict[str, object]) -> None:
+            self.sent.append(item)
+
+        def is_running(self) -> bool:
+            return False
+
+    context = FakeContext()
+    agent_mod = types.ModuleType("agent")
+    agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: context if context_id == context.id else None)
+    sys.modules["agent"] = agent_mod
+
+    async def _scenario() -> None:
+        result = await ws_connector_mod.WsConnector(None, None).process(
+            "connector_message_queue_send",
+            {"context_id": context.id, "send_all": True},
+            "sid-cli",
+        )
+
+        assert result["status"] == "sent"
+        assert result["sent_count"] == 2
+        assert result["message_queue"] == []
+        assert [item["text"] for item in context.sent] == ["one", "two"]
+
+    asyncio.run(_scenario())
 
 
 def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:

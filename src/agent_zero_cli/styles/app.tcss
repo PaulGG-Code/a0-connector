@@ -72,6 +72,16 @@ Screen {
     background: #101820;
 }
 
+#message-queue-bar {
+    height: auto;
+    max-height: 6;
+    margin-top: 0;
+    padding: 0 1;
+    background: #101820;
+    color: #c9d3dd;
+    border-left: solid #0f6db8;
+}
+
 #model-switcher-summary {
     width: 1fr;
     height: auto;

@@ -7,7 +7,14 @@ from rich.text import Text
 from textual.widgets import ContentSwitcher
 
 from agent_zero_cli.client import DEFAULT_HOST
-from agent_zero_cli.widgets import ChatInput, ComputerUseBanner, DynamicFooter, SplashAction, SplashView
+from agent_zero_cli.widgets import (
+    ChatInput,
+    ComputerUseBanner,
+    DynamicFooter,
+    MessageQueueBar,
+    SplashAction,
+    SplashView,
+)
 from agent_zero_cli.widgets.chat_log import ChatLog
 
 if TYPE_CHECKING:
@@ -140,6 +147,12 @@ def sync_composer_visibility(app: AgentZeroCLI) -> None:
             banner.display = False
         else:
             app._sync_computer_use_status()
+    except Exception:
+        pass
+
+    try:
+        queue_bar = app.query_one("#message-queue-bar", MessageQueueBar)
+        queue_bar.display = show_composer and app._has_message_queue()
     except Exception:
         pass
 

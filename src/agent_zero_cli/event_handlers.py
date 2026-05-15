@@ -68,6 +68,9 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
         return
 
     events = data.get("events", [])
+    queue_items = data.get("message_queue", [])
+    if isinstance(queue_items, list):
+        app._set_message_queue(queue_items)
 
     for event in events:
         event_type = event.get("event", "")
@@ -98,6 +101,15 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
                 )
 
     app._sync_body_mode()
+
+
+def handle_message_queue_updated(app: AgentZeroCLI, data: dict[str, Any]) -> None:
+    context_id = data.get("context_id", "")
+    if context_id != app.current_context:
+        return
+
+    queue_items = data.get("message_queue", data.get("items", []))
+    app._set_message_queue(queue_items if isinstance(queue_items, list) else [])
 
 
 def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:

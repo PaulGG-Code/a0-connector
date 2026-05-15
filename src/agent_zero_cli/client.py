@@ -26,6 +26,10 @@ _EVENT_HELLO = "connector_hello"
 _EVENT_SUBSCRIBE = "connector_subscribe_context"
 _EVENT_UNSUBSCRIBE = "connector_unsubscribe_context"
 _EVENT_SEND_MESSAGE = "connector_send_message"
+_EVENT_MESSAGE_QUEUE_ADD = "connector_message_queue_add"
+_EVENT_MESSAGE_QUEUE_REMOVE = "connector_message_queue_remove"
+_EVENT_MESSAGE_QUEUE_SEND = "connector_message_queue_send"
+_EVENT_MESSAGE_QUEUE_UPDATED = "connector_message_queue_updated"
 _EVENT_CONTEXT_SNAPSHOT = "connector_context_snapshot"
 _EVENT_CONTEXT_EVENT = "connector_context_event"
 _EVENT_CONTEXT_COMPLETE = "connector_context_complete"
@@ -113,6 +117,7 @@ class A0Client:
         self.on_context_event: Callable[[dict[str, Any]], None] | None = None
         self.on_context_snapshot: Callable[[dict[str, Any]], None] | None = None
         self.on_context_complete: Callable[[dict[str, Any]], None] | None = None
+        self.on_message_queue_updated: Callable[[dict[str, Any]], None] | None = None
         self.on_settings_updated: Callable[[dict[str, Any]], None] | None = None
         self.on_error: Callable[[dict[str, Any]], None] | None = None
         self.on_file_op: Callable[[dict[str, Any]], Any] | None = None
@@ -397,6 +402,12 @@ class A0Client:
         @self.sio.on(_EVENT_CONTEXT_COMPLETE, namespace=WS_NAMESPACE)
         async def _on_context_complete(payload: dict[str, Any]) -> None:
             callback = self.on_context_complete
+            if callback is not None:
+                callback(self._unwrap_envelope(payload))
+
+        @self.sio.on(_EVENT_MESSAGE_QUEUE_UPDATED, namespace=WS_NAMESPACE)
+        async def _on_message_queue_updated(payload: dict[str, Any]) -> None:
+            callback = self.on_message_queue_updated
             if callback is not None:
                 callback(self._unwrap_envelope(payload))
 
@@ -698,6 +709,47 @@ class A0Client:
         if attachments:
             payload["attachments"] = list(attachments)
         return await self._call(_EVENT_SEND_MESSAGE, payload)
+
+    async def add_message_to_queue(
+        self,
+        text: str,
+        context_id: str,
+        attachments: list[str] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "context_id": context_id,
+            "message": text,
+            "client_message_id": str(uuid.uuid4()),
+        }
+        if attachments:
+            payload["attachments"] = list(attachments)
+        return await self._call(_EVENT_MESSAGE_QUEUE_ADD, payload)
+
+    async def remove_message_from_queue(
+        self,
+        context_id: str,
+        *,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"context_id": context_id}
+        if item_id:
+            payload["item_id"] = item_id
+        return await self._call(_EVENT_MESSAGE_QUEUE_REMOVE, payload)
+
+    async def send_message_queue(
+        self,
+        context_id: str,
+        *,
+        item_id: str | None = None,
+        send_all: bool = True,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "context_id": context_id,
+            "send_all": send_all,
+        }
+        if item_id:
+            payload["item_id"] = item_id
+        return await self._call(_EVENT_MESSAGE_QUEUE_SEND, payload)
 
     async def fetch_csrf_token(self) -> str:
         if self._csrf_token:

@@ -119,3 +119,15 @@ def test_chat_input_history_is_scoped_by_context() -> None:
     input_widget.move_cursor((0, 0))
     assert input_widget._history_previous() is True
     assert input_widget.value == "from one"
+
+
+def test_chat_input_queue_placeholder_overrides_progress_when_empty() -> None:
+    input_widget = ChatInput()
+
+    input_widget.set_activity("Thinking")
+    input_widget.set_queue_active(True)
+
+    assert input_widget.placeholder == "Press Enter to send queued messages"
+
+    input_widget.set_queue_active(False)
+    assert input_widget.placeholder == "|>  Thinking"

@@ -571,6 +571,64 @@ async def test_send_message_includes_attachment_refs() -> None:
     assert payload["attachments"] == ["/a0/usr/uploads/clipboard.png"]
 
 
+async def test_add_message_to_queue_uses_queue_ws_event() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.sio = FakeSocketIOClient(
+        call_response={
+            "results": [{"ok": True, "data": {"context_id": "ctx-1", "status": "queued"}}]
+        }
+    )
+
+    result = await client.add_message_to_queue(
+        "later",
+        "ctx-1",
+        attachments=["/a0/usr/uploads/clipboard.png"],
+    )
+
+    assert result == {"context_id": "ctx-1", "status": "queued"}
+    event, payload, namespace = client.sio.call_calls[0]
+    assert event == "connector_message_queue_add"
+    assert namespace == "/ws"
+    assert payload["context_id"] == "ctx-1"
+    assert payload["message"] == "later"
+    assert payload["attachments"] == ["/a0/usr/uploads/clipboard.png"]
+    assert payload["client_message_id"]
+
+
+async def test_send_message_queue_uses_queue_ws_event() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.sio = FakeSocketIOClient(
+        call_response={
+            "results": [{"ok": True, "data": {"context_id": "ctx-1", "sent_count": 2}}]
+        }
+    )
+
+    result = await client.send_message_queue("ctx-1", send_all=True)
+
+    assert result == {"context_id": "ctx-1", "sent_count": 2}
+    event, payload, namespace = client.sio.call_calls[0]
+    assert event == "connector_message_queue_send"
+    assert namespace == "/ws"
+    assert payload == {"context_id": "ctx-1", "send_all": True}
+
+
+async def test_remove_message_from_queue_uses_queue_ws_event() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.sio = FakeSocketIOClient(
+        call_response={
+            "results": [{"ok": True, "data": {"context_id": "ctx-1", "remaining": 0}}]
+        }
+    )
+
+    result = await client.remove_message_from_queue("ctx-1", item_id="item-1")
+
+    assert result == {"context_id": "ctx-1", "remaining": 0}
+    event, payload, namespace = client.sio.call_calls[0]
+    assert event == "connector_message_queue_remove"
+    assert namespace == "/ws"
+    assert payload == {"context_id": "ctx-1", "item_id": "item-1"}
+
+
 async def test_upload_attachments_posts_files_to_core_upload_endpoint() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()

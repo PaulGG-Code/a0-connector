@@ -215,6 +215,7 @@ async def switch_context(app: AgentZeroCLI, context_id: str, *, has_messages_hin
     app.query_one("#message-input", ChatInput).set_history_context(context_id)
     app._set_pause_latched(False)
     app.current_context_has_messages = has_messages_hint
+    app._set_message_queue([])
     app._response_delivered = False
     app._context_run_complete = False
     log = app.query_one("#chat-log", ChatLog)
@@ -365,6 +366,157 @@ async def cmd_nudge(app: AgentZeroCLI) -> None:
         app._show_notice(str(response.get("message") or "Nudge failed."), error=True)
         app.agent_active = False
         app._sync_ready_actions()
+
+
+async def cmd_queue(app: AgentZeroCLI, *, query: str = "") -> None:
+    query = query.strip()
+    if not query:
+        _show_queue_summary(app)
+        return
+
+    try:
+        tokens = shlex.split(query)
+    except ValueError as exc:
+        app._show_notice(f"Could not parse queue command: {exc}", error=True)
+        return
+
+    if not tokens:
+        _show_queue_summary(app)
+        return
+
+    action = tokens[0].lower()
+    if action in {"send", "all", "flush"}:
+        await cmd_queue_send(app)
+        return
+
+    if action in {"clear", "delete"} and len(tokens) == 1:
+        await cmd_queue_clear(app)
+        return
+
+    if action in {"remove", "rm", "delete"}:
+        if len(tokens) < 2:
+            app._show_notice("Usage: /queue remove <number|id>", error=True)
+            return
+        await cmd_queue_remove(app, tokens[1])
+        return
+
+    app._show_notice("Usage: /queue [send|clear|remove <number|id>]", error=True)
+
+
+async def cmd_queue_send(app: AgentZeroCLI) -> None:
+    availability = app._require_features("message_queue")
+    if not availability.available:
+        app._show_notice(availability.reason or "Message queue is unavailable.", error=True)
+        return
+    if not app.current_context:
+        app._show_notice("Open or create a chat context first.", error=True)
+        return
+    if not app._has_message_queue():
+        app._show_notice("No queued messages to send.")
+        return
+
+    previous_agent_active = app.agent_active
+    previous_pause_latched = app._pause_latched
+    app._set_pause_latched(False)
+    app.agent_active = True
+    app._response_delivered = False
+    app._context_run_complete = False
+    app._sync_ready_actions()
+
+    try:
+        response = await app.client.send_message_queue(app.current_context, send_all=True)
+    except Exception as exc:
+        app.agent_active = previous_agent_active
+        app._set_pause_latched(previous_pause_latched)
+        app._sync_ready_actions()
+        app._show_notice(f"Error sending queued messages: {exc}", error=True)
+        return
+
+    queue_items = response.get("message_queue") if isinstance(response, Mapping) else None
+    if isinstance(queue_items, list):
+        app._set_message_queue(queue_items)
+
+    sent_count = int(response.get("sent_count", 0) or 0) if isinstance(response, Mapping) else 0
+    if sent_count <= 0:
+        app.agent_active = previous_agent_active
+        app._sync_ready_actions()
+        app._show_notice("Queue is empty.")
+
+
+async def cmd_queue_clear(app: AgentZeroCLI) -> None:
+    availability = app._require_features("message_queue")
+    if not availability.available:
+        app._show_notice(availability.reason or "Message queue is unavailable.", error=True)
+        return
+    if not app.current_context:
+        app._show_notice("Open or create a chat context first.", error=True)
+        return
+
+    try:
+        response = await app.client.remove_message_from_queue(app.current_context)
+    except Exception as exc:
+        app._show_notice(f"Error clearing queue: {exc}", error=True)
+        return
+
+    queue_items = response.get("message_queue") if isinstance(response, Mapping) else None
+    app._set_message_queue(queue_items if isinstance(queue_items, list) else [])
+    app._show_notice("Queue cleared.")
+
+
+async def cmd_queue_remove(app: AgentZeroCLI, selector: str) -> None:
+    availability = app._require_features("message_queue")
+    if not availability.available:
+        app._show_notice(availability.reason or "Message queue is unavailable.", error=True)
+        return
+    if not app.current_context:
+        app._show_notice("Open or create a chat context first.", error=True)
+        return
+
+    item_id = _queue_selector_to_item_id(app, selector)
+    if not item_id:
+        app._show_notice(f"No queued message matches '{selector}'.", error=True)
+        return
+
+    try:
+        response = await app.client.remove_message_from_queue(app.current_context, item_id=item_id)
+    except Exception as exc:
+        app._show_notice(f"Error removing queued message: {exc}", error=True)
+        return
+
+    queue_items = response.get("message_queue") if isinstance(response, Mapping) else None
+    if isinstance(queue_items, list):
+        app._set_message_queue(queue_items)
+
+
+def _show_queue_summary(app: AgentZeroCLI) -> None:
+    if not app._has_message_queue():
+        app._show_notice("No queued messages.")
+        return
+
+    lines = [f"Queued messages ({len(app.message_queue)}):"]
+    for index, item in enumerate(app.message_queue, start=1):
+        text = str(item.get("text", "") or "").strip() or "(attachment only)"
+        if len(text) > 100:
+            text = text[:97].rstrip() + "..."
+        try:
+            attachment_count = int(item.get("attachment_count", 0) or 0)
+        except (TypeError, ValueError):
+            attachment_count = 0
+        suffix = f" [{attachment_count} files]" if attachment_count else ""
+        lines.append(f"{index}. {text}{suffix}")
+    app._show_notice("\n".join(lines))
+
+
+def _queue_selector_to_item_id(app: AgentZeroCLI, selector: str) -> str:
+    value = selector.strip()
+    if not value:
+        return ""
+    if value.isdigit():
+        index = int(value) - 1
+        if 0 <= index < len(app.message_queue):
+            return str(app.message_queue[index].get("id", "") or "")
+        return ""
+    return value
 
 
 async def cmd_attach(app: AgentZeroCLI, *, query: str = "") -> None:

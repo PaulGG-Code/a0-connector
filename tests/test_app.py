@@ -21,7 +21,15 @@ from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
 from agent_zero_cli.widgets.command_palette import is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
-from agent_zero_cli.widgets import ChatInput, ConnectionStatus, ProfileMenuItem, ProjectMenuItem, SplashState
+from agent_zero_cli.widgets import (
+    ChatInput,
+    ConnectionStatus,
+    MessageQueueBar,
+    ModelSwitcherBar,
+    ProfileMenuItem,
+    ProjectMenuItem,
+    SplashState,
+)
 
 
 pytestmark = pytest.mark.anyio
@@ -109,6 +117,7 @@ class FakeInput:
         self.attachments = []
         self.history_context = None
         self.history_seeded: list[str] = []
+        self.queue_active = False
 
     def focus(self) -> None:
         self.focused = True
@@ -131,6 +140,9 @@ class FakeInput:
 
     def clear_attachments(self) -> None:
         self.attachments = []
+
+    def set_queue_active(self, active: bool) -> None:
+        self.queue_active = active
 
     def set_history_context(self, context_id: str | None) -> None:
         self.history_context = context_id
@@ -221,6 +233,23 @@ class FakeModelSwitcher:
     def set_state(self, **kwargs: object) -> None:
         self.state_calls.append(dict(kwargs))
         self.cleared = False
+
+
+class FakeMessageQueueBar:
+    def __init__(self) -> None:
+        self.display = False
+        self.items: list[dict[str, object]] = []
+        self.cleared = False
+
+    def set_items(self, items: list[dict[str, object]]) -> None:
+        self.items = list(items)
+        self.display = bool(items)
+        self.cleared = False
+
+    def clear(self) -> None:
+        self.items = []
+        self.display = False
+        self.cleared = True
 
 
 class FakeComputerUseManager:
@@ -389,6 +418,7 @@ def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
         "#splash-view": FakeSplash(),
         "#computer-use-banner": FakeComputerUseBanner(),
         "#model-switcher-bar": FakeModelSwitcher(),
+        "#message-queue-bar": FakeMessageQueueBar(),
         "#connection-status": FakeConnectionStatus(),
     }
 
@@ -790,6 +820,7 @@ def test_context_snapshot_seeds_input_history_from_user_messages(
 ) -> None:
     dummy_app.connected = True
     dummy_app.current_context = "ctx-1"
+    dummy_app.current_context_has_messages = True
 
     dummy_app._handle_context_snapshot(
         {
@@ -811,6 +842,76 @@ def test_context_snapshot_seeds_input_history_from_user_messages(
 
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
     assert input_widget.history_seeded == ["previous prompt"]
+
+
+def test_context_snapshot_updates_message_queue(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.current_context_has_messages = True
+
+    dummy_app._handle_context_snapshot(
+        {
+            "context_id": "ctx-1",
+            "events": [],
+            "message_queue": [
+                {
+                    "id": "item-1",
+                    "seq": 1,
+                    "text": "queued prompt",
+                    "attachments": [],
+                    "attachment_count": 0,
+                }
+            ],
+        }
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    queue_bar = dummy_app._test_widgets["#message-queue-bar"]  # type: ignore[index]
+    assert dummy_app.message_queue[0]["id"] == "item-1"
+    assert input_widget.queue_active is True
+    assert queue_bar.display is True
+
+
+def test_message_queue_update_ignores_other_context(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.current_context = "ctx-1"
+
+    dummy_app._handle_message_queue_updated(
+        {
+            "context_id": "ctx-2",
+            "message_queue": [{"id": "item-1", "text": "wrong context"}],
+        }
+    )
+
+    assert dummy_app.message_queue == []
+
+
+async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
+    app = AgentZeroCLI(config=CLIConfig(instance_url="http://127.0.0.1:19999"), discover_instances=False)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.5)
+        app.connected = True
+        app.current_context_has_messages = True
+        app.current_context = "ctx-1"
+        app._sync_body_mode()
+        model_bar = app.query_one("#model-switcher-bar", ModelSwitcherBar)
+        model_bar.set_state(
+            main_model={"provider": "codex", "name": "gpt-5.5"},
+            utility_model={"provider": "codex", "name": "gpt-5.4-mini"},
+            presets=[],
+            allowed=False,
+        )
+        app._set_message_queue(
+            [{"id": "item-1", "seq": 1, "text": "queued prompt", "attachments": [], "attachment_count": 0}]
+        )
+        await pilot.pause(0.5)
+
+        queue_bar = app.query_one("#message-queue-bar", MessageQueueBar)
+        assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:
@@ -1089,7 +1190,7 @@ async def test_action_pause_agent_resumes_when_pause_is_latched(
     assert input_widget.activity_label == "Resuming"
 
 
-async def test_active_run_submission_is_sent_as_intervention(
+async def test_active_run_submission_is_added_to_message_queue(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1097,17 +1198,23 @@ async def test_active_run_submission_is_sent_as_intervention(
     dummy_app.current_context = "ctx-1"
     dummy_app.current_context_has_messages = True
     dummy_app.agent_active = True
+    dummy_app.connector_features = {"message_queue"}
 
     calls: list[tuple[str, str | None, list[str] | None]] = []
 
-    async def fake_send_message(
+    async def fake_add_message_to_queue(
         text: str,
         context_id: str | None,
         attachments: list[str] | None = None,
-    ) -> None:
+    ) -> dict[str, object]:
         calls.append((text, context_id, attachments))
+        return {
+            "message_queue": [
+                {"id": "item-1", "seq": 1, "text": text, "attachments": [], "attachment_count": 0}
+            ]
+        }
 
-    monkeypatch.setattr(dummy_app.client, "send_message", fake_send_message)
+    monkeypatch.setattr(dummy_app.client, "add_message_to_queue", fake_add_message_to_queue)
 
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
     await dummy_app.on_chat_input_submitted(
@@ -1119,6 +1226,43 @@ async def test_active_run_submission_is_sent_as_intervention(
     assert dummy_app.agent_active is True
     assert dummy_app._response_delivered is False
     assert dummy_app._context_run_complete is False
+    assert dummy_app.message_queue[0]["text"] == "draft follow-up"
+    assert input_widget.queue_active is True
+
+
+async def test_empty_submission_sends_queued_messages(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.current_context_has_messages = True
+    dummy_app.connector_features = {"message_queue"}
+    dummy_app._set_message_queue(
+        [{"id": "item-1", "seq": 1, "text": "queued prompt", "attachments": [], "attachment_count": 0}]
+    )
+
+    calls: list[tuple[str | None, bool]] = []
+
+    async def fake_send_message_queue(
+        context_id: str | None,
+        *,
+        item_id: str | None = None,
+        send_all: bool = True,
+    ) -> dict[str, object]:
+        calls.append((context_id, send_all))
+        assert item_id is None
+        return {"sent_count": 1, "message_queue": []}
+
+    monkeypatch.setattr(dummy_app.client, "send_message_queue", fake_send_message_queue)
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    await dummy_app.on_chat_input_submitted(ChatInput.Submitted(value="", input=input_widget))
+
+    assert calls == [("ctx-1", True)]
+    assert dummy_app.message_queue == []
+    assert input_widget.queue_active is False
+    assert dummy_app.agent_active is True
 
 
 async def test_send_failure_restores_draft_and_previous_state(

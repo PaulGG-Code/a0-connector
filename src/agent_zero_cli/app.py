@@ -55,6 +55,7 @@ from agent_zero_cli.widgets import (
     ComputerUseBanner,
     ConnectionStatus,
     DynamicFooter,
+    MessageQueueBar,
     ModelSwitcherBar,
     ProfileMenuItem,
     ProfileMenuPopover,
@@ -177,6 +178,7 @@ class AgentZeroCLI(App):
         self.current_project: dict[str, str] | None = None
         self.current_context: str | None = None
         self.current_context_has_messages = False
+        self.message_queue: list[dict[str, Any]] = []
         self.show_utility_messages = False
         self._response_delivered = False
         self._context_run_complete = False
@@ -238,6 +240,7 @@ class AgentZeroCLI(App):
             yield ChatLog(id="chat-log")
         yield ComputerUseBanner(id="computer-use-banner")
         yield ModelSwitcherBar(id="model-switcher-bar")
+        yield MessageQueueBar(id="message-queue-bar")
         yield ChatInput(id="message-input")
         yield DynamicFooter()
 
@@ -278,6 +281,7 @@ class AgentZeroCLI(App):
         input_widget = self.query_one("#message-input", ChatInput)
         input_widget.disabled = True
         self.query_one("#model-switcher-bar", ModelSwitcherBar).clear()
+        self.query_one("#message-queue-bar", MessageQueueBar).clear()
         self.query_one("#splash-view", SplashView).set_state(self._splash_state)
         self._sync_workspace_widgets()
         self.query_one("#connection-status", ConnectionStatus).clear_token_usage()
@@ -436,6 +440,20 @@ class AgentZeroCLI(App):
                 "Nudge the current agent run.",
                 lambda app: availability.nudge_availability(app),
                 lambda app: chat_commands.cmd_nudge(app),
+            ),
+            CommandSpec(
+                "/send",
+                (),
+                "Send all queued messages now.",
+                lambda app: availability.message_queue_send_availability(app),
+                lambda app: chat_commands.cmd_queue_send(app),
+            ),
+            CommandSpec(
+                "/queue",
+                (),
+                "Show, send, clear, or remove queued messages.",
+                lambda app: availability.message_queue_availability(app),
+                lambda app: chat_commands.cmd_queue(app),
             ),
             CommandSpec(
                 "/presets",
@@ -957,6 +975,22 @@ class AgentZeroCLI(App):
         except Exception:
             pass
 
+    def _set_message_queue(self, items: Iterable[Mapping[str, Any]] | None) -> None:
+        normalized = [dict(item) for item in (items or []) if isinstance(item, Mapping)]
+        self.message_queue = normalized
+        try:
+            self.query_one("#message-queue-bar", MessageQueueBar).set_items(normalized)
+        except Exception:
+            pass
+        try:
+            self.query_one("#message-input", ChatInput).set_queue_active(bool(normalized))
+        except Exception:
+            pass
+        self._sync_composer_visibility()
+
+    def _has_message_queue(self) -> bool:
+        return bool(self.message_queue)
+
     def _focus_splash_primary(self) -> None:
         splash_helpers.focus_splash_primary(self)
 
@@ -1231,6 +1265,9 @@ class AgentZeroCLI(App):
     def _handle_context_complete(self, data: dict[str, Any]) -> None:
         event_handlers.handle_context_complete(self, data)
 
+    def _handle_message_queue_updated(self, data: dict[str, Any]) -> None:
+        event_handlers.handle_message_queue_updated(self, data)
+
     def _handle_connector_error(self, data: dict[str, Any]) -> None:
         event_handlers.handle_connector_error(self, data)
 
@@ -1360,6 +1397,17 @@ class AgentZeroCLI(App):
             self._sync_ready_actions()
             return
 
+        if token == "/queue":
+            _, _, query = text.partition(" ")
+            await chat_commands.cmd_queue(self, query=query.strip())
+            self._sync_ready_actions()
+            return
+
+        if token == "/send":
+            await chat_commands.cmd_queue_send(self)
+            self._sync_ready_actions()
+            return
+
         if token == "/chats":
             parsed = self._parse_chats_command(text)
             if parsed is None:
@@ -1433,6 +1481,8 @@ class AgentZeroCLI(App):
         attachments = list(getattr(event, "attachments", []) or [])
         attachment_paths = [attachment.path for attachment in attachments]
         if not text and not attachment_paths:
+            if self._has_message_queue():
+                await chat_commands.cmd_queue_send(self)
             self._slash_palette_query = None
             return
 
@@ -1452,6 +1502,28 @@ class AgentZeroCLI(App):
 
         await self._refresh_remote_tool_metadata()
         await self._publish_remote_tree_snapshot(force=True)
+
+        if "message_queue" in self.connector_features and (self.agent_active or self._has_message_queue()):
+            try:
+                response = await self.client.add_message_to_queue(
+                    text,
+                    self.current_context,
+                    attachments=attachment_paths,
+                )
+            except Exception as exc:
+                event.input.value = raw_text
+                event.input.set_attachments(attachments)
+                self._focus_message_input()
+                self._show_notice(f"Error queuing message: {exc}", error=True)
+                self._sync_ready_actions()
+                return
+
+            queue_items = response.get("message_queue") if isinstance(response, Mapping) else None
+            if isinstance(queue_items, list):
+                self._set_message_queue(queue_items)
+            self._show_notice("Message added to queue.")
+            self._sync_ready_actions()
+            return
 
         previous_agent_active = self.agent_active
         previous_pause_latched = self._pause_latched

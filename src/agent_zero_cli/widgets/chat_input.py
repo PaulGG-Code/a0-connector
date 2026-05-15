@@ -17,6 +17,7 @@ _PLACEHOLDER = "Type a message... (/help for commands)"
 _PROGRESS_CLASS = "progress-active"
 # Same prefix as Agent Zero WebUI composer (see webui/components/chat/input/input-store.js).
 _PROGRESS_PREFIX = "|>  "
+_QUEUE_PLACEHOLDER = "Press Enter to send queued messages"
 _DEFAULT_HISTORY_SCOPE = "__default__"
 _MAX_HISTORY_ITEMS = 50
 
@@ -83,6 +84,7 @@ class ChatInput(TextArea):
         self._activity_active = False
         self._activity_label = ""
         self._activity_detail = ""
+        self._queue_active = False
         self.attachments: list[AttachmentRef] = []
         self._history_scope = _DEFAULT_HISTORY_SCOPE
         self._history_by_scope: dict[str, list[str]] = {_DEFAULT_HISTORY_SCOPE: []}
@@ -163,6 +165,8 @@ class ChatInput(TextArea):
 
     def _compose_placeholder(self) -> str:
         prefix = f"{attachment_label(len(self.attachments))} " if self.attachments else ""
+        if self._queue_active:
+            return prefix + _QUEUE_PLACEHOLDER
         if self._activity_active:
             return prefix + self._compose_activity_placeholder()
         return prefix + self._base_placeholder
@@ -186,6 +190,13 @@ class ChatInput(TextArea):
         self._activity_label = ""
         self._activity_detail = ""
         self.remove_class(_PROGRESS_CLASS)
+        self.placeholder = self._compose_placeholder()
+
+    def set_queue_active(self, active: bool) -> None:
+        """Reflect whether Enter should dispatch queued messages when empty."""
+        if self._queue_active == active:
+            return
+        self._queue_active = active
         self.placeholder = self._compose_placeholder()
 
     # ---- attachments -------------------------------------------------
