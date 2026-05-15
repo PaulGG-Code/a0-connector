@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
 
 
-_CLEAR_VALUES = {"", "default", "none", "clear", "off"}
+_CLEAR_VALUES = {"", "default", "none", "clear", "off", "no project"}
 
 
 async def cmd_project(app: AgentZeroCLI, query: str = "") -> None:

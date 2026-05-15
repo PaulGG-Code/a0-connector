@@ -125,7 +125,6 @@ class ProjectMenuPopover(Vertical):
             yield ProjectMenuItem(
                 "Deactivate",
                 action="deactivate",
-                project_name=self._current_project_name,
                 id="project-menu-deactivate",
                 classes="project-menu-item",
             )

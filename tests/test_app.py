@@ -1655,6 +1655,73 @@ async def test_project_command_with_clear_value_deactivates_active_project(
     assert dummy_app.current_project is None
 
 
+async def test_project_command_with_no_project_label_deactivates_active_project(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"projects"}
+
+    current_project = {
+        "name": "plugins_1",
+        "title": "Plugins 1",
+        "description": "",
+        "color": "#00bbf9",
+    }
+    deactivate_calls: list[str] = []
+
+    async def fake_get_projects(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return {
+            "ok": True,
+            "projects": [dict(current_project)],
+            "current_project": dict(current_project),
+        }
+
+    async def fake_deactivate_project(context_id: str) -> dict[str, object]:
+        deactivate_calls.append(context_id)
+        return {
+            "ok": True,
+            "projects": [dict(current_project)],
+            "current_project": None,
+        }
+
+    monkeypatch.setattr(dummy_app.client, "get_projects", fake_get_projects)
+    monkeypatch.setattr(dummy_app.client, "deactivate_project", fake_deactivate_project)
+
+    await dummy_app._dispatch_command("/project No Project")
+
+    assert deactivate_calls == ["ctx-1"]
+    assert dummy_app.current_project is None
+
+
+async def test_project_menu_deactivate_ignores_display_label(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"projects"}
+
+    deactivate_calls: list[str] = []
+
+    async def fake_deactivate_project(context_id: str) -> dict[str, object]:
+        deactivate_calls.append(context_id)
+        return {
+            "ok": True,
+            "projects": [],
+            "current_project": None,
+        }
+
+    monkeypatch.setattr(dummy_app.client, "deactivate_project", fake_deactivate_project)
+
+    await dummy_app._handle_project_menu_action("deactivate", project_name_value="No Project")
+
+    assert deactivate_calls == ["ctx-1"]
+    assert dummy_app.current_project is None
+
+
 async def test_project_command_reports_ambiguous_matches(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
