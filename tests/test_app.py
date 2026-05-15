@@ -44,6 +44,8 @@ class FakeChatLog:
         self.status_entries: dict[int, dict[str, object]] = {}
         self._active_seq: int | None = None
         self._active_meta: dict[str, object] = {}
+        self.copy_text = "visible transcript"
+        self.copy_visible_only: bool | None = None
 
     def write(self, message: object) -> None:
         self.writes.append(message)
@@ -88,6 +90,10 @@ class FakeChatLog:
         self.status_entries.clear()
         self._active_seq = None
         self._active_meta = {}
+
+    def copyable_text(self, *, visible_only: bool = True) -> str:
+        self.copy_visible_only = visible_only
+        return self.copy_text
 
 
 class FakeInput:
@@ -454,6 +460,8 @@ def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     assert bindings["nudge_agent"].key_display == "F7"
     assert bindings["pause_agent"].key == "f8"
     assert bindings["pause_agent"].key_display == "F8"
+    assert bindings["copy_visible_chat"].key == "f9"
+    assert bindings["copy_visible_chat"].key_display == "F9"
     assert bindings["command_palette"].key == "ctrl+p"
     assert bindings["command_palette"].key_display == "^P"
 
@@ -2315,6 +2323,61 @@ def test_copy_to_clipboard_skips_native_mirror_outside_windows(
     assert mirrored == []
 
 
+def test_copy_visible_chat_action_uses_visible_transcript(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copied: list[str] = []
+    notifications: list[tuple[str, dict[str, object]]] = []
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    log.copy_text = "first visible line\nsecond visible line"
+
+    monkeypatch.setattr(dummy_app, "copy_to_clipboard", lambda text: copied.append(text))
+    monkeypatch.setattr(
+        dummy_app,
+        "notify",
+        lambda message, **kwargs: notifications.append((message, kwargs)),
+    )
+
+    dummy_app.action_copy_visible_chat()
+
+    assert log.copy_visible_only is True
+    assert copied == ["first visible line\nsecond visible line"]
+    assert notifications == [
+        (
+            "Copied visible transcript to clipboard.",
+            {
+                "title": "Clipboard",
+                "severity": "information",
+                "timeout": 3,
+                "markup": False,
+            },
+        )
+    ]
+
+
+def test_copy_visible_chat_action_reports_empty_transcript(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    copied: list[str] = []
+    notices: list[tuple[str, bool]] = []
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    log.copy_text = ""
+
+    monkeypatch.setattr(dummy_app, "copy_to_clipboard", lambda text: copied.append(text))
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    dummy_app.action_copy_visible_chat()
+
+    assert copied == []
+    assert notices == [("Nothing visible to copy.", True)]
+
+
 async def test_chat_log_regular_entries_copy_selected_text() -> None:
     app = TranscriptSelectionApp()
 
@@ -2333,6 +2396,27 @@ async def test_chat_log_regular_entries_copy_selected_text() -> None:
         app.screen.action_copy_text()
 
         assert "Copy me from the live transcript" in app.clipboard
+
+
+async def test_chat_log_copyable_text_prefers_visible_children() -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test() as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        for sequence in range(8):
+            log.append_or_update(
+                sequence,
+                Panel(f"copyable row {sequence}", border_style="#555555", padding=(0, 1)),
+            )
+        await pilot.pause()
+
+        visible_text = log.copyable_text(visible_only=True)
+        all_text = log.copyable_text(visible_only=False)
+
+        assert "copyable row 7" in visible_text
+        assert "copyable row 0" not in visible_text
+        assert "copyable row 0" in all_text
+        assert not any(line.endswith(" ") for line in visible_text.splitlines())
 
 
 async def test_chat_log_nested_plain_strings_render_brackets_literally() -> None:

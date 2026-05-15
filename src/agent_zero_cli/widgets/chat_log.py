@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.align import Align
 from rich.console import Console, Group, RenderableType
 from rich.padding import Padding
+from rich.panel import Panel
 from rich.segment import Segment
 from rich.text import Text
 from textual import events
@@ -295,6 +297,29 @@ def _renderable_to_content(widget: Static, renderable: RenderableType) -> Conten
     return Content("\n").join(lines).simplify()
 
 
+def _renderable_to_clipboard_text(widget: Static, renderable: RenderableType) -> str:
+    if isinstance(renderable, Content):
+        return renderable.plain
+    if isinstance(renderable, Text):
+        return renderable.plain
+    if isinstance(renderable, str):
+        return renderable
+    if isinstance(renderable, (Align, Padding, Panel)):
+        return _renderable_to_clipboard_text(widget, renderable.renderable)
+    if isinstance(renderable, Group):
+        return "\n".join(
+            text
+            for item in renderable._renderables
+            if (text := _renderable_to_clipboard_text(widget, item)).strip()
+        )
+
+    try:
+        return _renderable_to_content(widget, renderable).plain
+    except Exception:
+        plain = getattr(renderable, "plain", None)
+        return plain if isinstance(plain, str) else str(renderable)
+
+
 class SelectableStatic(Static):
     """Static widget that keeps the current rich transcript renderable selectable."""
 
@@ -330,6 +355,9 @@ class SelectableStatic(Static):
     def update(self, content: RenderableType = "", *, layout: bool = True) -> None:
         self._renderable = content
         self.refresh(layout=layout)
+
+    def copy_text(self) -> str:
+        return _renderable_to_clipboard_text(self, self._renderable)
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
         del event
@@ -646,6 +674,56 @@ class ChatLog(VerticalScroll):
         """Write a new un-updatable message using an internal sequence ID."""
         self.append_or_update(self._sys_seq, renderable, scroll=True)
         self._sys_seq -= 1
+
+    def _child_plain_text(self, child: Static) -> str:
+        copy_text = getattr(child, "copy_text", None)
+        if callable(copy_text):
+            try:
+                return str(copy_text())
+            except Exception:
+                pass
+
+        try:
+            rendered = child.render()
+        except Exception:
+            return ""
+
+        try:
+            content = _renderable_to_content(child, rendered)
+        except Exception:
+            plain = getattr(rendered, "plain", None)
+            return plain if isinstance(plain, str) else str(rendered)
+        return content.plain
+
+    def _copyable_children(self, *, visible_only: bool) -> list[Static]:
+        children = [child for child in self.children if isinstance(child, Static) and child.display]
+        if not visible_only:
+            return children
+
+        viewport_height = self.content_region.height or self.size.height
+        if viewport_height <= 0:
+            return children
+
+        visible_children: list[Static] = []
+        for child in children:
+            region = child.region
+            if region.height <= 0:
+                continue
+            if region.y < viewport_height and region.y + region.height > 0:
+                visible_children.append(child)
+
+        return visible_children or children
+
+    def copyable_text(self, *, visible_only: bool = True) -> str:
+        """Return plain transcript text suitable for clipboard use."""
+        blocks: list[str] = []
+        for child in self._copyable_children(visible_only=visible_only):
+            text = "\n".join(line.rstrip() for line in self._child_plain_text(child).splitlines())
+            text = text.strip("\n")
+            if text.strip():
+                blocks.append(text)
+
+        return "\n\n".join(blocks).strip()
 
     def is_at_bottom(self) -> bool:
         """Check if the view is currently at the bottom (or content too small to scroll)."""

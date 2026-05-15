@@ -133,6 +133,7 @@ class AgentZeroCLI(App):
         Binding("f6", "list_chats", "Chats", show=True, priority=True, key_display="F6"),
         Binding("f7", "nudge_agent", "Nudge", show=True, priority=True, key_display="F7"),
         Binding("f8", "pause_agent", "Pause", show=True, priority=True, key_display="F8"),
+        Binding("f9", "copy_visible_chat", "Copy", show=True, priority=True, key_display="F9"),
         Binding(
             "ctrl+p",
             "command_palette",
@@ -461,6 +462,13 @@ class AgentZeroCLI(App):
                 "Turn Computer Use on/off, or choose Confirm with User/Free Run mode.",
                 lambda app: CommandAvailability(True),
                 lambda app: app._cmd_computer_use(),
+            ),
+            CommandSpec(
+                "/copy",
+                (),
+                "Copy the currently visible transcript text to the clipboard.",
+                lambda app: CommandAvailability(True),
+                lambda app: app._cmd_copy_visible_chat(),
             ),
             CommandSpec(
                 "/keys",
@@ -934,6 +942,28 @@ class AgentZeroCLI(App):
 
     def _show_notice(self, message: str, *, error: bool = False) -> None:
         splash_helpers.show_notice(self, message, error=error)
+
+    def action_copy_visible_chat(self) -> None:
+        try:
+            text = self.query_one("#chat-log", ChatLog).copyable_text(visible_only=True)
+        except Exception:
+            text = ""
+
+        if not text:
+            self._show_notice("Nothing visible to copy.", error=True)
+            return
+
+        self.copy_to_clipboard(text)
+        try:
+            self.notify(
+                "Copied visible transcript to clipboard.",
+                title="Clipboard",
+                severity="information",
+                timeout=3,
+                markup=False,
+            )
+        except Exception:
+            self._show_notice("Copied visible transcript to clipboard.")
 
     def get_binding_description(self, binding: Binding) -> str:
         if binding.action == "toggle_remote_file_mode":
@@ -1700,6 +1730,9 @@ class AgentZeroCLI(App):
             "Usage: /computer-use on|off|confirm|free-run|rearm|status",
             error=True,
         )
+
+    async def _cmd_copy_visible_chat(self) -> None:
+        self.action_copy_visible_chat()
 
     async def _disconnect_and_exit(self) -> None:
         await connection.disconnect_and_exit(self)

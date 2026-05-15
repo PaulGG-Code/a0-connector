@@ -76,6 +76,8 @@ terminal helper textarea:
 - Direct `fill()` calls on Textual widget IDs usually do not work in browser
   automation.
 - Typing often fails if the helper textarea is not focused first.
+- `F9` copies the currently visible transcript text through the TUI clipboard
+  path, which is more reliable than drag-selecting the xterm canvas.
 
 ### Minimal Playwright Example (Linux)
 

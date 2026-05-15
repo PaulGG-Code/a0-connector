@@ -178,6 +178,7 @@ Screen
 | `F6` | list_chats | `True` | |
 | `F7` | nudge_agent | `True` | |
 | `F8` | pause_agent | `True` | |
+| `F9` | copy_visible_chat | `True` | Copies the currently visible transcript text to the clipboard |
 | `Ctrl+P` | command_palette | **`False`** | Footer appends the palette slot itself; `show=True` duplicates it |
 
 > **Never change `ctrl+p` to `show=True`** — it will produce two `^P Commands`
