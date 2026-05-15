@@ -1283,7 +1283,10 @@ class AgentZeroCLI(App):
     def _slash_query(self, text: str) -> str | None:
         if not text:
             return None
-        token = text.split(maxsplit=1)[0]
+        parts = text.split(maxsplit=1)
+        if not parts:
+            return None
+        token = parts[0]
         if not token.startswith("/"):
             return None
         if token == "/":

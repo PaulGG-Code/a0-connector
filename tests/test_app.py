@@ -1352,6 +1352,25 @@ def test_bare_slash_does_not_auto_open_command_palette(
     assert opened == []
 
 
+def test_whitespace_only_input_does_not_auto_open_command_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append(initial_query),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="\n", input=input_widget)
+    )
+
+    assert opened == []
+
+
 async def test_profile_command_dispatches_profile_menu(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
