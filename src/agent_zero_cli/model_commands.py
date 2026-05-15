@@ -8,6 +8,7 @@ from agent_zero_cli.model_config import (
     coerce_model_config,
     collect_provider_options,
     collect_provider_api_key_status,
+    override_main_model,
 )
 from agent_zero_cli.state_sync import snapshot_signature
 from agent_zero_cli.screens.model_presets import ModelPresetsResult, ModelPresetsScreen
@@ -174,13 +175,20 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
         return
 
     override = switcher_payload.get("override") if isinstance(switcher_payload.get("override"), dict) else {}
+    preset_override_active = bool(override.get("preset_name")) if isinstance(override, dict) else False
     main_payload = switcher_payload.get("main_model") if isinstance(switcher_payload.get("main_model"), dict) else {}
     utility_payload = (
         switcher_payload.get("utility_model")
         if isinstance(switcher_payload.get("utility_model"), dict)
         else {}
     )
-    main_model = coerce_model_config(override.get("chat") if isinstance(override, dict) else None)
+    raw_main_override = coerce_model_config(override_main_model(override))
+    raw_utility_override = (
+        coerce_model_config(override.get("utility"))
+        if isinstance(override, dict) and not preset_override_active
+        else {}
+    )
+    main_model = coerce_model_config(override_main_model(override))
     utility_model = coerce_model_config(override.get("utility") if isinstance(override, dict) else None)
     if not main_model:
         main_model = coerce_model_config(main_payload)
@@ -203,11 +211,21 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
     if not isinstance(result, ModelRuntimeResult):
         raise TypeError(f"Unexpected model runtime result: {result!r}")
 
+    if not result.main_changed and not result.utility_changed:
+        return
+
+    base_main_override = coerce_model_config(main_payload) if preset_override_active else raw_main_override
+    base_utility_override = (
+        coerce_model_config(utility_payload) if preset_override_active else raw_utility_override
+    )
+    main_override = result.main_model if result.main_changed else base_main_override
+    utility_override = result.utility_model if result.utility_changed else base_utility_override
+
     try:
         payload = await app.client.set_model_override(
             context_id,
-            main_model=result.main_model,
-            utility_model=result.utility_model,
+            main_model=main_override,
+            utility_model=utility_override,
         )
     except Exception as exc:
         app._show_notice(f"Failed to update model runtime override: {exc}", error=True)

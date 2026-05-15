@@ -78,6 +78,17 @@ def format_model_label(value: object, *, default: str = "Connector default") -> 
     return text or default
 
 
+def override_main_model(override: Mapping[str, Any] | None) -> object:
+    if not isinstance(override, Mapping) or override.get("preset_name"):
+        return None
+    nested = override.get("chat")
+    if isinstance(nested, Mapping):
+        return nested
+    if override.get("provider") or override.get("name"):
+        return override
+    return None
+
+
 def apply_model_switcher_state(payload: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     """
     Returns (allowed, state_kwargs)
@@ -143,7 +154,7 @@ def collect_provider_options(switcher_payload: Mapping[str, Any]) -> tuple[tuple
 
     override = switcher_payload.get("override")
     if isinstance(override, Mapping):
-        _add(coerce_model_config(override.get("chat")).get("provider"))
+        _add(coerce_model_config(override_main_model(override)).get("provider"))
         _add(coerce_model_config(override.get("utility")).get("provider"))
 
     presets = switcher_payload.get("presets")

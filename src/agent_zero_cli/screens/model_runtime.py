@@ -22,6 +22,8 @@ from agent_zero_cli.model_config import coerce_model_config, format_model_label,
 class ModelRuntimeResult:
     main_model: dict[str, str]
     utility_model: dict[str, str]
+    main_changed: bool = True
+    utility_changed: bool = True
 
 
 def _clean_text(value: Any) -> str:
@@ -290,10 +292,18 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
             status.update(Text("Utility model name is required.", style="#ff8b6b"))
             return
 
+        main_changed = main_model != self._main_model
+        utility_changed = utility_model != self._utility_model
+        if not main_changed and not utility_changed:
+            status.update(Text("No model changes to apply.", style="dim"))
+            return
+
         self.dismiss(
             ModelRuntimeResult(
                 main_model=main_model,
                 utility_model=utility_model,
+                main_changed=main_changed,
+                utility_changed=utility_changed,
             )
         )
 

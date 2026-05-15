@@ -18,6 +18,7 @@ from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
 from agent_zero_cli.rendering import render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
+from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
 from agent_zero_cli.widgets.command_palette import is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import ChatInput, ConnectionStatus, ProfileMenuItem, ProjectMenuItem, SplashState
@@ -1597,6 +1598,131 @@ async def test_state_snapshot_applies_changed_model_switcher_state(
     assert len(switcher.state_calls) == 2
     assert switcher.state_calls[-1]["selected_preset"] == "deep"
     assert token_refreshes == 2
+
+
+async def test_model_runtime_main_change_does_not_pin_default_utility(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connected = True
+    dummy_app.connector_features = {"model_switcher"}
+    dummy_app._model_switch_allowed = True
+
+    default_utility = {"provider": "a0_venice", "name": "venice-uncensored-1-2"}
+    updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
+    calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+
+    async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return {
+            "ok": True,
+            "allowed": True,
+            "override": None,
+            "presets": [],
+            "main_model": {"provider": "openai", "name": "gpt-5.4"},
+            "utility_model": dict(default_utility),
+        }
+
+    async def fake_push_screen_wait(self: object, screen: object) -> ModelRuntimeResult:
+        del self, screen
+        return ModelRuntimeResult(
+            main_model=dict(updated_main),
+            utility_model=dict(default_utility),
+            main_changed=True,
+            utility_changed=False,
+        )
+
+    async def fake_set_model_override(
+        context_id: str,
+        *,
+        main_model: dict[str, object] | None = None,
+        utility_model: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append((context_id, dict(main_model or {}), dict(utility_model or {})))
+        return {
+            "ok": True,
+            "allowed": True,
+            "override": {"chat": dict(main_model or {})},
+            "presets": [],
+            "main_model": dict(main_model or {}),
+            "utility_model": dict(default_utility),
+        }
+
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
+    monkeypatch.setattr(dummy_app.client, "set_model_override", fake_set_model_override)
+    monkeypatch.setattr(DummyAgentZeroCLI, "push_screen_wait", fake_push_screen_wait)
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+
+    await dummy_app._cmd_models(focus_target="main")
+
+    assert calls == [("ctx-1", updated_main, {})]
+
+
+async def test_model_runtime_main_change_preserves_existing_utility_override(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connected = True
+    dummy_app.connector_features = {"model_switcher"}
+    dummy_app._model_switch_allowed = True
+
+    utility_override = {"provider": "openai", "name": "gpt-5.4-mini"}
+    updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
+    calls: list[tuple[dict[str, object], dict[str, object]]] = []
+
+    async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return {
+            "ok": True,
+            "allowed": True,
+            "override": {"utility": dict(utility_override)},
+            "presets": [],
+            "main_model": {"provider": "openai", "name": "gpt-5.4"},
+            "utility_model": dict(utility_override),
+        }
+
+    async def fake_push_screen_wait(self: object, screen: object) -> ModelRuntimeResult:
+        del self, screen
+        return ModelRuntimeResult(
+            main_model=dict(updated_main),
+            utility_model=dict(utility_override),
+            main_changed=True,
+            utility_changed=False,
+        )
+
+    async def fake_set_model_override(
+        context_id: str,
+        *,
+        main_model: dict[str, object] | None = None,
+        utility_model: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        calls.append((dict(main_model or {}), dict(utility_model or {})))
+        return {
+            "ok": True,
+            "allowed": True,
+            "override": {"chat": dict(main_model or {}), "utility": dict(utility_model or {})},
+            "presets": [],
+            "main_model": dict(main_model or {}),
+            "utility_model": dict(utility_model or {}),
+        }
+
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
+    monkeypatch.setattr(dummy_app.client, "set_model_override", fake_set_model_override)
+    monkeypatch.setattr(DummyAgentZeroCLI, "push_screen_wait", fake_push_screen_wait)
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+
+    await dummy_app._cmd_models(focus_target="main")
+
+    assert calls == [(updated_main, utility_override)]
 
 
 async def test_chat_list_command_supports_project_filter_and_sort_flags(
