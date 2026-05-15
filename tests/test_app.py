@@ -445,15 +445,18 @@ def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
 
 def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
+    quit_binding = next(binding for binding in AgentZeroCLI.BINDINGS if binding.key.lower() == "ctrl+c")
 
     assert "toggle_computer_use" not in bindings
     assert all(binding.key != "f2" for binding in AgentZeroCLI.BINDINGS)
+    assert quit_binding.show is False
     assert bindings["toggle_remote_file_mode"].key == "f3"
     assert bindings["toggle_remote_file_mode"].key_display == "F3"
     assert bindings["toggle_remote_exec"].key == "f4"
     assert bindings["toggle_remote_exec"].key_display == "F4"
     assert bindings["clear_chat"].key == "f5"
     assert bindings["clear_chat"].key_display == "F5"
+    assert bindings["clear_chat"].show is False
     assert bindings["list_chats"].key == "f6"
     assert bindings["list_chats"].key_display == "F6"
     assert bindings["nudge_agent"].key == "f7"
@@ -462,6 +465,7 @@ def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     assert bindings["pause_agent"].key_display == "F8"
     assert bindings["copy_visible_chat"].key == "f9"
     assert bindings["copy_visible_chat"].key_display == "F9"
+    assert bindings["copy_visible_chat"].show is False
     assert bindings["command_palette"].key == "ctrl+p"
     assert bindings["command_palette"].key_display == "^P"
 
@@ -490,6 +494,21 @@ def test_get_binding_description_reflects_remote_safety_toggle_state(
 
     assert dummy_app.get_binding_description(file_binding) == "Read-only"
     assert dummy_app.get_binding_description(exec_binding) == "Code-exec ON"
+
+
+def test_pause_binding_description_switches_to_resume_when_latched(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
+    pause_binding = bindings["pause_agent"]
+
+    assert dummy_app.get_key_display(pause_binding) == "F8"
+    assert dummy_app.get_binding_description(pause_binding) == "Pause"
+
+    dummy_app._pause_latched = True
+
+    assert dummy_app.get_key_display(pause_binding) == "F8"
+    assert dummy_app.get_binding_description(pause_binding) == "Resume"
 
 
 async def test_cli_update_check_surfaces_available_release(
@@ -1314,6 +1333,19 @@ async def test_attach_command_uploads_local_image_paths(
     assert notices == [("Attached 2 images.", False)]
 
 
+async def test_clear_command_clears_visible_chat_log(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    input_widget.set_activity("Working")
+
+    await dummy_app._dispatch_command("/clear")
+
+    assert log.cleared is True
+    assert input_widget.activity_idle is True
+
+
 def test_attach_command_token_does_not_auto_open_slash_palette(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -1333,23 +1365,68 @@ def test_attach_command_token_does_not_auto_open_slash_palette(
     assert opened == []
 
 
-def test_bare_slash_does_not_auto_open_command_palette(
+def test_pause_and_nudge_tokens_auto_open_slash_palette(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    opened: list[str] = []
+    opened: list[tuple[str, bool]] = []
     monkeypatch.setattr(
         dummy_app,
         "_open_command_palette",
-        lambda *, initial_query="", from_slash=False: opened.append(initial_query),
+        lambda *, initial_query="", from_slash=False: opened.append((initial_query, from_slash)),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="/pause", input=input_widget)
+    )
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="/nudge", input=input_widget)
+    )
+
+    assert opened == [("/pause", True), ("/nudge", True)]
+
+
+def test_computer_use_token_does_not_auto_open_main_slash_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append((initial_query, from_slash)),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    for value in ("/computer-use", "/computer", "/cu"):
+        dummy_app.on_chat_input_value_changed(
+            ChatInput.ValueChanged(value=value, input=input_widget)
+        )
+
+    assert opened == []
+
+
+def test_bare_slash_auto_opens_command_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append((initial_query, from_slash)),
     )
 
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
     dummy_app.on_chat_input_value_changed(
         ChatInput.ValueChanged(value="/", input=input_widget)
     )
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="/ ", input=input_widget)
+    )
 
-    assert opened == []
+    assert opened == [("/", True), ("/", True)]
 
 
 def test_whitespace_only_input_does_not_auto_open_command_palette(
@@ -2037,22 +2114,66 @@ async def test_browser_runtime_commands_update_agent_zero_config(
     assert all("Browser model-use settings" in notice[0] for notice in notices)
 
 
-def test_system_commands_include_confirm_with_user_and_free_run(
+def test_system_commands_hide_computer_use_behind_experimental(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
     commands = list(dummy_app.get_system_commands(None))
     titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
 
-    assert "Computer Use: On" in titles
-    assert "Computer Use: Off" in titles
-    assert "Computer Use: Confirm with User" in titles
-    assert "Computer Use: Re-arm" in titles
-    assert "Computer Use: Free Run" in titles
+    assert "/experimental" in titles
+    assert "/computer-use" not in titles
+    assert all(not title.startswith("Computer Use: ") for title in titles)
     assert "Browser: Use Host" in titles
     assert "Browser: Docker Container" in titles
+    assert "/clear" in titles
+    assert "/pause" in titles
+    assert "/resume" in titles
+    assert "/nudge" in titles
     assert "Computer Use: Interactive" not in titles
     assert "Computer Use: Persistent" not in titles
     assert "Computer Use: Free-Run" not in titles
+
+
+def test_experimental_commands_include_computer_use_slash_commands(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    commands = list(dummy_app.get_experimental_commands(None))
+    titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
+
+    assert titles == {
+        "/computer-use status",
+        "/computer-use on",
+        "/computer-use off",
+        "/computer-use confirm",
+        "/computer-use rearm",
+        "/computer-use free-run",
+    }
+
+
+async def test_experimental_command_opens_experimental_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened = []
+    monkeypatch.setattr(dummy_app, "_open_experimental_command_palette", lambda: opened.append(True))
+
+    await dummy_app._dispatch_command("/experimental")
+
+    assert opened == [True]
+
+
+def test_welcome_actions_keep_run_controls_out_of_splash(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"pause", "nudge"}
+
+    action_keys = {action.key for action in dummy_app._welcome_actions()}
+
+    assert "/pause" not in action_keys
+    assert "/resume" not in action_keys
+    assert "/nudge" not in action_keys
 
 
 async def test_computer_use_slash_commands_set_trust_mode(

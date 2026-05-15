@@ -169,16 +169,16 @@ Screen
 └── Footer                      — key bindings + command palette slot
 ```
 
-### Key bindings (`app.py:61-79`)
+### Footer bindings (`app.py:61-79`)
 
-| Key | Action | `show` | Why |
-|-----|--------|--------|-----|
-| `Ctrl+C` | Quit | `True` | |
-| `F5` | clear_chat | `True` | |
+| Footer label | Action | `show` | Why |
+|--------------|--------|--------|-----|
+| `Ctrl+C` | Quit | `False` | Hidden from the footer; use `/quit` for a visible command path |
+| `F5` | clear_chat | `False` | Hidden from the footer; use `/clear` for a visible command path |
 | `F6` | list_chats | `True` | |
-| `F7` | nudge_agent | `True` | |
-| `F8` | pause_agent | `True` | |
-| `F9` | copy_visible_chat | `True` | Copies the currently visible transcript text to the clipboard |
+| `F7` | nudge_agent | `True` | Also available as `/nudge` |
+| `F8` | pause_agent | `True` | Also available as `/pause` and `/resume` |
+| `F9` | copy_visible_chat | `False` | Hidden from the footer; use `/copy` for visible transcript copy |
 | `Ctrl+P` | command_palette | **`False`** | Footer appends the palette slot itself; `show=True` duplicates it |
 
 > **Never change `ctrl+p` to `show=True`** — it will produce two `^P Commands`

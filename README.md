@@ -106,12 +106,10 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 
 ## Usage
 
-### Key bindings
+### Footer shortcuts
 
-| Key | Action |
-|-----|--------|
-| `Ctrl+C` | Quit |
-| `F5` | Clear chat |
+| Shortcut | Action |
+|----------|--------|
 | `F6` | List chats |
 | `F7` | Nudge agent |
 | `F8` | Pause / resume |
@@ -123,10 +121,14 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 |---------|--------|
 | `/help` | Show available commands |
 | `/chats` | Switch chats |
+| `/clear` | Clear the visible chat log |
 | `/new` | Start a new chat |
 | `/compact` | Compact the current chat when supported |
+| `/nudge` | Nudge the current agent run |
+| `/pause` / `/resume` | Pause or resume the active agent run |
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
+| `/experimental` | Open experimental commands, including Computer Use controls |
 | `/browser status` | Show host-browser connector status |
 | `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |
 | `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |

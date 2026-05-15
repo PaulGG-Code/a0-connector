@@ -24,22 +24,18 @@ class OrderedSystemCommandsProvider(Provider):
         async for hit in self._search_browser_targets(query):
             yield hit
 
-        async for hit in self._search_computer_use_targets(query):
-            yield hit
+        if str(query or "").strip() == "/":
+            score = 1_000_000
+            for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
+                if title.startswith("/"):
+                    yield Hit(score, title, callback, help=help_text)
+                    score -= 1
+            return
 
         matcher = self.matcher(query)
         for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
             if (match := matcher.match(title)) > 0:
                 yield Hit(match, matcher.highlight(title), callback, help=help_text)
-
-    async def _search_computer_use_targets(self, query: str):
-        normalized = str(query or "").strip().lower()
-        if normalized not in {"/computer-use", "/computer", "/cu"}:
-            return
-
-        for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
-            if title.startswith("Computer Use: "):
-                yield Hit(1_000_000, title, callback, help=help_text)
 
     async def _search_browser_targets(self, query: str):
         normalized = str(query or "").strip().lower()
@@ -86,6 +82,21 @@ class OrderedSystemCommandsProvider(Provider):
                 ),
                 help=f"Switch to {title}.",
             )
+
+
+class ExperimentalCommandsProvider(Provider):
+    """Expose experimental slash commands in their own command palette."""
+
+    async def discover(self):
+        for title, help_text, callback, discover in self.app.get_experimental_commands(self.screen):
+            if discover:
+                yield DiscoveryHit(title, callback, help=help_text)
+
+    async def search(self, query: str):
+        matcher = self.matcher(query)
+        for title, help_text, callback, *_ in self.app.get_experimental_commands(self.screen):
+            if (match := matcher.match(title)) > 0:
+                yield Hit(match, matcher.highlight(title), callback, help=help_text)
 
 
 def is_raw_slash_command(value: str) -> bool:

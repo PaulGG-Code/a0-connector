@@ -47,6 +47,7 @@ from agent_zero_cli.remote_files import RemoteFileUtility
 from agent_zero_cli.project_utils import normalize_project_list, normalize_project_summary
 from agent_zero_cli.widgets.command_palette import (
     AgentCommandPalette,
+    ExperimentalCommandsProvider,
     OrderedSystemCommandsProvider,
 )
 from agent_zero_cli.widgets import (
@@ -77,8 +78,8 @@ from agent_zero_cli.token_usage import (
     refresh_token_usage,
 )
 
-_HIDDEN_SLASH_COMMANDS = frozenset({"/pause", "/resume", "/nudge"})
-_SPLASH_HIDDEN_COMMANDS = frozenset({"/profile"})
+_HIDDEN_SLASH_COMMANDS = frozenset({"/computer-use", "/computer", "/cu"})
+_SPLASH_HIDDEN_COMMANDS = frozenset({"/profile", "/pause", "/resume", "/nudge"})
 _NO_AUTO_SLASH_PALETTE_COMMANDS = frozenset({"/attach", "/image", "/img"})
 _COMPUTER_USE_MODE_LABELS = {
     "interactive": "Confirm with User",
@@ -112,7 +113,7 @@ class AgentZeroCLI(App):
     # Textual reports function keys as lowercase identifiers like `f3`.
     # Keep the canonical key names here and use `key_display` for the footer.
     BINDINGS = [
-        Binding("Ctrl+C", "Quit", "Exit", show=True),
+        Binding("Ctrl+C", "Quit", "Exit", show=False),
         Binding(
             "f3",
             "toggle_remote_file_mode",
@@ -129,11 +130,11 @@ class AgentZeroCLI(App):
             priority=True,
             key_display="F4",
         ),
-        Binding("f5", "clear_chat", "Clear", show=True, priority=True, key_display="F5"),
+        Binding("f5", "clear_chat", "Clear", show=False, priority=True, key_display="F5"),
         Binding("f6", "list_chats", "Chats", show=True, priority=True, key_display="F6"),
         Binding("f7", "nudge_agent", "Nudge", show=True, priority=True, key_display="F7"),
         Binding("f8", "pause_agent", "Pause", show=True, priority=True, key_display="F8"),
-        Binding("f9", "copy_visible_chat", "Copy", show=True, priority=True, key_display="F9"),
+        Binding("f9", "copy_visible_chat", "Copy", show=False, priority=True, key_display="F9"),
         Binding(
             "ctrl+p",
             "command_palette",
@@ -307,51 +308,6 @@ class AgentZeroCLI(App):
                 ),
             )
         yield SystemCommand(
-            "Computer Use: On",
-            "Allow Agent Zero to request local computer-use access through this CLI session.",
-            lambda: self.run_worker(
-                self._set_computer_use_enabled(True),
-                exclusive=True,
-                name="palette-computer-use-on",
-            ),
-        )
-        yield SystemCommand(
-            "Computer Use: Off",
-            "Stop advertising local computer-use access from this CLI session.",
-            lambda: self.run_worker(
-                self._set_computer_use_enabled(False),
-                exclusive=True,
-                name="palette-computer-use-off",
-            ),
-        )
-        yield SystemCommand(
-            "Computer Use: Confirm with User",
-            "Ask before local computer-use access and remember the approval for future Free Run.",
-            lambda: self.run_worker(
-                self._set_computer_use_mode("persistent"),
-                exclusive=True,
-                name="palette-computer-use-confirm",
-            ),
-        )
-        yield SystemCommand(
-            "Computer Use: Re-arm",
-            "Open the platform permission flow and attach an approved computer-use session.",
-            lambda: self.run_worker(
-                self._rearm_computer_use(),
-                exclusive=True,
-                name="palette-computer-use-rearm",
-            ),
-        )
-        yield SystemCommand(
-            "Computer Use: Free Run",
-            "Use previously approved computer-use access without prompting.",
-            lambda: self.run_worker(
-                self._set_computer_use_mode("free_run"),
-                exclusive=True,
-                name="palette-computer-use-free-run",
-            ),
-        )
-        yield SystemCommand(
             "Browser: Use Host",
             "Run Browser through A0 CLI against your Chrome or Chromium-family browser.",
             lambda: self.run_worker(
@@ -370,6 +326,45 @@ class AgentZeroCLI(App):
             ),
         )
 
+    def get_experimental_commands(self, screen) -> Iterable[SystemCommand]:
+        del screen
+        for command, description in (
+            (
+                "/computer-use status",
+                "Show local computer-use access state.",
+            ),
+            (
+                "/computer-use on",
+                "Allow Agent Zero to request local computer-use access through this CLI session.",
+            ),
+            (
+                "/computer-use off",
+                "Stop advertising local computer-use access from this CLI session.",
+            ),
+            (
+                "/computer-use confirm",
+                "Ask before local computer-use access and remember the approval for future Free Run.",
+            ),
+            (
+                "/computer-use rearm",
+                "Open the platform permission flow and attach an approved computer-use session.",
+            ),
+            (
+                "/computer-use free-run",
+                "Use previously approved computer-use access without prompting.",
+            ),
+        ):
+            worker_name = f"experimental-{command.lstrip('/').replace('/', '-').replace(' ', '-')}"
+            yield SystemCommand(
+                command,
+                description,
+                lambda command=command, worker_name=worker_name: self.run_worker(
+                    self._dispatch_command(command),
+                    exclusive=True,
+                    name=worker_name,
+                ),
+            )
+
     def _build_command_registry(self) -> tuple[CommandSpec, ...]:
         return (
             CommandSpec(
@@ -385,6 +380,20 @@ class AgentZeroCLI(App):
                 "List previous chats (default sorted by last updated). Use --project to filter by active project.",
                 lambda app: availability.require_features(app, "chats_list"),
                 lambda app: chat_commands.cmd_chats(app),
+            ),
+            CommandSpec(
+                "/clear",
+                (),
+                "Clear the visible chat log.",
+                lambda app: CommandAvailability(True),
+                lambda app: chat_commands.cmd_clear(app),
+            ),
+            CommandSpec(
+                "/experimental",
+                (),
+                "Open experimental commands.",
+                lambda app: CommandAvailability(True),
+                lambda app: app._cmd_experimental(),
             ),
             CommandSpec(
                 "/project",
@@ -520,6 +529,20 @@ class AgentZeroCLI(App):
                 id="--command-palette",
                 initial_query=initial_query,
                 from_slash=from_slash,
+            )
+        )
+
+    def _open_experimental_command_palette(self) -> None:
+        if not self.use_command_palette or self._is_command_palette_open():
+            return
+
+        self._slash_palette_query = None
+        self.push_screen(
+            AgentCommandPalette(
+                providers=[ExperimentalCommandsProvider],
+                id="--experimental-command-palette",
+                initial_query="/computer-use",
+                from_slash=True,
             )
         )
 
@@ -1290,7 +1313,7 @@ class AgentZeroCLI(App):
         if not token.startswith("/"):
             return None
         if token == "/":
-            return None
+            return "/" if text.strip() == "/" else None
         if len(text) != len(token):
             return None
         return token.lower()
@@ -1464,7 +1487,7 @@ class AgentZeroCLI(App):
             return
         if query in _HIDDEN_SLASH_COMMANDS:
             return
-        if any(command.startswith(query) for command in _NO_AUTO_SLASH_PALETTE_COMMANDS):
+        if query != "/" and any(command.startswith(query) for command in _NO_AUTO_SLASH_PALETTE_COMMANDS):
             return
 
         self._open_command_palette(initial_query=query, from_slash=True)
@@ -1649,6 +1672,9 @@ class AgentZeroCLI(App):
 
     async def _cmd_nudge(self) -> None:
         await chat_commands.cmd_nudge(self)
+
+    async def _cmd_experimental(self) -> None:
+        self._open_experimental_command_palette()
 
     async def _set_computer_use_mode(self, mode: str) -> None:
         selected = self._computer_use.set_trust_mode(mode)

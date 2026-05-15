@@ -4,7 +4,7 @@ This note lists files that define the **Textual** terminal UI (layout, widgets, 
 
 ## IDE embedded terminal
 
-When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, and a footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F5` Clear, `F6` Chats, `F7` Nudge, `F8` Pause, `F9` Copy visible transcript, `^P` Commands).
+When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, and a compact footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F6` Chats, `F7` Nudge, `F8` Pause or Resume, and `^P` Commands).
 
 ## Files that are mainly “frontend”
 
