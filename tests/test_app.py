@@ -16,7 +16,7 @@ from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
-from agent_zero_cli.rendering import render_connector_event
+from agent_zero_cli.rendering import extract_detail, render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
 from agent_zero_cli.widgets.command_palette import is_raw_slash_command
@@ -813,6 +813,48 @@ def test_context_event_status_updates_activity_lane_without_rendering_message(
         "thoughts": ["Plan the answer"],
     }
     assert dummy_app.rendered_events == []
+
+
+def test_context_code_event_strips_icon_heading_from_activity_lane(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.current_context_has_messages = True
+
+    dummy_app._handle_context_event(
+        {
+            "context_id": "ctx-1",
+            "event": "code_output",
+            "sequence": 5,
+            "data": {
+                "heading": "icon://terminal [0] pytest -q icon://done_all",
+                "text": "",
+                "meta": {"runtime": "python"},
+            },
+        }
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert input_widget.activity_label == "Running code"
+    assert input_widget.activity_detail == "pytest -q"
+
+
+def test_extract_detail_strips_icon_markers_from_status_and_tool_headings() -> None:
+    assert (
+        extract_detail(
+            "status",
+            {"meta": {"step": "icon://terminal [0] code_execution_tool - python"}},
+        )
+        == "code_execution_tool - python"
+    )
+    assert (
+        extract_detail(
+            "tool_start",
+            {"heading": "icon://construction A0: Using tool 'browser'"},
+        )
+        == "A0: Using tool 'browser'"
+    )
 
 
 def test_context_snapshot_seeds_input_history_from_user_messages(

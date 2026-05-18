@@ -15,6 +15,7 @@ from textual.content import Content
 from textual.style import Style
 from textual.widgets import Static
 
+from agent_zero_cli.icon_text import normalize_icon_text
 from agent_zero_cli.widgets.shimmer import build_dim_status, build_shimmer_text
 
 
@@ -78,7 +79,7 @@ def _build_banner_text(banner: str) -> Text:
 
 
 def _normalize_status_text(value: str) -> str:
-    return " ".join(value.split())
+    return normalize_icon_text(value)
 
 
 def _truncate_status_text(value: str, limit: int = 120) -> str:

@@ -8,6 +8,7 @@ from rich.panel import Panel
 from rich.padding import Padding
 from rich.text import Text
 
+from agent_zero_cli.icon_text import normalize_icon_text, strip_icon_markers
 from agent_zero_cli.widgets.chat_log import ChatLog
 
 
@@ -70,21 +71,29 @@ def _plain_text(value: object, *, style: str = "") -> Text:
 
 
 def _event_message(heading: object, text: object) -> str:
-    heading_text = str(heading or "")
-    body_text = str(text or "")
+    heading_text = normalize_icon_text(heading)
+    body_text = strip_icon_markers(text).strip()
     return f"{heading_text}: {body_text}" if heading_text else body_text
 
 
-def _normalize_code_heading(heading: str) -> str:
+def _normalize_code_heading(heading: str, *, suppress_generic: bool = True) -> str:
     normalized = " ".join(str(heading or "").split())
     if not normalized:
         return ""
 
     normalized = _CODE_HEADING_PREFIX_RE.sub("", normalized, count=1)
+    normalized = normalize_icon_text(normalized)
     normalized = _CODE_HEADING_SESSION_RE.sub("", normalized, count=1).strip()
-    if _GENERIC_CODE_DETAIL_RE.match(normalized):
+    if suppress_generic and _GENERIC_CODE_DETAIL_RE.match(normalized):
         return ""
     return normalized
+
+
+def _normalize_heading(heading: object) -> str:
+    raw = str(heading or "")
+    if _CODE_HEADING_PREFIX_RE.match(raw):
+        return _normalize_code_heading(raw, suppress_generic=False)
+    return normalize_icon_text(raw)
 
 
 def _strip_terminal_title_noise(line: str) -> str:
@@ -129,7 +138,8 @@ def extract_detail(event_type: str, data: dict[str, Any]) -> str:
 
     if event_type in ("tool_start", "tool_output", "tool_end"):
         # heading is the tool name
-        return heading[:40] if heading else ""
+        clean_heading = _normalize_heading(heading)
+        return clean_heading[:40] if clean_heading else ""
 
     if event_type in ("code_start", "code_output"):
         clean_heading = _normalize_code_heading(heading)
@@ -141,22 +151,22 @@ def extract_detail(event_type: str, data: dict[str, Any]) -> str:
     if event_type == "status":
         step = str(meta.get("step") or "").strip()
         if step:
-            return step[:50]
+            return _normalize_heading(step)[:50]
 
         headline = str(meta.get("headline") or "").strip()
         if headline:
-            return headline[:50]
+            return _normalize_heading(headline)[:50]
 
         tool_name = str(meta.get("tool_name") or "").strip()
         if tool_name:
-            return f"Using {tool_name}"[:50]
+            return f"Using {normalize_icon_text(tool_name)}"[:50]
 
         # text may be a JSON blob or a sentence — take first sentence only
         raw = heading or text
         # strip obvious JSON artifacts
         if raw.startswith("{") or raw.startswith("["):
             return ""
-        first = raw.split(".")[0].split("\n")[0].strip()
+        first = _normalize_heading(raw.split(".")[0].split("\n")[0])
         return first[:50] if first else ""
 
     return ""
@@ -210,13 +220,7 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
         return False
 
     if category == "util":
-        heading_text = str(heading or "")
-        body_text = str(text or "")
-        msg = (
-            f"{heading_text}: {body_text}"
-            if heading_text and body_text
-            else heading_text or body_text
-        )
+        msg = _event_message(heading, text)
         if msg:
             log.append_or_update(seq, Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)))
             return True
