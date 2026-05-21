@@ -20,10 +20,18 @@ def test_unix_installer_pins_managed_python() -> None:
     assert "LATEST_RELEASE_API_URL=" in installer
     assert "releases/latest" in installer
     assert "A0_PACKAGE_SPEC" in installer
+    assert "A0_RUNTIME_CONSTRAINTS" in installer
+    assert "A0_BUILD_CONSTRAINTS" in installer
+    assert "A0_ALLOW_UNPINNED_UPDATE" in installer
     assert "fetch_latest_release_tag" in installer
-    assert "refs/tags/%s.zip" in installer
+    assert "constraints/a0-runtime.txt" in installer
+    assert "constraints/a0-build.txt" in installer
+    assert 'archive/refs/tags/$RELEASE_TAG.zip' in installer
     assert 'PYTHON_SPEC="${A0_PYTHON_SPEC:-3.11}"' in installer
-    assert 'uv tool install --python "$PYTHON_SPEC" --managed-python --upgrade "$PACKAGE_SPEC"' in installer
+    assert '--upgrade-package a0' in installer
+    assert '--constraints "$RUNTIME_CONSTRAINTS"' in installer
+    assert '--build-constraints "$BUILD_CONSTRAINTS"' in installer
+    assert '--upgrade "$PACKAGE_SPEC"' not in installer
 
 
 def test_unix_installer_is_sh_compatible() -> None:
@@ -42,11 +50,35 @@ def test_windows_installer_pins_managed_python() -> None:
     assert "$LatestReleaseApiUrl" in installer
     assert "releases/latest" in installer
     assert "A0_PACKAGE_SPEC" in installer
+    assert "A0_RUNTIME_CONSTRAINTS" in installer
+    assert "A0_BUILD_CONSTRAINTS" in installer
+    assert "A0_ALLOW_UNPINNED_UPDATE" in installer
     assert "Resolve-PackageSpec" in installer
     assert "EscapeDataString" in installer
+    assert "constraints/a0-runtime.txt" in installer
+    assert "constraints/a0-build.txt" in installer
     assert '$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.11" }' in installer
-    assert '$installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade", $PackageSpec)' in installer
+    assert '$installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")' in installer
+    assert '"--constraints", $runtimeConstraints' in installer
+    assert '"--build-constraints", $buildConstraints' in installer
     assert 'if ($LASTEXITCODE -ne 0)' in installer
+
+
+def test_release_dependency_locks_are_checked_in() -> None:
+    runtime_lock = (ROOT / "constraints" / "a0-runtime.txt").read_text(encoding="utf-8")
+    build_lock = (ROOT / "constraints" / "a0-build.txt").read_text(encoding="utf-8")
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "python devtools/lock_dependencies.py" in runtime_lock
+    assert "python devtools/lock_dependencies.py" in build_lock
+    assert "--hash=sha256" in runtime_lock
+    assert "--hash=sha256" in build_lock
+    assert "textual==" in runtime_lock
+    assert "hatchling==" in build_lock
+
+    assert all("==" in requirement for requirement in pyproject["build-system"]["requires"])
+    assert all("==" in requirement for requirement in pyproject["project"]["dependencies"])
+    assert not any(">=" in requirement for requirement in pyproject["project"]["dependencies"])
 
 
 def test_root_package_embeds_platform_backends() -> None:
@@ -60,14 +92,14 @@ def test_root_package_embeds_platform_backends() -> None:
     assert "a0-computer-use-macos" not in dependency_text
     assert "a0-computer-use-windows" not in dependency_text
 
-    assert 'mss>=10.1.0; platform_system == "Linux"' in dependencies
-    assert 'python-xlib>=0.33; platform_system == "Linux"' in dependencies
-    assert 'pyobjc-framework-ApplicationServices; platform_system == "Darwin"' in dependencies
-    assert 'pyobjc-framework-Quartz; platform_system == "Darwin"' in dependencies
-    assert 'dxcam; platform_system == "Windows"' in dependencies
-    assert 'pillow; platform_system == "Windows"' in dependencies
-    assert 'pywinauto; platform_system == "Windows"' in dependencies
-    assert 'textual-serve>=1.1.3' in dependencies
+    assert "mss==10.2.0 ; sys_platform == 'linux'" in dependencies
+    assert "python-xlib==0.33 ; sys_platform == 'linux'" in dependencies
+    assert "pyobjc-framework-applicationservices==12.1 ; sys_platform == 'darwin'" in dependencies
+    assert "pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin'" in dependencies
+    assert "dxcam==0.3.0 ; sys_platform == 'win32'" in dependencies
+    assert "pillow==12.2.0 ; sys_platform == 'win32'" in dependencies
+    assert "pywinauto==0.6.9 ; sys_platform == 'win32'" in dependencies
+    assert "textual-serve==1.1.3" in dependencies
 
     entry_points = pyproject["project"]["entry-points"]["a0.computer_use_backends"]
     assert entry_points == {
@@ -117,10 +149,14 @@ def test_readme_documents_uv_managed_python_and_git_install() -> None:
     assert "refs/tags/v1.6.zip" not in compact
     assert "Computer-use backends are embedded in the `a0` wheel" in compact
     assert "managed CPython 3.11 tool environment" in compact
-    assert "download it automatically" in compact
+    assert "download the managed Python automatically" in compact
     assert "without requiring `git` to be installed" in readme
     assert "`a0 update`" in readme
     assert "resolves the latest published GitHub release at runtime" in compact
     assert "`A0_PACKAGE_SPEC`" in readme
     assert "`A0_PYTHON_SPEC`" in readme
+    assert "`A0_RUNTIME_CONSTRAINTS`" in readme
+    assert "`A0_BUILD_CONSTRAINTS`" in readme
+    assert "`A0_ALLOW_UNPINNED_UPDATE=1`" in readme
+    assert "dependencies pinned to the tested release set" in compact
     assert "Install `uv` or rerun the existing installer." in readme

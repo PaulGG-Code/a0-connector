@@ -101,6 +101,28 @@ def test_resolve_python_spec_defaults_to_managed_python_release() -> None:
     assert self_update.resolve_python_spec({}) == self_update.DEFAULT_PYTHON_SPEC
 
 
+def test_resolve_update_target_defaults_to_release_locks() -> None:
+    target = self_update.resolve_update_target(
+        {},
+        latest_release_resolver=lambda: "v9.8",
+    )
+
+    assert target == self_update.UpdateTarget(
+        package_spec=(
+            "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v9.8.zip"
+        ),
+        python_spec=self_update.DEFAULT_PYTHON_SPEC,
+        runtime_constraints=(
+            "https://raw.githubusercontent.com/agent0ai/a0-connector/"
+            "refs/tags/v9.8/constraints/a0-runtime.txt"
+        ),
+        build_constraints=(
+            "https://raw.githubusercontent.com/agent0ai/a0-connector/"
+            "refs/tags/v9.8/constraints/a0-build.txt"
+        ),
+    )
+
+
 def test_resolve_package_spec_honors_environment_override() -> None:
     env = {"A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip"}
     resolver_calls = 0
@@ -120,6 +142,29 @@ def test_resolve_package_spec_honors_environment_override() -> None:
 def test_resolve_python_spec_honors_environment_override() -> None:
     env = {"A0_PYTHON_SPEC": "3.12"}
     assert self_update.resolve_python_spec(env) == env["A0_PYTHON_SPEC"]
+
+
+def test_resolve_update_target_requires_locks_for_custom_package() -> None:
+    env = {"A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip"}
+
+    with pytest.raises(self_update.LatestReleaseError, match="A0_PACKAGE_SPEC requires"):
+        self_update.resolve_update_target(env)
+
+
+def test_resolve_update_target_honors_custom_package_locks() -> None:
+    env = {
+        "A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip",
+        "A0_PYTHON_SPEC": "3.12",
+        "A0_RUNTIME_CONSTRAINTS": "/tmp/runtime.txt",
+        "A0_BUILD_CONSTRAINTS": "/tmp/build.txt",
+    }
+
+    assert self_update.resolve_update_target(env) == self_update.UpdateTarget(
+        package_spec=env["A0_PACKAGE_SPEC"],
+        python_spec=env["A0_PYTHON_SPEC"],
+        runtime_constraints=env["A0_RUNTIME_CONSTRAINTS"],
+        build_constraints=env["A0_BUILD_CONSTRAINTS"],
+    )
 
 
 def test_check_for_update_detects_newer_release() -> None:
@@ -243,8 +288,8 @@ def test_run_self_update_handoff_reports_latest_release_resolution_failure(
 
         captured = capsys.readouterr()
         assert exit_code == 1
-        assert "Failed to resolve the latest a0 release: offline" in captured.out
-        assert "Set A0_PACKAGE_SPEC" in captured.out
+        assert "Failed to resolve a locked a0 update target: offline" in captured.out
+        assert "custom locked package source" in captured.out
         assert popen_calls == []
         assert list(temp_dir.iterdir()) == []
 
@@ -277,6 +322,8 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         env = {
             "A0_PACKAGE_SPEC": "a0 @ https://example.invalid/build.zip",
             "A0_PYTHON_SPEC": "3.12",
+            "A0_RUNTIME_CONSTRAINTS": "https://example.invalid/runtime.txt",
+            "A0_BUILD_CONSTRAINTS": "https://example.invalid/build.txt",
         }
 
         exit_code = self_update.run_self_update_handoff(env=env, temp_dir=temp_dir)
@@ -292,6 +339,8 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert argv[2] == str(os.getpid())
         assert argv[3] == env["A0_PACKAGE_SPEC"]
         assert argv[4] == env["A0_PYTHON_SPEC"]
+        assert argv[5] == env["A0_RUNTIME_CONSTRAINTS"]
+        assert argv[6] == env["A0_BUILD_CONSTRAINTS"]
         assert kwargs["stdin"] is subprocess.DEVNULL
 
         script_path = Path(argv[1])
@@ -302,7 +351,10 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert '"--python"' in script_text
         assert "python_spec" in script_text
         assert '"--managed-python"' in script_text
-        assert '"--upgrade"' in script_text
+        assert '"--upgrade-package"' in script_text
+        assert '"--constraints"' in script_text
+        assert '"--build-constraints"' in script_text
+        assert '"--upgrade"' not in script_text
         assert "package_spec" in script_text
         assert "Update complete. Run a0." in script_text
 
@@ -332,8 +384,22 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
     monkeypatch.setattr(namespace["shutil"], "which", lambda name: "uv")
     monkeypatch.setattr(namespace["subprocess"], "run", fake_run)
 
-    package_spec = self_update.package_spec_for_release_tag("v9.8")
-    exit_code = namespace["main"](["123", package_spec, "3.11"])
+    with _workspace_temp_dir() as temp_dir:
+        runtime_constraints = temp_dir / "runtime.txt"
+        build_constraints = temp_dir / "build.txt"
+        runtime_constraints.write_text("textual==8.2.7\n", encoding="utf-8")
+        build_constraints.write_text("hatchling==1.29.0\n", encoding="utf-8")
+
+        package_spec = self_update.package_spec_for_release_tag("v9.8")
+        exit_code = namespace["main"](
+            [
+                "123",
+                package_spec,
+                "3.11",
+                str(runtime_constraints),
+                str(build_constraints),
+            ]
+        )
 
     captured = capsys.readouterr()
     assert exit_code == 0
@@ -347,7 +413,12 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
                 "--python",
                 "3.11",
                 "--managed-python",
-                "--upgrade",
+                "--upgrade-package",
+                "a0",
+                "--constraints",
+                str(runtime_constraints),
+                "--build-constraints",
+                str(build_constraints),
                 package_spec,
             ],
             False,
@@ -370,7 +441,11 @@ def test_generated_updater_script_propagates_uv_exit_code_and_ignores_cleanup_fa
         lambda argv, *, check: SimpleNamespace(returncode=7),
     )
     monkeypatch.setattr(Path, "unlink", lambda self: (_ for _ in ()).throw(OSError("locked")))
-    monkeypatch.setattr(sys, "argv", ["a0-update-temp.py", "321", "a0 @ https://example.invalid/fail.zip", "3.11"])
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["a0-update-temp.py", "321", "a0 @ https://example.invalid/fail.zip", "3.11", "", ""],
+    )
 
     with pytest.raises(SystemExit) as exc_info:
         exec(

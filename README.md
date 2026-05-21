@@ -37,14 +37,20 @@ Computer-use backends are embedded in the `a0` wheel, so the CLI and local compu
 
 If you already use `uv`, the installer and update flow resolve the latest
 published GitHub release at runtime. They default to a managed CPython 3.11
-tool environment across macOS, Linux, and Windows, and `uv` can download it
-automatically without requiring `git` to be installed:
+tool environment across macOS, Linux, and Windows, and install with the
+dependency locks committed to the same A0 release. `uv` can download the
+managed Python automatically without requiring `git` to be installed:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/agent0ai/a0-connector/main/install.sh | sh
 ```
 
-Set `A0_PYTHON_SPEC` if you need to override that interpreter request, or `A0_PACKAGE_SPEC` if you want a different package source. Advanced one-off runs with `uvx` also work, but they are intentionally not the primary install path for this project.
+Set `A0_PYTHON_SPEC` if you need to override that interpreter request. If you
+set `A0_PACKAGE_SPEC` for a custom package source, also set
+`A0_RUNTIME_CONSTRAINTS` and `A0_BUILD_CONSTRAINTS`; use
+`A0_ALLOW_UNPINNED_UPDATE=1` only for intentional development installs.
+Advanced one-off runs with `uvx` also work, but they are intentionally not the
+primary install path for this project.
 
 ## Update
 
@@ -54,11 +60,13 @@ If you installed `a0` with the standard `uv tool` flow, update it in place with:
 a0 update
 ```
 
-By default `a0 update` resolves the latest published GitHub release at runtime
-and installs it into the managed CPython 3.11 tool runtime used by the
-installer. For advanced cases you can override the package source with
-`A0_PACKAGE_SPEC` or the interpreter request with `A0_PYTHON_SPEC` before
-running `a0 update`.
+By default `a0 update` resolves the latest published GitHub release at runtime,
+downloads that release's runtime and build constraints, and installs it into
+the managed CPython 3.11 tool runtime used by the installer. The updater
+upgrades A0 itself while keeping dependencies pinned to the tested release set.
+For advanced cases you can override the interpreter request with
+`A0_PYTHON_SPEC`, or provide `A0_PACKAGE_SPEC` together with
+`A0_RUNTIME_CONSTRAINTS` and `A0_BUILD_CONSTRAINTS`.
 
 `a0 update` requires `uv` to be available on your `PATH`.
 
@@ -178,6 +186,7 @@ Platform caveats:
 - `Connector contract mismatch`: the server is advertising an older connector auth contract. Update Agent Zero Core so its builtin `_a0_connector` plugin matches the CLI.
 - WebSocket connection rejected: ensure proxies forward both `/socket.io` and `/api/plugins/` unchanged, and that `AGENT_ZERO_HOST` exactly matches the real host seen by Agent Zero. If Docker discovery shows `localhost`, prefer `localhost` over `127.0.0.1`.
 - `a0 update` says `uv` is required: Install `uv` or rerun the existing installer.
+- `A0_PACKAGE_SPEC requires A0_RUNTIME_CONSTRAINTS and A0_BUILD_CONSTRAINTS`: custom package updates must provide matching lock files, or explicitly set `A0_ALLOW_UNPINNED_UPDATE=1` for a development-only unlocked install.
 
 ## Docs
 

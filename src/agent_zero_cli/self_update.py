@@ -22,9 +22,15 @@ LATEST_RELEASE_API_URL = f"https://api.github.com/repos/{GITHUB_REPOSITORY}/rele
 RELEASE_ARCHIVE_URL_TEMPLATE = (
     f"https://github.com/{GITHUB_REPOSITORY}/archive/refs/tags/{{tag}}.zip"
 )
+RELEASE_RAW_FILE_URL_TEMPLATE = (
+    f"https://raw.githubusercontent.com/{GITHUB_REPOSITORY}/refs/tags/{{tag}}/{{path}}"
+)
+RUNTIME_CONSTRAINTS_PATH = "constraints/a0-runtime.txt"
+BUILD_CONSTRAINTS_PATH = "constraints/a0-build.txt"
 DEFAULT_PYTHON_SPEC = "3.11"
 _GITHUB_API_TIMEOUT = 10.0
 _DISABLED_ENV_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
+_ENABLED_ENV_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
 _VERSION_PATTERN = re.compile(r"^v?(?P<version>\d+(?:\.\d+)*)(?:[-+].*)?$", re.IGNORECASE)
 
 
@@ -51,12 +57,33 @@ class UpdateCheckResult:
     is_local_checkout: bool = False
 
 
+@dataclass(frozen=True)
+class UpdateTarget:
+    package_spec: str
+    python_spec: str
+    runtime_constraints: str | None
+    build_constraints: str | None
+
+
 def package_spec_for_release_tag(tag: str) -> str:
     clean_tag = tag.strip()
     if not clean_tag:
         raise LatestReleaseError("latest release response did not include a tag name")
     archive_url = RELEASE_ARCHIVE_URL_TEMPLATE.format(tag=quote(clean_tag, safe=""))
     return f"{PACKAGE_NAME} @ {archive_url}"
+
+
+def release_file_url_for_tag(tag: str, path: str) -> str:
+    clean_tag = tag.strip()
+    clean_path = path.strip().lstrip("/")
+    if not clean_tag:
+        raise LatestReleaseError("latest release response did not include a tag name")
+    if not clean_path:
+        raise LatestReleaseError("release file path is empty")
+    return RELEASE_RAW_FILE_URL_TEMPLATE.format(
+        tag=quote(clean_tag, safe=""),
+        path=quote(clean_path, safe="/"),
+    )
 
 
 def fetch_latest_release_tag(
@@ -102,10 +129,51 @@ def resolve_python_spec(env: Mapping[str, str] | None = None) -> str:
     return DEFAULT_PYTHON_SPEC
 
 
+def resolve_update_target(
+    env: Mapping[str, str] | None = None,
+    *,
+    latest_release_resolver: Callable[[], str] | None = None,
+) -> UpdateTarget:
+    source = os.environ if env is None else env
+    python_spec = resolve_python_spec(source)
+    package_spec = source.get("A0_PACKAGE_SPEC")
+    release_tag: str | None = None
+
+    if package_spec is None:
+        resolver = latest_release_resolver or fetch_latest_release_tag
+        release_tag = resolver()
+        package_spec = package_spec_for_release_tag(release_tag)
+
+    runtime_constraints = source.get("A0_RUNTIME_CONSTRAINTS")
+    build_constraints = source.get("A0_BUILD_CONSTRAINTS")
+    if runtime_constraints and build_constraints:
+        return UpdateTarget(package_spec, python_spec, runtime_constraints, build_constraints)
+
+    if release_tag is not None:
+        return UpdateTarget(
+            package_spec,
+            python_spec,
+            release_file_url_for_tag(release_tag, RUNTIME_CONSTRAINTS_PATH),
+            release_file_url_for_tag(release_tag, BUILD_CONSTRAINTS_PATH),
+        )
+
+    if _env_enabled(source.get("A0_ALLOW_UNPINNED_UPDATE", "")):
+        return UpdateTarget(package_spec, python_spec, None, None)
+
+    raise LatestReleaseError(
+        "A0_PACKAGE_SPEC requires A0_RUNTIME_CONSTRAINTS and A0_BUILD_CONSTRAINTS "
+        "unless A0_ALLOW_UNPINNED_UPDATE=1 is set"
+    )
+
+
 def update_check_enabled(env: Mapping[str, str] | None = None) -> bool:
     source = os.environ if env is None else env
     value = source.get("A0_UPDATE_CHECK", "").strip().lower()
     return value not in _DISABLED_ENV_VALUES
+
+
+def _env_enabled(value: str) -> bool:
+    return value.strip().lower() in _ENABLED_ENV_VALUES
 
 
 def normalized_release_version(value: str) -> str:
@@ -199,7 +267,6 @@ def run_self_update_handoff(
     env: Mapping[str, str] | None = None,
     temp_dir: str | os.PathLike[str] | None = None,
 ) -> int:
-    python_spec = resolve_python_spec(env)
     provenance = detect_install_provenance()
     if provenance.is_local_checkout:
         print(_format_local_checkout_notice(provenance))
@@ -210,14 +277,25 @@ def run_self_update_handoff(
         return 1
 
     try:
-        package_spec = resolve_package_spec(env)
+        target = resolve_update_target(env)
     except LatestReleaseError as exc:
-        print(f"Failed to resolve the latest a0 release: {exc}")
-        print("Set A0_PACKAGE_SPEC to install from a specific package source.")
+        print(f"Failed to resolve a locked a0 update target: {exc}")
+        print(
+            "Set A0_PACKAGE_SPEC with A0_RUNTIME_CONSTRAINTS and "
+            "A0_BUILD_CONSTRAINTS for a custom locked package source."
+        )
         return 1
 
     script_path = _write_updater_script(temp_dir=temp_dir)
-    argv = [sys.executable, str(script_path), str(os.getpid()), package_spec, python_spec]
+    argv = [
+        sys.executable,
+        str(script_path),
+        str(os.getpid()),
+        target.package_spec,
+        target.python_spec,
+        target.runtime_constraints or "",
+        target.build_constraints or "",
+    ]
     try:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL)
     except OSError as exc:
@@ -237,7 +315,10 @@ def _build_updater_script() -> str:
         import shutil
         import subprocess
         import sys
+        import tempfile
         import time
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname, urlopen
 
 
         def _wait_for_parent_exit(parent_pid):
@@ -272,8 +353,31 @@ def _build_updater_script() -> str:
                 time.sleep(0.1)
 
 
+        def _prepare_constraint(spec, name, temp_dir):
+            if not spec:
+                return None
+
+            parsed = urlparse(spec)
+            if parsed.scheme in {"http", "https"}:
+                target = Path(temp_dir) / name
+                try:
+                    with urlopen(spec, timeout=30.0) as response:
+                        target.write_bytes(response.read())
+                except OSError as exc:
+                    raise RuntimeError(f"Failed to download dependency lock {spec}: {exc}") from exc
+                return str(target)
+
+            if parsed.scheme == "file":
+                path = Path(url2pathname(parsed.path))
+            else:
+                path = Path(spec)
+            if not path.is_file():
+                raise RuntimeError(f"Dependency lock file does not exist: {path}")
+            return str(path)
+
+
         def main(argv):
-            if len(argv) != 3:
+            if len(argv) != 5:
                 print("Invalid updater invocation.", file=sys.stderr)
                 return 2
 
@@ -285,6 +389,8 @@ def _build_updater_script() -> str:
 
             package_spec = argv[1]
             python_spec = argv[2]
+            runtime_constraints = argv[3]
+            build_constraints = argv[4]
             _wait_for_parent_exit(parent_pid)
 
             uv_executable = shutil.which("uv")
@@ -292,23 +398,45 @@ def _build_updater_script() -> str:
                 print("uv is required for `a0 update`. Install uv or rerun the existing installer.")
                 return 1
 
-            try:
-                result = subprocess.run(
-                    [
-                        uv_executable,
-                        "tool",
-                        "install",
-                        "--python",
-                        python_spec,
-                        "--managed-python",
-                        "--upgrade",
-                        package_spec,
-                    ],
-                    check=False,
-                )
-            except OSError as exc:
-                print(f"Failed to run uv: {exc}")
-                return 1
+            with tempfile.TemporaryDirectory(prefix="a0-update-locks-") as temp_dir:
+                try:
+                    runtime_lock = _prepare_constraint(
+                        runtime_constraints,
+                        "a0-runtime.txt",
+                        temp_dir,
+                    )
+                    build_lock = _prepare_constraint(
+                        build_constraints,
+                        "a0-build.txt",
+                        temp_dir,
+                    )
+                except RuntimeError as exc:
+                    print(exc)
+                    return 1
+
+                command = [
+                    uv_executable,
+                    "tool",
+                    "install",
+                    "--python",
+                    python_spec,
+                    "--managed-python",
+                    "--upgrade-package",
+                    "a0",
+                ]
+                if runtime_lock:
+                    command.extend(["--constraints", runtime_lock])
+                if build_lock:
+                    command.extend(["--build-constraints", build_lock])
+                if not runtime_lock or not build_lock:
+                    print("Warning: running a0 update without dependency locks.")
+                command.append(package_spec)
+
+                try:
+                    result = subprocess.run(command, check=False)
+                except OSError as exc:
+                    print(f"Failed to run uv: {exc}")
+                    return 1
 
             if result.returncode == 0:
                 print("Update complete. Run a0.")

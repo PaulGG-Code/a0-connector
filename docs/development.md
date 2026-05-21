@@ -93,7 +93,21 @@ The standalone installers and `a0 update` default to a managed CPython 3.11
 runtime via `uv`, so end users do not need a preinstalled Python 3.10+ on the
 host to get a consistent tool environment. The updater resolves the latest
 published GitHub release at runtime instead of baking the current tag into the
-installed CLI.
+installed CLI, then installs with the runtime and build constraints committed to
+that same release.
+
+Runtime dependencies are locked as release artifacts:
+
+```bash
+./.venv/bin/python devtools/lock_dependencies.py
+./.venv/bin/python devtools/lock_dependencies.py --check
+```
+
+Edit `requirements/a0-runtime.in` or `requirements/a0-build.in`, regenerate the
+constraints, and commit the updated `constraints/` files plus the synced
+`pyproject.toml` pins together. The package metadata is intentionally exact
+pinned because `a0` is a CLI app installed into an isolated `uv tool`
+environment, and it protects users who update from older unpinned CLIs.
 
 ### Backend source of truth
 

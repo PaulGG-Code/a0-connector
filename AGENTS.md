@@ -148,8 +148,10 @@ a0-connector/
 │   ├── configuration.md         # Env vars, resolution order, persisted .env
 │   ├── development.md           # Setup instructions, dev patterns
 │   └── tui-frontend.md          # TUI file map, IDE terminal notes
-├── pyproject.toml               # Package metadata and dependencies
-└── requirements.txt             # Extra transitive deps (aiohttp, socketio extras)
+├── pyproject.toml               # Package metadata and pinned dependencies
+├── requirements/                # Runtime/build lock inputs
+├── constraints/                 # Generated release dependency locks
+└── requirements.txt             # Compatibility pointer to the runtime lock
 ```
 
 The builtin `_a0_connector` plugin is not stored in this repository. For backend
