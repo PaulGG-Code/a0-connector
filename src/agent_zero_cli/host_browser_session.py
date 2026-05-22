@@ -922,20 +922,22 @@ class HostBrowserSession:
         await self.ensure_started()
         resolved_id = self._resolve_browser_id(browser_id)
         page = self._page(resolved_id)
+        raw_path = str(path or "").strip()
         output_path, image_type, mime = screenshot_output_path(self.context_id, resolved_id, path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
         kwargs: dict[str, Any] = {
-            "path": str(output_path),
             "type": image_type,
             "full_page": bool(full_page),
         }
+        if raw_path:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            kwargs["path"] = str(output_path)
         if image_type == "jpeg":
             kwargs["quality"] = max(20, min(95, int(quality)))
-        await page.screenshot(**kwargs)
-        image = output_path.read_bytes()
-        return {
+        image = await page.screenshot(**kwargs)
+        if not image and raw_path:
+            image = output_path.read_bytes()
+        result = {
             "browser_id": resolved_id,
-            "host_path": str(output_path),
             "mime": mime,
             "artifact": {
                 "filename": output_path.name,
@@ -945,6 +947,11 @@ class HostBrowserSession:
             },
             "state": await self._state(resolved_id),
         }
+        if raw_path:
+            result["host_path"] = str(output_path)
+        else:
+            result["ephemeral"] = True
+        return result
 
     async def close_browser(self, browser_id: int | str | None = None) -> dict[str, Any]:
         await self.ensure_started()

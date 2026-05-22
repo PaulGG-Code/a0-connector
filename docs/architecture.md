@@ -135,10 +135,12 @@ The CLI returns:
 ```
 
 Screenshots are transferred as artifact payloads rather than inline tool
-output. The CLI writes a host-side temp file, sends base64 bytes in
-`result.artifact`, and the Agent Zero Browser adapter materializes that artifact
-under Agent Zero `tmp/browser/host-screenshots/<context>/` before returning the
-same `vision_load` shape used by the container browser.
+output. The CLI sends base64 bytes in `result.artifact`; when no explicit host
+path was requested it does not keep a host-side screenshot file. The Agent Zero
+Browser adapter stores the payload in a chat-context-scoped ephemeral image
+registry and returns a `vision_load` reference instead of materializing a shared
+`tmp/browser/host-screenshots` file. Explicit `path` requests remain user-owned
+host artifacts.
 
 `connector_hello.host_browser` advertises:
 - `supported`, `enabled`, and `status`

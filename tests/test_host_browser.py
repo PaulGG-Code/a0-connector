@@ -716,6 +716,8 @@ async def test_host_browser_manager_dispatches_open_and_screenshot_artifact(tmp_
     assert artifact["encoding"] == "base64"
     assert artifact["mime"] == "image/jpeg"
     assert artifact["data"]
+    assert screenshot["result"]["ephemeral"] is True
+    assert "host_path" not in screenshot["result"]
     assert playwright.chromium.launch_kwargs["user_data_dir"] == str(root)
 
 
