@@ -19,7 +19,7 @@ from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResul
 from agent_zero_cli.rendering import extract_detail, render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
-from agent_zero_cli.widgets.command_palette import is_raw_slash_command
+from agent_zero_cli.widgets.command_palette import is_raw_skill_command, is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import (
     ChatInput,
@@ -1619,6 +1619,127 @@ def test_bare_slash_auto_opens_command_palette(
     )
 
     assert opened == [("/", True), ("/", True)]
+
+
+def test_raw_skill_command_detection() -> None:
+    assert is_raw_skill_command("$a0-live-e2e-tester") is True
+    assert is_raw_skill_command("$imagegen make a texture") is True
+    assert is_raw_skill_command("$") is False
+    assert is_raw_skill_command("$100") is False
+    assert is_raw_skill_command("please use $imagegen") is False
+
+
+def test_bare_dollar_auto_opens_skill_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"skills_list", "skills_activate"}
+    opened: list[tuple[str, bool, bool]] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False, from_skill=False: opened.append(
+            (initial_query, from_slash, from_skill)
+        ),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="$", input=input_widget)
+    )
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="$a0-live", input=input_widget)
+    )
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="$a0-live ", input=input_widget)
+    )
+
+    assert opened == [("$", False, True), ("$a0-live", False, True)]
+
+
+async def test_skill_command_activates_exact_skill(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"skills_list", "skills_activate"}
+    skills = [
+        {
+            "name": "a0-live-e2e-tester",
+            "description": "Live Agent Zero tester",
+            "path": "/a0/skills/a0-live-e2e-tester",
+            "origin": "Built-in",
+        }
+    ]
+    calls: list[tuple[str, dict[str, object]]] = []
+    notices: list[tuple[str, bool]] = []
+
+    async def fake_list_skills(**kwargs) -> list[dict[str, object]]:
+        assert kwargs["context_id"] == "ctx-1"
+        return skills
+
+    async def fake_activate_skill(context_id: str, skill: dict[str, object]) -> dict[str, object]:
+        calls.append((context_id, dict(skill)))
+        return {"ok": True, "skill": dict(skill)}
+
+    monkeypatch.setattr(dummy_app.client, "list_skills", fake_list_skills)
+    monkeypatch.setattr(dummy_app.client, "activate_skill", fake_activate_skill)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+
+    handled = await dummy_app._dispatch_skill_command("$a0-live-e2e-tester")
+
+    assert handled is True
+    assert calls == [
+        (
+            "ctx-1",
+            {
+                "name": "a0-live-e2e-tester",
+                "path": "/a0/skills/a0-live-e2e-tester",
+            },
+        )
+    ]
+    assert notices == [("Skill activated for this chat: a0-live-e2e-tester.", False)]
+
+
+async def test_skill_command_with_remainder_sends_message_after_activation(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"skills_list", "skills_activate"}
+    skills = [{"name": "imagegen", "path": "/a0/skills/imagegen"}]
+    sent: list[tuple[str, str | None, list[str] | None]] = []
+
+    async def fake_list_skills(**kwargs) -> list[dict[str, object]]:
+        del kwargs
+        return skills
+
+    async def fake_activate_skill(context_id: str, skill: dict[str, object]) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return {"ok": True, "skill": dict(skill)}
+
+    async def fake_send_message(
+        text: str,
+        context_id: str | None,
+        attachments: list[str] | None = None,
+    ) -> None:
+        sent.append((text, context_id, attachments))
+
+    monkeypatch.setattr(dummy_app.client, "list_skills", fake_list_skills)
+    monkeypatch.setattr(dummy_app.client, "activate_skill", fake_activate_skill)
+    monkeypatch.setattr(dummy_app.client, "send_message", fake_send_message)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda *args, **kwargs: None)
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+
+    await dummy_app.on_chat_input_submitted(
+        ChatInput.Submitted(value="$imagegen make a graphite texture", input=input_widget)
+    )
+
+    assert sent == [("make a graphite texture", "ctx-1", [])]
 
 
 def test_whitespace_only_input_does_not_auto_open_command_palette(

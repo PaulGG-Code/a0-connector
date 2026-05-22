@@ -147,6 +147,10 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
 
+### Skill shortcuts
+
+Type `$` in the composer to browse skills available to the current chat. Selecting a skill, or submitting `$skill-name`, activates it for that chat; `$skill-name your prompt` activates the skill and sends `your prompt` immediately.
+
 ### Host browser mode
 
 Agent Zero can route its existing `browser` tool through A0 CLI so the CLI controls a real Chrome-family browser on the host machine while the Agent Zero server still runs in Docker or another remote runtime.

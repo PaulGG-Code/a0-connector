@@ -90,6 +90,7 @@ def _install_fake_helpers(
     print_style_mod = types.ModuleType("helpers.print_style")
     history_mod = types.ModuleType("helpers.history")
     message_queue_mod = types.ModuleType("helpers.message_queue")
+    persist_chat_mod = types.ModuleType("helpers.persist_chat")
     state_monitor_mod = types.ModuleType("helpers.state_monitor_integration")
     tool_mod = types.ModuleType("helpers.tool")
     ws_mod = types.ModuleType("helpers.ws")
@@ -286,6 +287,7 @@ def _install_fake_helpers(
     message_queue_mod.has_queue = lambda context: bool(_queue_get(context))
     message_queue_mod.send_message = _queue_send_message
     message_queue_mod.send_all_aggregated = _queue_send_all_aggregated
+    persist_chat_mod.save_tmp_chat = lambda context: None
     state_monitor_mod.mark_dirty_for_context = lambda *args, **kwargs: None
     login_mod.is_login_required = lambda: auth_required
     plugins_mod.get_plugin_config = lambda plugin_name, **kwargs: (
@@ -305,6 +307,7 @@ def _install_fake_helpers(
     sys.modules["helpers.api"] = api_mod
     sys.modules["helpers.history"] = history_mod
     sys.modules["helpers.message_queue"] = message_queue_mod
+    sys.modules["helpers.persist_chat"] = persist_chat_mod
     sys.modules["helpers.state_monitor_integration"] = state_monitor_mod
     sys.modules["helpers.login"] = login_mod
     sys.modules["helpers.plugins"] = plugins_mod
@@ -331,6 +334,12 @@ def _install_fake_helpers(
     files_mod.get_abs_path = lambda *parts: str(fake_base_dir.joinpath(*map(str, parts)))
     files_mod.normalize_a0_path = lambda path: str(path)
 
+    projects_mod = sys.modules["helpers.projects"]
+    projects_mod.get_context_project_name = lambda context: getattr(context, "project_name", "")
+    projects_mod.get_project_meta = lambda project_name, *parts: str(
+        fake_base_dir.joinpath("projects", str(project_name), ".a0proj", *map(str, parts))
+    )
+
     def _write_file_base64(relative_path: str, content: str) -> None:
         target = Path(files_mod.get_abs_path(relative_path))
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -342,6 +351,7 @@ def _install_fake_helpers(
     helpers_pkg.files = files_mod
     helpers_pkg.history = history_mod
     helpers_pkg.message_queue = message_queue_mod
+    helpers_pkg.persist_chat = persist_chat_mod
     helpers_pkg.state_monitor_integration = state_monitor_mod
     helpers_pkg.login = login_mod
     helpers_pkg.plugins = plugins_mod
@@ -614,6 +624,9 @@ def test_capabilities_advertise_current_ws_contract() -> None:
         "settings_set",
         "agent_profile_set",
         "agents_list",
+        "skills_list",
+        "skills_activate",
+        "skills_delete",
         "model_switcher",
         "browser_runtime_config",
         "compact_chat",
@@ -707,6 +720,65 @@ def test_capabilities_reflect_core_login_requirement() -> None:
     payload = asyncio.run(capabilities_mod.Capabilities(None, None).process({}, object()))
 
     assert payload["auth_required"] is True
+
+
+def test_skills_activate_endpoint_activates_chat_skill() -> None:
+    _install_fake_helpers()
+
+    skills_mod = sys.modules["helpers.skills"]
+    persist_chat_mod = sys.modules["helpers.persist_chat"]
+    activated: list[tuple[object, dict[str, object]]] = []
+    saved: list[str] = []
+
+    skills_mod.normalize_active_skills = lambda raw: [
+        {"name": raw[0]["name"], "path": raw[0]["path"]}
+    ]
+    skills_mod.activate_chat_skill = lambda agent, entry: activated.append((agent, dict(entry))) or [dict(entry)]
+    persist_chat_mod.save_tmp_chat = lambda context: saved.append(context.id)
+
+    class FakeContext:
+        id = "ctx-1"
+        agent = object()
+
+        def get_agent(self) -> object:
+            return self.agent
+
+    context = FakeContext()
+    agent_mod = types.ModuleType("agent")
+    agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: context if context_id == context.id else None)
+    sys.modules["agent"] = agent_mod
+
+    _reload("plugins._a0_connector.api.v1.base")
+    skills_activate_mod = _reload("plugins._a0_connector.api.v1.skills_activate")
+
+    payload = asyncio.run(
+        skills_activate_mod.SkillsActivate(None, None).process(
+            {
+                "context_id": "ctx-1",
+                "skill": {
+                    "name": "a0-live-e2e-tester",
+                    "path": "/a0/skills/a0-live-e2e-tester",
+                },
+            },
+            object(),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["skill"] == {
+        "name": "a0-live-e2e-tester",
+        "path": "/a0/skills/a0-live-e2e-tester",
+    }
+    assert activated == [
+        (
+            context.agent,
+            {
+                "name": "a0-live-e2e-tester",
+                "path": "/a0/skills/a0-live-e2e-tester",
+            },
+        )
+    ]
+    assert saved == ["ctx-1"]
 
 
 def test_event_bridge_uses_log_output_cursor() -> None:

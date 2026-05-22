@@ -18,6 +18,9 @@ class OrderedSystemCommandsProvider(Provider):
                 yield DiscoveryHit(title, callback, help=help_text)
 
     async def search(self, query: str):
+        async for hit in self._search_skill_targets(query):
+            yield hit
+
         async for hit in self._search_project_targets(query):
             yield hit
 
@@ -83,19 +86,84 @@ class OrderedSystemCommandsProvider(Provider):
                 help=f"Switch to {title}.",
             )
 
+    async def _search_skill_targets(self, query: str):
+        normalized = str(query or "").strip()
+        if not normalized.startswith("$"):
+            return
+        if not getattr(self.app, "_skills_available", lambda: False)():
+            return
+
+        try:
+            skills = await self.app._load_skill_palette_skills()
+        except Exception:
+            return
+        if not skills:
+            return
+
+        skill_query = normalized[1:].strip().casefold()
+        matcher = self.matcher(normalized)
+        score = 1_000_000
+
+        for skill in skills:
+            name = self.app._skill_display_name(skill)
+            if not name:
+                continue
+
+            title = f"${name}"
+            help_text = self.app._skill_help_text(skill)
+            if not skill_query:
+                match = score
+                display_title = title
+                score -= 1
+            else:
+                match = matcher.match(title)
+                display_title = matcher.highlight(title) if match > 0 else title
+                if match <= 0 and skill_query not in self.app._skill_search_text(skill):
+                    continue
+                if match <= 0:
+                    match = len(skill_query)
+
+            worker_name = f"palette-skill-{self.app._command_worker_slug(name)}"
+            yield Hit(
+                match,
+                display_title,
+                lambda skill=skill, worker_name=worker_name: self.app.run_worker(
+                    self.app._activate_skill(skill),
+                    exclusive=True,
+                    name=worker_name,
+                ),
+                help=help_text,
+            )
+
 
 def is_raw_slash_command(value: str) -> bool:
     raw = str(value or "").strip()
     return raw.startswith("/") and bool(raw.split(maxsplit=1)[0].strip()) and " " in raw
 
 
+def is_raw_skill_command(value: str) -> bool:
+    raw = str(value or "").strip()
+    if not raw.startswith("$") or raw == "$":
+        return False
+    token = raw[1:].split(maxsplit=1)[0].strip()
+    return bool(token) and token[0].isalpha()
+
+
 class AgentCommandPalette(CommandPalette):
     """Command palette with slash-first styling and optional seeded query."""
 
-    def __init__(self, *args, initial_query: str = "", from_slash: bool = False, **kwargs) -> None:
+    def __init__(
+        self,
+        *args,
+        initial_query: str = "",
+        from_slash: bool = False,
+        from_skill: bool = False,
+        **kwargs,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._initial_query = initial_query
         self._from_slash = from_slash
+        self._from_skill = from_skill
 
     DEFAULT_CSS = CommandPalette.DEFAULT_CSS + """
     AgentCommandPalette > Vertical {
@@ -156,6 +224,20 @@ class AgentCommandPalette(CommandPalette):
             self._close_and_call_later(
                 lambda: self.app.run_worker(
                     self.app._dispatch_command(raw_command),
+                    exclusive=True,
+                    name=worker_name,
+                )
+            )
+            return
+
+        if self._from_skill and is_raw_skill_command(raw_command):
+            self._cancel_gather_commands()
+
+            token = raw_command[1:].split(maxsplit=1)[0].strip().lower() or "skill"
+            worker_name = f"skill-{self.app._command_worker_slug(token)}"
+            self._close_and_call_later(
+                lambda: self.app.run_worker(
+                    self.app._dispatch_skill_command(raw_command),
                     exclusive=True,
                     name=worker_name,
                 )

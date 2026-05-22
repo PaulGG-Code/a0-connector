@@ -56,6 +56,7 @@ All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
 | `agent_profile_set` | Session | Context-scoped Agent Zero Core profile switch |
 | `agents_list` | Session | Optional agent-profile list |
 | `skills_list` | Session | Optional installed-skill list |
+| `skills_activate` | Session | Optional context-scoped skill activation |
 | `skills_delete` | Session | Optional installed-skill delete |
 | `model_presets` | Session | Optional model preset surface |
 | `model_switcher` | Session | Optional per-chat model override surface |

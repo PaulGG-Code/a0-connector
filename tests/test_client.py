@@ -421,6 +421,76 @@ async def test_set_model_override_posts_complete_model_payload() -> None:
     )
 
 
+async def test_list_skills_posts_context_scoped_payload() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(
+            json_data={
+                "ok": True,
+                "data": [
+                    {
+                        "name": "a0-live-e2e-tester",
+                        "path": "/a0/skills/a0-live-e2e-tester",
+                    }
+                ],
+            }
+        )
+    )
+
+    result = await client.list_skills(context_id="ctx-1", project_name="agent-zero")
+
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_a0_connector/v1/skills_list",
+        json={"context_id": "ctx-1", "project_name": "agent-zero"},
+    )
+    assert result == [
+        {
+            "name": "a0-live-e2e-tester",
+            "path": "/a0/skills/a0-live-e2e-tester",
+        }
+    ]
+
+
+async def test_activate_skill_posts_context_scoped_payload() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(
+            json_data={
+                "ok": True,
+                "skill": {
+                    "name": "imagegen",
+                    "path": "/a0/skills/imagegen",
+                },
+            }
+        )
+    )
+
+    result = await client.activate_skill(
+        "ctx-1",
+        {"name": "imagegen", "path": "/a0/skills/imagegen", "extra": "ignored"},
+    )
+
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_a0_connector/v1/skills_activate",
+        json={
+            "context_id": "ctx-1",
+            "skill": {
+                "name": "imagegen",
+                "path": "/a0/skills/imagegen",
+            },
+        },
+    )
+    assert result == {
+        "ok": True,
+        "skill": {
+            "name": "imagegen",
+            "path": "/a0/skills/imagegen",
+        },
+    }
+
+
 async def test_connect_websocket_resets_existing_socket_without_disconnect_callback() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.http = Mock()

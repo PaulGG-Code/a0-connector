@@ -44,10 +44,11 @@ from agent_zero_cli.config import CLIConfig, load_config, save_last_context
 from agent_zero_cli.instance_discovery import DiscoveryResult, discover_local_instances
 from agent_zero_cli.remote_exec import PythonTTYManager
 from agent_zero_cli.remote_files import RemoteFileUtility
-from agent_zero_cli.project_utils import normalize_project_list, normalize_project_summary
+from agent_zero_cli.project_utils import normalize_project_list, normalize_project_summary, project_name
 from agent_zero_cli.widgets.command_palette import (
     AgentCommandPalette,
     OrderedSystemCommandsProvider,
+    is_raw_skill_command,
 )
 from agent_zero_cli.widgets import (
     ChatInput,
@@ -223,6 +224,8 @@ class AgentZeroCLI(App):
         self._model_switcher_signature = ""
         self._pause_latched = False
         self._slash_palette_query: str | None = None
+        self._skill_palette_cache: list[dict[str, Any]] = []
+        self._skill_palette_cache_key: tuple[str, str] | None = None
         self._compaction_refresh_context: str | None = None
         self._profile_menu_popover: ProfileMenuPopover | None = None
         self._project_menu_popover: ProjectMenuPopover | None = None
@@ -489,17 +492,24 @@ class AgentZeroCLI(App):
         except Exception:
             return False
 
-    def _open_command_palette(self, *, initial_query: str = "", from_slash: bool = False) -> None:
+    def _open_command_palette(
+        self,
+        *,
+        initial_query: str = "",
+        from_slash: bool = False,
+        from_skill: bool = False,
+    ) -> None:
         if not self.use_command_palette or self._is_command_palette_open():
             return
 
-        self._slash_palette_query = initial_query if from_slash else None
+        self._slash_palette_query = initial_query if from_slash or from_skill else None
         self.push_screen(
             AgentCommandPalette(
                 providers=[OrderedSystemCommandsProvider],
                 id="--command-palette",
                 initial_query=initial_query,
                 from_slash=from_slash,
+                from_skill=from_skill,
             )
         )
 
@@ -537,11 +547,13 @@ class AgentZeroCLI(App):
 
         self.project_list = normalize_project_list(payload.get("projects"))
         self.current_project = normalize_project_summary(payload.get("current_project"))
+        self._skill_palette_cache_key = None
         self._sync_project_header()
 
     def _clear_project_state(self) -> None:
         self.project_list = []
         self.current_project = None
+        self._skill_palette_cache_key = None
         self._sync_project_header()
 
     def _sync_project_header(self) -> None:
@@ -1211,6 +1223,7 @@ class AgentZeroCLI(App):
         event_handlers.handle_connector_error(self, data)
 
     def _handle_settings_updated(self, data: dict[str, Any]) -> None:
+        self._skill_palette_cache_key = None
         self.run_worker(
             self._refresh_settings_snapshot(data),
             exclusive=True,
@@ -1278,6 +1291,238 @@ class AgentZeroCLI(App):
 
     async def _publish_remote_tree_snapshot(self, *, force: bool = False) -> None:
         await event_handlers.publish_remote_tree_snapshot(self, force=force)
+
+    def _command_worker_slug(self, value: str) -> str:
+        slug = "".join(
+            character if character.isalnum() else "-"
+            for character in str(value or "").strip().lower()
+        ).strip("-")
+        while "--" in slug:
+            slug = slug.replace("--", "-")
+        return slug or "command"
+
+    def _skills_available(self) -> bool:
+        return (
+            self.connected
+            and bool(self.current_context)
+            and "skills_list" in self.connector_features
+            and "skills_activate" in self.connector_features
+        )
+
+    def _skill_display_name(self, skill: Mapping[str, Any] | None) -> str:
+        if not isinstance(skill, Mapping):
+            return ""
+        name = str(skill.get("name") or "").strip()
+        if name:
+            return name
+        path = str(skill.get("path") or "").strip().replace("\\", "/").rstrip("/")
+        return path.rsplit("/", maxsplit=1)[-1] if path else ""
+
+    def _skill_help_text(self, skill: Mapping[str, Any] | None) -> str:
+        if not isinstance(skill, Mapping):
+            return "Activate this skill for the current chat."
+
+        description = str(skill.get("description") or "").strip()
+        origin = str(skill.get("origin") or "").strip()
+        path = str(skill.get("path") or "").strip()
+        details = " | ".join(part for part in (origin, path) if part)
+        if description and details:
+            return f"{description} ({details})"
+        return description or details or "Activate this skill for the current chat."
+
+    def _skill_search_text(self, skill: Mapping[str, Any] | None) -> str:
+        if not isinstance(skill, Mapping):
+            return ""
+        return " ".join(
+            str(skill.get(field) or "").strip()
+            for field in ("name", "description", "path", "origin")
+        ).casefold()
+
+    async def _load_skill_palette_skills(self, *, force: bool = False) -> list[dict[str, Any]]:
+        if not self._skills_available():
+            return []
+
+        context_id = self.current_context or ""
+        project = project_name(self.current_project)
+        cache_key = (context_id, project)
+        if not force and self._skill_palette_cache_key == cache_key:
+            return list(self._skill_palette_cache)
+
+        raw_skills = await self.client.list_skills(
+            context_id=context_id,
+            project_name=project,
+        )
+        skills = [dict(skill) for skill in raw_skills if isinstance(skill, Mapping)]
+        skills.sort(
+            key=lambda skill: (
+                str(skill.get("name") or "").casefold(),
+                str(skill.get("path") or "").casefold(),
+            )
+        )
+        self._skill_palette_cache = skills
+        self._skill_palette_cache_key = cache_key
+        return list(skills)
+
+    def _format_skill_matches(self, matches: list[Mapping[str, Any]]) -> str:
+        labels = [
+            f"${name}"
+            for skill in matches[:6]
+            if (name := self._skill_display_name(skill))
+        ]
+        suffix = ", ..." if len(matches) > 6 else ""
+        return ", ".join(labels) + suffix
+
+    def _skill_command_parts(self, text: str) -> tuple[str, str] | None:
+        raw = str(text or "").strip()
+        if not raw.startswith("$"):
+            return None
+        if raw == "$":
+            return "", ""
+        if not is_raw_skill_command(raw):
+            return None
+
+        body = raw[1:].strip()
+        token, _, remainder = body.partition(" ")
+        return token.strip(), remainder.strip()
+
+    def _skill_query(self, text: str) -> str | None:
+        if not text:
+            return None
+        parts = text.split(maxsplit=1)
+        if not parts:
+            return None
+        token = parts[0]
+        if not token.startswith("$"):
+            return None
+        if token == "$":
+            return "$" if text.strip() == "$" else None
+        if len(text) != len(token):
+            return None
+        if not is_raw_skill_command(token):
+            return None
+        return token.lower()
+
+    async def _resolve_skill_command(self, query: str) -> tuple[dict[str, Any] | None, str]:
+        normalized_query = query.strip().lstrip("$").casefold()
+        if not normalized_query:
+            return None, "Choose a skill first."
+
+        try:
+            skills = await self._load_skill_palette_skills()
+        except Exception as exc:
+            return None, f"Failed to load skills: {exc}"
+
+        if not skills:
+            return None, "No skills are available for this chat."
+
+        exact_matches: list[dict[str, Any]] = []
+        prefix_matches: list[dict[str, Any]] = []
+        contains_matches: list[dict[str, Any]] = []
+        for skill in skills:
+            name = self._skill_display_name(skill)
+            path = str(skill.get("path") or "").strip().replace("\\", "/").rstrip("/")
+            path_name = path.rsplit("/", maxsplit=1)[-1] if path else ""
+            aliases = {
+                alias.casefold()
+                for alias in (name, path_name, path)
+                if alias
+            }
+            if normalized_query in aliases:
+                exact_matches.append(skill)
+                continue
+            if any(alias.startswith(normalized_query) for alias in aliases):
+                prefix_matches.append(skill)
+                continue
+            if normalized_query in self._skill_search_text(skill):
+                contains_matches.append(skill)
+
+        if len(exact_matches) == 1:
+            return exact_matches[0], ""
+        if len(exact_matches) > 1:
+            return None, f"Skill ${query} is ambiguous. Matches: {self._format_skill_matches(exact_matches)}"
+
+        if len(prefix_matches) == 1:
+            return prefix_matches[0], ""
+        if len(prefix_matches) > 1:
+            return None, f"Skill ${query} is ambiguous. Matches: {self._format_skill_matches(prefix_matches)}"
+
+        if len(contains_matches) == 1:
+            return contains_matches[0], ""
+        if len(contains_matches) > 1:
+            return None, f"Skill ${query} is ambiguous. Matches: {self._format_skill_matches(contains_matches)}"
+
+        return None, f"Unknown skill: ${query}. Type $ to browse available skills."
+
+    async def _activate_skill(self, skill: Mapping[str, Any]) -> bool:
+        if not self.current_context:
+            self._show_notice("Open or create a chat context before invoking a skill.", error=True)
+            return False
+        if not self._skills_available():
+            self._show_notice("Skill invocation is unavailable on this Agent Zero instance.", error=True)
+            return False
+
+        entry = {
+            "name": str(skill.get("name") or "").strip(),
+            "path": str(skill.get("path") or "").strip(),
+        }
+        try:
+            payload = await self.client.activate_skill(self.current_context, entry)
+        except Exception as exc:
+            self._show_notice(f"Failed to activate skill: {exc}", error=True)
+            return False
+
+        if not payload.get("ok"):
+            message = str(payload.get("message") or payload.get("error") or "Failed to activate skill.")
+            self._show_notice(message, error=True)
+            return False
+
+        name = self._skill_display_name(payload.get("skill") if isinstance(payload, Mapping) else skill)
+        if not name:
+            name = self._skill_display_name(skill) or "skill"
+        self._show_notice(f"Skill activated for this chat: {name}.")
+        self._sync_ready_actions()
+        return True
+
+    async def _dispatch_skill_command(
+        self,
+        text: str,
+        *,
+        attachments: list[Any] | None = None,
+        input_widget: Any = None,
+    ) -> bool:
+        parsed = self._skill_command_parts(text)
+        if parsed is None:
+            return False
+
+        query, remainder = parsed
+        if not query:
+            if self._skills_available():
+                self._open_command_palette(initial_query="$", from_skill=True)
+            else:
+                self._show_notice("Open a chat with skill support before typing $.", error=True)
+            return True
+
+        skill, error_message = await self._resolve_skill_command(query)
+        if skill is None:
+            self._show_notice(error_message or f"Unknown skill: ${query}.", error=True)
+            return True
+
+        if not await self._activate_skill(skill):
+            return True
+
+        if remainder:
+            if input_widget is None:
+                try:
+                    input_widget = self.query_one("#message-input", ChatInput)
+                except Exception:
+                    input_widget = None
+            await self._send_chat_text(
+                remainder,
+                raw_text=remainder,
+                attachments=attachments or [],
+                input_widget=input_widget,
+            )
+        return True
 
     def _slash_query(self, text: str) -> str | None:
         if not text:
@@ -1414,27 +1659,15 @@ class AgentZeroCLI(App):
 
         return sort_by, active_project_only
 
-    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
-        raw_text = event.value
-        text = raw_text.strip()
-        attachments = list(getattr(event, "attachments", []) or [])
+    async def _send_chat_text(
+        self,
+        text: str,
+        *,
+        raw_text: str,
+        attachments: list[Any],
+        input_widget: Any = None,
+    ) -> None:
         attachment_paths = [attachment.path for attachment in attachments]
-        if not text and not attachment_paths:
-            if self._has_message_queue():
-                await chat_commands.cmd_queue_send(self)
-            self._slash_palette_query = None
-            return
-
-        if text.startswith("/"):
-            token = text.split(maxsplit=1)[0].strip().lower().lstrip("/") or "command"
-            worker_name = f"slash-{token.replace('/', '-')}"
-            self.run_worker(
-                self._dispatch_command(text),
-                exclusive=True,
-                name=worker_name,
-            )
-            return
-
         if not self.current_context:
             self._show_notice("No active chat context.", error=True)
             return
@@ -1450,8 +1683,9 @@ class AgentZeroCLI(App):
                     attachments=attachment_paths,
                 )
             except Exception as exc:
-                event.input.value = raw_text
-                event.input.set_attachments(attachments)
+                if input_widget is not None:
+                    input_widget.value = raw_text
+                    input_widget.set_attachments(attachments)
                 self._focus_message_input()
                 self._show_notice(f"Error queuing message: {exc}", error=True)
                 self._sync_ready_actions()
@@ -1486,13 +1720,57 @@ class AgentZeroCLI(App):
             self.agent_active = previous_agent_active
             self._set_pause_latched(previous_pause_latched)
             self._sync_body_mode()
-            event.input.value = raw_text
-            event.input.set_attachments(attachments)
+            if input_widget is not None:
+                input_widget.value = raw_text
+                input_widget.set_attachments(attachments)
             self._focus_message_input()
             self._show_notice(f"Error sending message: {exc}", error=True)
             self._sync_ready_actions()
 
+    async def on_chat_input_submitted(self, event: ChatInput.Submitted) -> None:
+        raw_text = event.value
+        text = raw_text.strip()
+        attachments = list(getattr(event, "attachments", []) or [])
+        attachment_paths = [attachment.path for attachment in attachments]
+        if not text and not attachment_paths:
+            if self._has_message_queue():
+                await chat_commands.cmd_queue_send(self)
+            self._slash_palette_query = None
+            return
+
+        if text.startswith("/"):
+            token = text.split(maxsplit=1)[0].strip().lower().lstrip("/") or "command"
+            worker_name = f"slash-{token.replace('/', '-')}"
+            self.run_worker(
+                self._dispatch_command(text),
+                exclusive=True,
+                name=worker_name,
+            )
+            return
+
+        if text == "$" or is_raw_skill_command(text):
+            handled = await self._dispatch_skill_command(
+                text,
+                attachments=attachments,
+                input_widget=event.input,
+            )
+            if handled:
+                return
+
+        await self._send_chat_text(
+            text,
+            raw_text=raw_text,
+            attachments=attachments,
+            input_widget=event.input,
+        )
+
     def on_chat_input_value_changed(self, event: ChatInput.ValueChanged) -> None:
+        skill_query = self._skill_query(event.value)
+        if skill_query is not None:
+            if self._skills_available():
+                self._open_command_palette(initial_query=skill_query, from_skill=True)
+            return
+
         query = self._slash_query(event.value)
         if query is None:
             return

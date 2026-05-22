@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
 
 import aiohttp
@@ -859,6 +859,54 @@ class A0Client:
         )
         response.raise_for_status()
         return self._json(response)
+
+    async def list_skills(
+        self,
+        *,
+        context_id: str | None = None,
+        project_name: str = "",
+        agent_profile: str = "",
+    ) -> list[dict[str, Any]]:
+        payload: dict[str, Any] = {}
+        if context_id:
+            payload["context_id"] = context_id
+        if project_name:
+            payload["project_name"] = project_name
+        if agent_profile:
+            payload["agent_profile"] = agent_profile
+
+        response = await self._post("skills_list", payload)
+        response.raise_for_status()
+        data = self._json(response)
+        skills = data.get("data", data.get("skills", []))
+        return skills if isinstance(skills, list) else []
+
+    async def activate_skill(
+        self,
+        context_id: str,
+        skill: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        response = await self._post(
+            "skills_activate",
+            {
+                "context_id": context_id,
+                "skill": {
+                    "name": str(skill.get("name") or "").strip(),
+                    "path": str(skill.get("path") or "").strip(),
+                },
+            },
+        )
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "message": self._response_message(response),
+                "status_code": response.status_code,
+            }
+
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
 
     async def get_browser_runtime(self, context_id: str | None) -> dict[str, Any]:
         response = await self._post(
