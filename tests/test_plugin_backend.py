@@ -544,6 +544,25 @@ def _create_computer_use_remote(
     return tool_mod.ComputerUseRemote(agent=agent, args=args)
 
 
+def _register_remote_file_cli(
+    ws_runtime_mod,
+    sid: str,
+    context_id: str,
+    *,
+    write_enabled: bool = True,
+) -> None:
+    ws_runtime_mod.register_sid(sid)
+    ws_runtime_mod.subscribe_sid_to_context(sid, context_id)
+    ws_runtime_mod.store_sid_remote_file_metadata(
+        sid,
+        {
+            "enabled": True,
+            "write_enabled": write_enabled,
+            "mode": "read_write" if write_enabled else "read_only",
+        },
+    )
+
+
 async def _no_sleep(_delay: float) -> None:
     return None
 
@@ -1172,7 +1191,7 @@ def _load_remote_tool_stubs_extension():
     )
 
 
-def test_remote_tool_stubs_are_injected_when_enabled_cli_capabilities_are_available() -> None:
+def test_legacy_remote_tool_stubs_gate_is_noop_when_cli_capabilities_are_available() -> None:
     _install_fake_helpers()
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
@@ -1206,31 +1225,15 @@ def test_remote_tool_stubs_are_injected_when_enabled_cli_capabilities_are_availa
         context = FakeContext()
 
         def read_prompt(self, file: str, **kwargs) -> str:
-            if file == "agent.connector_tool.text_editor_remote.md":
-                return f"TEXT_EDITOR_STUB {kwargs['access_mode']} {kwargs['write_guidance']}"
-            if file == "agent.connector_tool.code_execution_remote.md":
-                return (
-                    f"CODE_EXEC_STUB {kwargs['access_mode']} "
-                    f"{kwargs['write_runtime_note']}"
-                )
-            if file == "agent.connector_tool.computer_use_remote.md":
-                return (
-                    f"COMPUTER_USE_STUB {kwargs['backend']} "
-                    f"{kwargs['trust_mode']} {kwargs['features']}"
-                )
-            raise AssertionError(f"unexpected prompt {file!r}")
+            raise AssertionError(f"read_prompt should not be called, got {file!r}")
 
     data = {"result": "## available tools\nbase_tool"}
     include_mod.IncludeRemoteToolStubs(agent=FakeAgent()).execute(data=data)
 
-    prompt = data["result"]
-    assert "base_tool" in prompt
-    assert "TEXT_EDITOR_STUB Read&Write Writes and patches are currently available." in prompt
-    assert "CODE_EXEC_STUB Read&Write Mutating runtimes are currently available" in prompt
-    assert "COMPUTER_USE_STUB wayland/linux allow inline-png-capture, pointer-injection" in prompt
+    assert data["result"] == "## available tools\nbase_tool"
 
 
-def test_remote_tool_stubs_reflect_read_only_file_access() -> None:
+def test_legacy_remote_tool_stubs_gate_is_noop_for_read_only_file_access() -> None:
     _install_fake_helpers()
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
@@ -1253,23 +1256,12 @@ def test_remote_tool_stubs_reflect_read_only_file_access() -> None:
         context = FakeContext()
 
         def read_prompt(self, file: str, **kwargs) -> str:
-            if file == "agent.connector_tool.text_editor_remote.md":
-                return f"TEXT_EDITOR_STUB {kwargs['access_mode']} {kwargs['write_guidance']}"
-            if file == "agent.connector_tool.code_execution_remote.md":
-                return (
-                    f"CODE_EXEC_STUB {kwargs['access_mode']} "
-                    f"{kwargs['write_runtime_note']}"
-                )
-            raise AssertionError(f"unexpected prompt {file!r}")
+            raise AssertionError(f"read_prompt should not be called, got {file!r}")
 
     data = {"result": "## available tools\nbase_tool"}
     include_mod.IncludeRemoteToolStubs(agent=FakeAgent()).execute(data=data)
 
-    prompt = data["result"]
-    assert "TEXT_EDITOR_STUB Read only" in prompt
-    assert "Writes and patches are disabled until the user switches the CLI" in prompt
-    assert "CODE_EXEC_STUB Read only" in prompt
-    assert "Mutating runtimes are disabled until the user switches the CLI" in prompt
+    assert data["result"] == "## available tools\nbase_tool"
 
 
 def test_remote_tool_stubs_are_not_injected_without_enabled_cli_capabilities() -> None:
@@ -2182,14 +2174,13 @@ def test_text_editor_remote_patch_requires_prior_read(tmp_path: Path) -> None:
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     response = asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "to": 2, "content": "line-2-updated\n"}],
         ).execute()
@@ -2209,14 +2200,13 @@ def test_text_editor_remote_context_patch_does_not_require_prior_read(tmp_path: 
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     first_patch = asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             patch_text=(
                 "*** Begin Patch\n"
@@ -2231,7 +2221,7 @@ def test_text_editor_remote_context_patch_does_not_require_prior_read(tmp_path: 
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             patch_text=(
                 "*** Begin Patch\n"
@@ -2261,14 +2251,13 @@ def test_text_editor_remote_patch_detects_stale_remote_reads(tmp_path: Path) -> 
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="read",
+            action="read",
             path=str(target),
             line_from=1,
             line_to=2,
@@ -2283,7 +2272,7 @@ def test_text_editor_remote_patch_detects_stale_remote_reads(tmp_path: Path) -> 
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "to": 2, "content": "line-2-patched\n"}],
         ).execute()
@@ -2302,14 +2291,13 @@ def test_text_editor_remote_write_then_patch_succeeds_without_reread(tmp_path: P
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     write_response = asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="write",
+            action="write",
             path=str(target),
             content="line-1\nline-2\n",
         ).execute()
@@ -2318,7 +2306,7 @@ def test_text_editor_remote_write_then_patch_succeeds_without_reread(tmp_path: P
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "to": 2, "content": "line-2-updated\n"}],
         ).execute()
@@ -2339,14 +2327,13 @@ def test_text_editor_remote_line_preserving_patches_refresh_state(tmp_path: Path
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="read",
+            action="read",
             path=str(target),
             line_from=1,
             line_to=3,
@@ -2356,7 +2343,7 @@ def test_text_editor_remote_line_preserving_patches_refresh_state(tmp_path: Path
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "to": 2, "content": "line-2a\n"}],
         ).execute()
@@ -2365,7 +2352,7 @@ def test_text_editor_remote_line_preserving_patches_refresh_state(tmp_path: Path
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 3, "to": 3, "content": "line-3b\n"}],
         ).execute()
@@ -2391,14 +2378,13 @@ def test_text_editor_remote_line_count_changes_force_reread(tmp_path: Path) -> N
         file_op_handler=utility.handle_file_op
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="read",
+            action="read",
             path=str(target),
             line_from=1,
             line_to=3,
@@ -2408,7 +2394,7 @@ def test_text_editor_remote_line_count_changes_force_reread(tmp_path: Path) -> N
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "content": "inserted\n"}],
         ).execute()
@@ -2417,7 +2403,7 @@ def test_text_editor_remote_line_count_changes_force_reread(tmp_path: Path) -> N
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 3, "to": 3, "content": "line-2b\n"}],
         ).execute()
@@ -2447,14 +2433,13 @@ def test_text_editor_remote_requires_cli_stat_support_for_fresh_patching(tmp_pat
         file_op_handler=legacy_handler
     )
     agent = _FakeRemoteAgent()
-    ws_runtime_mod.register_sid("sid-cli")
-    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    _register_remote_file_cli(ws_runtime_mod, "sid-cli", agent.context.id)
 
     response = asyncio.run(
         _create_text_editor_remote(
             tool_mod,
             agent,
-            op="patch",
+            action="patch",
             path=str(target),
             edits=[{"from": 2, "to": 2, "content": "line-2-updated\n"}],
         ).execute()
