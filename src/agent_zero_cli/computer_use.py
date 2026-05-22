@@ -867,6 +867,21 @@ class ComputerUseManager:
             artifact = _capture_artifact_from_result(result_dict, fallback_path=capture_host_path)
             if artifact is not None:
                 result_dict["artifact"] = artifact
+                if capture_host_path:
+                    ephemeral_paths = {
+                        capture_host_path,
+                        str(result_dict.get("capture_path") or "").strip(),
+                        str(result_dict.get("host_path") or "").strip(),
+                    }
+                    for ephemeral_path in ephemeral_paths:
+                        if ephemeral_path:
+                            with contextlib.suppress(OSError):
+                                Path(ephemeral_path).unlink(missing_ok=True)
+                    result_dict["ephemeral"] = True
+                    result_dict.pop("capture_path", None)
+                    result_dict.pop("host_path", None)
+                    result_dict.pop("container_path", None)
+                    self._prune_capture_artifacts()
             if _coerce_bool(helper_request.get("fresh")):
                 result_dict.setdefault("fresh", True)
                 fresh_after = helper_request.get("fresh_after")

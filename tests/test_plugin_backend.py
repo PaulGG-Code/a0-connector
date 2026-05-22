@@ -1790,9 +1790,8 @@ def test_computer_use_remote_capture_uses_shared_png_path(
     assert raw_message["raw_content"][1]["image_url"]["url"] == str(image_path)
 
 
-def test_computer_use_remote_capture_materializes_base64_artifact(
+def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     image_path = _write_png_fixture(tmp_path)
     capture_bytes = image_path.read_bytes()
@@ -1820,8 +1819,6 @@ def test_computer_use_remote_capture_materializes_base64_artifact(
     shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
         computer_use_handler=handler
     )
-    monkeypatch.setattr(tool_mod.files, "get_abs_path", lambda *parts: str(tmp_path.joinpath(*parts)))
-    monkeypatch.setattr(tool_mod.files, "normalize_a0_path", lambda path: str(path))
     agent = _FakeRemoteAgent()
     ws_runtime_mod.register_sid("sid-cli")
     ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
@@ -1843,17 +1840,9 @@ def test_computer_use_remote_capture_materializes_base64_artifact(
     assert response.message == f"Current screen attached: {expected_summary}"
     assert len(agent.history_messages) == 1
     raw_message = agent.history_messages[0]["content"]
-    materialized_path = Path(raw_message["raw_content"][1]["image_url"]["url"])
-    assert materialized_path == (
-        tmp_path
-        / "tmp"
-        / "_a0_connector"
-        / "computer_use"
-        / "captures"
-        / agent.context.id
-        / "host-only.png"
-    )
-    assert materialized_path.read_bytes() == capture_bytes
+    image_url = raw_message["raw_content"][1]["image_url"]["url"]
+    assert image_url == f"data:image/png;base64,{base64.b64encode(capture_bytes).decode('ascii')}"
+    assert list(tmp_path.rglob("*.png")) == [image_path]
 
 
 def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None:

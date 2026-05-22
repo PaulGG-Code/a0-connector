@@ -73,9 +73,18 @@ def test_macos_backend_spec_exports_expected_metadata() -> None:
     assert spec.supports_trust_mode("persistent") is True
     assert spec.supports_trust_mode("free_run") is True
     assert "inline-png-capture" in spec.features
+    assert "coregraphics-screen-capture" in spec.features
+    assert "background-screen-capture" in spec.features
+    assert "no-cursor-steal-capture" in spec.features
     assert "accessibility-trust" in spec.features
     assert "global-pixel-actions" in spec.features
+    assert "keyboard-targets-frontmost-app" in spec.features
+    assert "accessibility-element-click" in spec.features
+    assert "semantic-click-before-quartz-fallback" in spec.features
+    assert "no-cursor-steal-accessibility-click" in spec.features
     assert "real-cursor-may-move" in spec.features
+    assert "cursor-position-restore-after-click" in spec.features
+    assert "frontmost-app-restore-after-click" in spec.features
 
 
 def test_macos_backend_wrapper_uses_current_python() -> None:
@@ -158,6 +167,28 @@ def test_macos_runtime_capture_returns_inline_png_payload(tmp_path: Path) -> Non
     assert base64.b64decode(capture["png_base64"])
 
 
+def test_macos_runtime_capture_debug_dir_does_not_persist_screenshot(tmp_path: Path) -> None:
+    runtime = MacOSComputerUseRuntime(
+        driver=_FakeDriver(),
+        state_dir=tmp_path / "state",
+        capture_debug_dir=tmp_path / "debug-captures",
+    )
+    runtime._ensure_accessibility_permission = lambda **kwargs: None  # type: ignore[method-assign]
+    runtime._probe_capture_dimensions = lambda **kwargs: (1280, 720)  # type: ignore[method-assign]
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    capture = runtime.capture({"context_id": "ctx-1"})
+
+    assert capture["png_base64"]
+    assert not (tmp_path / "debug-captures").exists()
+
+
 def test_macos_runtime_capture_writes_requested_path_without_inline_payload(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
     runtime.start_session(
@@ -176,6 +207,188 @@ def test_macos_runtime_capture_writes_requested_path_without_inline_payload(tmp_
     assert capture["capture_path"] == str(capture_path)
     assert "png_base64" not in capture
     assert capture_path.exists()
+
+
+def test_macos_driver_capture_prefers_coregraphics_without_screencapture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakePNGData(bytes):
+        pass
+
+    class FakeImageRep:
+        def initWithCGImage_(self, image: object) -> "FakeImageRep":
+            return self
+
+        def representationUsingType_properties_(self, png_type: object, properties: dict[str, object]) -> bytes:
+            del png_type, properties
+            return base64.b64decode(
+                "iVBORw0KGgoAAAANSUhEUgAAAAIAAAADCAQAAABWKLW/AAAADElEQVR42mP8z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"
+            )
+
+    class FakeNSBitmapImageRep:
+        @classmethod
+        def alloc(cls) -> FakeImageRep:
+            return FakeImageRep()
+
+    class FakeQuartz:
+        kCGEventMouseMoved = 5
+        kCGMouseButtonLeft = 0
+
+        @staticmethod
+        def CGMainDisplayID() -> int:
+            return 1
+
+        @staticmethod
+        def CGDisplayCreateImage(display_id: int) -> object:
+            assert display_id == 1
+            return object()
+
+    fake_appkit = type(
+        "FakeAppKit",
+        (),
+        {
+            "NSBitmapImageRep": FakeNSBitmapImageRep,
+            "NSBitmapImageFileTypePNG": 4,
+        },
+    )
+    monkeypatch.setattr(macos_runtime_mod, "_load_quartz_module", lambda: FakeQuartz)
+    monkeypatch.setattr(macos_runtime_mod, "_load_appkit_module", lambda: fake_appkit)
+    monkeypatch.setattr(macos_runtime_mod.shutil, "which", lambda name: None)
+
+    driver = macos_runtime_mod._MacOSDesktopAutomation()
+
+    _png_bytes, width, height = driver.capture_png()
+
+    assert (width, height) == (2, 3)
+    assert driver.last_capture_strategy == "coregraphics"
+
+
+def test_macos_driver_click_restores_cursor_and_frontmost_app(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object]] = []
+
+    class FakePoint:
+        x = 11
+        y = 22
+
+    class FakeApplication:
+        def activateWithOptions_(self, options: int) -> None:
+            events.append(("activate", options))
+
+    class FakeWorkspace:
+        def frontmostApplication(self) -> FakeApplication:
+            return FakeApplication()
+
+    class FakeNSWorkspace:
+        @staticmethod
+        def sharedWorkspace() -> FakeWorkspace:
+            return FakeWorkspace()
+
+    class FakeQuartz:
+        kCGEventMouseMoved = 1
+        kCGEventLeftMouseDown = 2
+        kCGEventLeftMouseUp = 3
+        kCGEventRightMouseDown = 4
+        kCGEventRightMouseUp = 5
+        kCGEventOtherMouseDown = 6
+        kCGEventOtherMouseUp = 7
+        kCGMouseButtonLeft = 0
+        kCGMouseButtonRight = 1
+        kCGMouseButtonCenter = 2
+        kCGMouseEventClickState = 1
+        kCGHIDEventTap = 0
+
+        @staticmethod
+        def CGEventCreate(source: object) -> object:
+            del source
+            return object()
+
+        @staticmethod
+        def CGEventGetLocation(event: object) -> FakePoint:
+            del event
+            return FakePoint()
+
+        @staticmethod
+        def CGEventCreateMouseEvent(source: object, event_type: int, point: tuple[float, float], button: int) -> dict[str, object]:
+            del source
+            return {"type": event_type, "point": point, "button": button}
+
+        @staticmethod
+        def CGEventSetIntegerValueField(event: dict[str, object], field: int, value: int) -> None:
+            del field
+            event["click_state"] = value
+
+        @staticmethod
+        def CGEventPost(tap: int, event: dict[str, object]) -> None:
+            del tap
+            events.append(("post", event["point"]))
+
+    fake_appkit = type(
+        "FakeAppKit",
+        (),
+        {
+            "NSWorkspace": FakeNSWorkspace,
+            "NSApplicationActivateIgnoringOtherApps": 2,
+        },
+    )
+    monkeypatch.setattr(macos_runtime_mod, "_load_quartz_module", lambda: FakeQuartz)
+    monkeypatch.setattr(macos_runtime_mod, "_load_appkit_module", lambda: fake_appkit)
+    monkeypatch.setattr(
+        macos_runtime_mod,
+        "_load_accessibility_module",
+        lambda: (_ for _ in ()).throw(MacOSComputerUseError("UNAVAILABLE", "no ax")),
+    )
+
+    driver = macos_runtime_mod._MacOSDesktopAutomation()
+
+    driver.click(100, 200, button="left", count=1)
+
+    posted_points = [event[1] for event in events if event[0] == "post"]
+    assert posted_points[0] == (100.0, 200.0)
+    assert posted_points[-1] == (11.0, 22.0)
+    assert ("activate", 2) in events
+    assert driver.last_click_strategy == "quartz-cursor-restore"
+
+
+def test_macos_driver_click_prefers_accessibility_press_without_cursor_motion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[tuple[str, object]] = []
+
+    class FakeQuartz:
+        pass
+
+    class FakeAccessibility:
+        kAXPressAction = "AXPress"
+
+        @staticmethod
+        def AXUIElementCreateSystemWide() -> str:
+            return "system"
+
+        @staticmethod
+        def AXUIElementCopyElementAtPosition(system: str, x: float, y: float, stop: object) -> tuple[int, str]:
+            del stop
+            events.append(("element_at_position", (system, x, y)))
+            return 0, "button"
+
+        @staticmethod
+        def AXUIElementPerformAction(element: str, action: str) -> int:
+            events.append(("perform_action", (element, action)))
+            return 0
+
+    monkeypatch.setattr(macos_runtime_mod, "_load_quartz_module", lambda: FakeQuartz)
+    monkeypatch.setattr(macos_runtime_mod, "_load_accessibility_module", lambda: FakeAccessibility)
+
+    driver = macos_runtime_mod._MacOSDesktopAutomation()
+
+    driver.click(100, 200, button="left", count=1)
+
+    assert events == [
+        ("element_at_position", ("system", 100.0, 200.0)),
+        ("perform_action", ("button", "AXPress")),
+    ]
+    assert driver.last_click_strategy == "accessibility-press"
 
 
 def test_macos_runtime_debug_logs_start_session_progress(

@@ -461,12 +461,15 @@ async def test_capture_strips_inline_png_base64_response_when_artifact_path_is_a
     assert result["result"]["artifact"]["encoding"] == "base64"
     assert result["result"]["artifact"]["mime"] == "image/png"
     assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
-    assert result["result"]["host_path"].startswith(str(computer_use_mod.HOST_ARTIFACT_ROOT / "ctx-1"))
-    assert result["result"]["capture_path"] == result["result"]["host_path"]
-    assert result["result"]["container_path"].startswith(f"{computer_use_mod.CONTAINER_ARTIFACT_ROOT}/ctx-1/")
+    assert result["result"]["ephemeral"] is True
+    assert "host_path" not in result["result"]
+    assert "capture_path" not in result["result"]
+    assert "container_path" not in result["result"]
+    assert not capture_path.exists()
+    assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
-async def test_capture_preserves_path_based_result_without_reinlining_png(
+async def test_capture_embeds_legacy_path_result_without_advertising_path(
     _temp_env: Path,
     tmp_path: Path,
 ) -> None:
@@ -497,7 +500,9 @@ async def test_capture_preserves_path_based_result_without_reinlining_png(
     assert "png_base64" not in result["result"]
     assert result["result"]["artifact"]["encoding"] == "base64"
     assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
-    assert result["result"]["host_path"] == str(capture_path)
+    assert "host_path" not in result["result"]
+    assert "capture_path" not in result["result"]
+    assert "container_path" not in result["result"]
 
 
 async def test_capture_includes_base64_artifact_from_written_capture_path(
@@ -530,10 +535,15 @@ async def test_capture_includes_base64_artifact_from_written_capture_path(
     )
 
     assert result["ok"] is True
-    assert result["result"]["artifact"]["filename"] == Path(str(result["result"]["capture_path"])).name
+    assert result["result"]["artifact"]["filename"].endswith(".png")
     assert result["result"]["artifact"]["mime"] == "image/png"
     assert result["result"]["artifact"]["encoding"] == "base64"
     assert base64.b64decode(result["result"]["artifact"]["data"]) == payload
+    assert result["result"]["ephemeral"] is True
+    assert "capture_path" not in result["result"]
+    assert "host_path" not in result["result"]
+    assert "container_path" not in result["result"]
+    assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
 async def test_capture_requests_shared_artifact_path_and_adds_container_path(
@@ -543,6 +553,8 @@ async def test_capture_requests_shared_artifact_path_and_adds_container_path(
 
     async def helper_request(_session: _HelperSession, request: dict[str, object]) -> dict[str, object]:
         capture_path = str(request.get("capture_path") or "")
+        Path(capture_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(capture_path).write_bytes(b"shared-artifact-bytes")
         return {
             "ok": True,
             "result": {
@@ -564,20 +576,18 @@ async def test_capture_requests_shared_artifact_path_and_adds_container_path(
 
     assert result["ok"] is True
     assert "png_base64" not in result["result"]
-    assert result["result"]["capture_path"].startswith(
-        str(computer_use_mod.HOST_ARTIFACT_ROOT / "ctx-1")
-    )
-    assert result["result"]["host_path"] == result["result"]["capture_path"]
-    assert result["result"]["capture_id"] == Path(str(result["result"]["capture_path"])).stem
+    assert result["result"]["ephemeral"] is True
+    assert "capture_path" not in result["result"]
+    assert "host_path" not in result["result"]
+    assert "container_path" not in result["result"]
+    assert result["result"]["capture_id"]
     assert result["result"]["coordinate_space"] == "normalized_global_screen"
     assert result["result"]["coordinate_origin"] == "top_left"
     assert result["result"]["coordinate_range"] == [0.0, 1.0]
-    assert result["result"]["container_path"].startswith(
-        f"{computer_use_mod.CONTAINER_ARTIFACT_ROOT}/ctx-1/"
-    )
+    assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
-async def test_capture_prunes_previous_artifacts_and_disconnect_removes_current(
+async def test_capture_artifacts_are_deleted_after_embedding_and_disconnect_is_idempotent(
     _temp_env: Path,
 ) -> None:
     manager = _manager(enabled=True)
@@ -610,16 +620,14 @@ async def test_capture_prunes_previous_artifacts_and_disconnect_removes_current(
         {"op_id": "cap-2", "action": "capture", "context_id": "ctx-1", "session_id": "sess-1"}
     )
 
-    first_path = Path(str(first["result"]["capture_path"]))
-    second_path = Path(str(second["result"]["capture_path"]))
-    assert first_path != second_path
-    assert not first_path.exists()
-    assert second_path.exists()
-    assert list(computer_use_mod.HOST_ARTIFACT_ROOT.rglob("*.png")) == [second_path]
+    assert first["result"]["ephemeral"] is True
+    assert second["result"]["ephemeral"] is True
+    assert captured_paths[0] != captured_paths[1]
+    assert all(not path.exists() for path in captured_paths)
+    assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
     await manager.disconnect()
 
-    assert not second_path.exists()
     assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
@@ -878,11 +886,14 @@ async def test_fresh_capture_uses_recent_action_completion_time(
                     "count": 1,
                 },
             }
+        capture_path = Path(str(request.get("capture_path") or ""))
+        capture_path.parent.mkdir(parents=True, exist_ok=True)
+        capture_path.write_bytes(b"fresh-capture")
         return {
             "ok": True,
             "result": {
                 "session_id": "sess-1",
-                "capture_path": str(_temp_env.parent / "fresh.png"),
+                "capture_path": str(capture_path),
                 "frame_captured_at": time.time(),
                 "width": 1,
                 "height": 1,
@@ -918,7 +929,11 @@ async def test_fresh_capture_uses_recent_action_completion_time(
     assert captured["result"]["fresh"] is True
     assert captured["result"]["fresh_after"] == session.last_action_completed_at
     assert captured["result"]["fresh_after_satisfied"] is True
-    assert captured["result"]["capture_id"] == Path(str(captured["result"]["host_path"])).stem
+    assert captured["result"]["ephemeral"] is True
+    assert captured["result"]["capture_id"]
+    assert "host_path" not in captured["result"]
+    assert "capture_path" not in captured["result"]
+    assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
 async def test_disconnect_closes_active_sessions_and_resets_status(

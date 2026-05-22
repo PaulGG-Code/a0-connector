@@ -40,7 +40,6 @@ from a0_computer_use_macos.shared import (
     normalize_context_id,
     normalize_restore_token,
     resolve_trust_mode_policy,
-    safe_context_segment,
 )
 
 _DEBUG_ENV = "A0_COMPUTER_USE_DEBUG"
@@ -370,6 +369,17 @@ def _load_quartz_module() -> Any:
     return Quartz
 
 
+def _load_appkit_module() -> Any:
+    try:
+        import AppKit  # type: ignore
+    except Exception as exc:
+        raise MacOSComputerUseError(
+            "COMPUTER_USE_UNSUPPORTED",
+            "PyObjC AppKit bindings are required for macOS screen capture.",
+        ) from exc
+    return AppKit
+
+
 def _load_accessibility_module() -> Any:
     try:
         import ApplicationServices  # type: ignore
@@ -402,14 +412,65 @@ class _MacOSDesktopAutomation:
     def __init__(self) -> None:
         self._quartz = _load_quartz_module()
         self._event_source = None
+        self.last_capture_strategy = ""
+        self.last_click_strategy = ""
 
     def screen_size(self) -> tuple[int, int]:
         _png_bytes, width, height = self.capture_png()
         return width, height
 
     def capture_png(self) -> tuple[bytes, int, int]:
+        try:
+            return self._capture_png_coregraphics()
+        except MacOSComputerUseError as exc:
+            _emit_debug(
+                "driver.capture_png.coregraphics_failed",
+                code=exc.code,
+                error=str(exc),
+            )
+            return self._capture_png_screencapture(fallback_error=exc)
+
+    def _capture_png_coregraphics(self) -> tuple[bytes, int, int]:
+        quartz = self._quartz
+        appkit = _load_appkit_module()
+        display_id = quartz.CGMainDisplayID()
+        image = quartz.CGDisplayCreateImage(display_id)
+        if image is None:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_CAPTURE_UNAVAILABLE",
+                "CoreGraphics did not return a display image. macOS Screen Recording permission may be required.",
+            )
+
+        image_rep = appkit.NSBitmapImageRep.alloc().initWithCGImage_(image)
+        if image_rep is None:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_CAPTURE_UNAVAILABLE",
+                "Unable to create a macOS bitmap representation for the display image.",
+            )
+
+        png_type = getattr(appkit, "NSBitmapImageFileTypePNG", getattr(appkit, "NSPNGFileType", 4))
+        png_data = image_rep.representationUsingType_properties_(png_type, {})
+        if png_data is None:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_CAPTURE_UNAVAILABLE",
+                "Unable to encode the macOS display image as PNG.",
+            )
+
+        png_bytes = bytes(png_data)
+        width, height = _png_dimensions(png_bytes)
+        self.last_capture_strategy = "coregraphics"
+        _emit_debug("driver.capture_png.coregraphics_ok", width=width, height=height, bytes=len(png_bytes))
+        return png_bytes, width, height
+
+    def _capture_png_screencapture(
+        self,
+        *,
+        fallback_error: MacOSComputerUseError | None = None,
+    ) -> tuple[bytes, int, int]:
         screencapture = shutil.which("screencapture")
         if not screencapture:
+            if fallback_error is not None:
+                raise fallback_error
             raise MacOSComputerUseError(
                 "COMPUTER_USE_UNSUPPORTED",
                 "macOS screencapture utility is unavailable.",
@@ -440,9 +501,12 @@ class _MacOSDesktopAutomation:
                 raise MacOSComputerUseError("COMPUTER_USE_CAPTURE_UNAVAILABLE", message)
             png_bytes = temp_path.read_bytes()
             width, height = _png_dimensions(png_bytes)
+            self.last_capture_strategy = "screencapture-fallback"
             _emit_debug("driver.capture_png.ok", width=width, height=height, bytes=len(png_bytes))
             return png_bytes, width, height
         except FileNotFoundError as exc:
+            if fallback_error is not None:
+                raise fallback_error from exc
             raise MacOSComputerUseError(
                 "COMPUTER_USE_CAPTURE_UNAVAILABLE",
                 "macOS screencapture utility is unavailable.",
@@ -457,6 +521,9 @@ class _MacOSDesktopAutomation:
                 temp_path.unlink()
 
     def move(self, x: float, y: float) -> None:
+        self._post_mouse_move(x, y)
+
+    def _post_mouse_move(self, x: float, y: float) -> None:
         quartz = self._quartz
         point = (float(x), float(y))
         event = quartz.CGEventCreateMouseEvent(
@@ -472,23 +539,127 @@ class _MacOSDesktopAutomation:
             )
         quartz.CGEventPost(quartz.kCGHIDEventTap, event)
 
-    def click(self, x: float, y: float, *, button: str, count: int) -> None:
+    def _cursor_position(self) -> tuple[float, float] | None:
         quartz = self._quartz
+        event = quartz.CGEventCreate(self._event_source)
+        if event is None:
+            return None
+        point = quartz.CGEventGetLocation(event)
+        x = getattr(point, "x", None)
+        y = getattr(point, "y", None)
+        if x is None or y is None:
+            try:
+                x, y = point
+            except Exception:
+                return None
+        return float(x), float(y)
+
+    def _frontmost_application(self) -> Any | None:
+        try:
+            appkit = _load_appkit_module()
+            workspace = appkit.NSWorkspace.sharedWorkspace()
+            return workspace.frontmostApplication()
+        except Exception:
+            return None
+
+    def _restore_frontmost_application(self, application: Any | None) -> None:
+        if application is None:
+            return
+        try:
+            appkit = _load_appkit_module()
+            activate_ignoring_others = getattr(
+                appkit,
+                "NSApplicationActivateIgnoringOtherApps",
+                1 << 1,
+            )
+            application.activateWithOptions_(activate_ignoring_others)
+        except Exception:
+            return
+
+    def click(self, x: float, y: float, *, button: str, count: int) -> None:
+        normalized_button = str(button or "left").strip().lower()
+        if normalized_button == "left" and max(1, count) == 1:
+            if self._press_accessibility_element_at_position(x, y):
+                self.last_click_strategy = "accessibility-press"
+                _emit_debug("driver.click.accessibility_press_ok", x=x, y=y)
+                return
+
+        quartz = self._quartz
+        self.last_click_strategy = "quartz-cursor-restore"
         point = (float(x), float(y))
-        button_value, down_type, up_type = self._mouse_button_spec(button)
-        self.move(x, y)
-        for click_state in range(1, max(1, count) + 1):
-            down = quartz.CGEventCreateMouseEvent(self._event_source, down_type, point, button_value)
-            up = quartz.CGEventCreateMouseEvent(self._event_source, up_type, point, button_value)
-            if down is None or up is None:
-                raise MacOSComputerUseError(
-                    "COMPUTER_USE_INPUT_UNAVAILABLE",
-                    "Unable to create a macOS mouse-click event.",
-                )
-            quartz.CGEventSetIntegerValueField(down, quartz.kCGMouseEventClickState, click_state)
-            quartz.CGEventSetIntegerValueField(up, quartz.kCGMouseEventClickState, click_state)
-            quartz.CGEventPost(quartz.kCGHIDEventTap, down)
-            quartz.CGEventPost(quartz.kCGHIDEventTap, up)
+        button_value, down_type, up_type = self._mouse_button_spec(normalized_button)
+        original_position = self._cursor_position()
+        original_application = self._frontmost_application()
+        self._post_mouse_move(x, y)
+        try:
+            for click_state in range(1, max(1, count) + 1):
+                down = quartz.CGEventCreateMouseEvent(self._event_source, down_type, point, button_value)
+                up = quartz.CGEventCreateMouseEvent(self._event_source, up_type, point, button_value)
+                if down is None or up is None:
+                    raise MacOSComputerUseError(
+                        "COMPUTER_USE_INPUT_UNAVAILABLE",
+                        "Unable to create a macOS mouse-click event.",
+                    )
+                quartz.CGEventSetIntegerValueField(down, quartz.kCGMouseEventClickState, click_state)
+                quartz.CGEventSetIntegerValueField(up, quartz.kCGMouseEventClickState, click_state)
+                quartz.CGEventPost(quartz.kCGHIDEventTap, down)
+                quartz.CGEventPost(quartz.kCGHIDEventTap, up)
+        finally:
+            if original_position is not None:
+                with contextlib.suppress(Exception):
+                    self._post_mouse_move(*original_position)
+            self._restore_frontmost_application(original_application)
+
+    def _press_accessibility_element_at_position(self, x: float, y: float) -> bool:
+        try:
+            accessibility = _load_accessibility_module()
+            create_system_wide = getattr(accessibility, "AXUIElementCreateSystemWide")
+            element_at_position = getattr(accessibility, "AXUIElementCopyElementAtPosition")
+            perform_action = getattr(accessibility, "AXUIElementPerformAction")
+        except Exception:
+            return False
+
+        try:
+            system = create_system_wide()
+            result = element_at_position(system, float(x), float(y), None)
+        except Exception as exc:
+            _emit_debug("driver.click.accessibility_element_failed", error=str(exc))
+            return False
+
+        element = None
+        error_code = 0
+        if isinstance(result, tuple):
+            if result:
+                try:
+                    error_code = int(result[0])
+                except Exception:
+                    error_code = 1
+            if len(result) > 1:
+                element = result[1]
+        else:
+            element = result
+
+        if error_code != 0 or element is None:
+            _emit_debug("driver.click.accessibility_element_missing", error_code=error_code)
+            return False
+
+        press_action = getattr(accessibility, "kAXPressAction", "AXPress")
+        try:
+            press_result = perform_action(element, press_action)
+        except Exception as exc:
+            _emit_debug("driver.click.accessibility_press_failed", error=str(exc))
+            return False
+
+        if isinstance(press_result, tuple):
+            press_result = press_result[0] if press_result else 1
+        try:
+            press_error = int(press_result or 0)
+        except Exception:
+            press_error = 1
+        if press_error != 0:
+            _emit_debug("driver.click.accessibility_press_rejected", error_code=press_error)
+            return False
+        return True
 
     def scroll(self, dx: int, dy: int) -> None:
         quartz = self._quartz
@@ -842,6 +1013,7 @@ class MacOSComputerUseRuntime:
     def capture(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
         png_bytes, width, height = self._driver.capture_png()
+        capture_backend = str(getattr(self._driver, "last_capture_strategy", "") or "").strip()
         session.session.width = width
         session.session.height = height
         session.session.updated_at = time.time()
@@ -855,20 +1027,14 @@ class MacOSComputerUseRuntime:
             "height": height,
             "captured_at": time.time(),
         }
+        if capture_backend:
+            result["capture_backend"] = capture_backend
         capture_path_value = str(params.get("capture_path") or "").strip()
         if capture_path_value:
             capture_path = Path(capture_path_value)
             capture_path.parent.mkdir(parents=True, exist_ok=True)
             capture_path.write_bytes(png_bytes)
             result["capture_path"] = str(capture_path)
-        elif self._capture_debug_dir is not None:
-            debug_path = self._capture_debug_dir / safe_context_segment(session.session.context_id)
-            debug_path.mkdir(parents=True, exist_ok=True)
-            filename = f"{uuid.uuid4().hex}.png"
-            capture_path = debug_path / filename
-            capture_path.write_bytes(png_bytes)
-            result["capture_path"] = str(capture_path)
-            result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         else:
             result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         return result
@@ -897,12 +1063,14 @@ class MacOSComputerUseRuntime:
         pixel_x = session.session.width * x
         pixel_y = session.session.height * y
         self._driver.click(pixel_x, pixel_y, button=button_name, count=count)
+        action_backend = str(getattr(self._driver, "last_click_strategy", "") or "").strip()
         return {
             "session_id": session.session.session_id,
             "button": button_name,
             "count": count,
             "x": x,
             "y": y,
+            **({"action_backend": action_backend} if action_backend else {}),
         }
 
     def scroll(self, params: dict[str, Any]) -> dict[str, Any]:

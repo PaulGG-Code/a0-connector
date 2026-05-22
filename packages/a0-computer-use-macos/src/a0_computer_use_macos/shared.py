@@ -9,13 +9,23 @@ MACOS_BACKEND_FAMILY = "macos"
 MACOS_BACKEND_PRIORITY = 100
 MACOS_BACKEND_FEATURES = (
     "inline-png-capture",
+    "coregraphics-screen-capture",
+    "background-screen-capture",
+    "no-cursor-steal-capture",
     "screencapture-screen-capture",
+    "screencapture-fallback-capture",
     "normalized-screen-coordinates",
     "global-pixel-actions",
     "quartz-input-events",
     "pointer-injection",
     "keyboard-injection",
+    "keyboard-targets-frontmost-app",
+    "accessibility-element-click",
+    "semantic-click-before-quartz-fallback",
+    "no-cursor-steal-accessibility-click",
     "real-cursor-may-move",
+    "cursor-position-restore-after-click",
+    "frontmost-app-restore-after-click",
     "accessibility-trust",
     "session-reuse-metadata",
 )

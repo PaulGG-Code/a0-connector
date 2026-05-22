@@ -26,9 +26,18 @@ def test_macos_backend_spec_exposes_expected_metadata() -> None:
     assert spec.supports_trust_mode("persistent") is True
     assert spec.supports_trust_mode("free_run") is True
     assert "inline-png-capture" in spec.features
+    assert "coregraphics-screen-capture" in spec.features
+    assert "background-screen-capture" in spec.features
+    assert "no-cursor-steal-capture" in spec.features
     assert "quartz-input-events" in spec.features
     assert "global-pixel-actions" in spec.features
+    assert "keyboard-targets-frontmost-app" in spec.features
+    assert "accessibility-element-click" in spec.features
+    assert "semantic-click-before-quartz-fallback" in spec.features
+    assert "no-cursor-steal-accessibility-click" in spec.features
     assert "real-cursor-may-move" in spec.features
+    assert "cursor-position-restore-after-click" in spec.features
+    assert "frontmost-app-restore-after-click" in spec.features
 
 
 def test_macos_detection_and_support_reason_are_additive_and_explicit(
@@ -36,14 +45,17 @@ def test_macos_detection_and_support_reason_are_additive_and_explicit(
 ) -> None:
     monkeypatch.setattr(macos_detection.sys, "platform", "darwin")
     monkeypatch.setattr(macos_detection.importlib.util, "find_spec", lambda name: object())
-    monkeypatch.setattr(macos_detection.shutil, "which", lambda name: "/usr/sbin/screencapture")
 
     assert macos_detection.macos_backend_supported() is True
     assert macos_detection.macos_backend_support_reason() == "macOS desktop backend is available."
 
-    monkeypatch.setattr(macos_detection.shutil, "which", lambda name: None)
+    monkeypatch.setattr(
+        macos_detection.importlib.util,
+        "find_spec",
+        lambda name: None if name == "AppKit" else object(),
+    )
     assert macos_detection.macos_backend_supported() is False
-    assert "screencapture utility is unavailable" in macos_detection.macos_backend_support_reason()
+    assert "Missing macOS computer-use dependencies: AppKit" in macos_detection.macos_backend_support_reason()
 
     monkeypatch.setattr(macos_detection.sys, "platform", "linux")
     assert macos_detection.macos_backend_supported() is False
