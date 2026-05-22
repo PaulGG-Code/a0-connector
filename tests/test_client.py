@@ -181,6 +181,8 @@ def test_load_config_prefers_environment_over_dotenv(
     monkeypatch.setenv("AGENT_ZERO_HOST", "http://env-host:1234")
     monkeypatch.setenv("AGENT_ZERO_LAST_CONTEXT_ID", "ctx-env")
     monkeypatch.setenv("AGENT_ZERO_LAST_CONTEXT_HOST", "http://env-host:1234")
+    monkeypatch.setenv("AGENT_ZERO_DEFAULT_CONTEXT_ID", "ctx-default-env")
+    monkeypatch.setenv("A0_REMOTE_EXEC", "1")
 
     env_dir = tmp_path / ".agent-zero"
     env_dir.mkdir()
@@ -191,6 +193,8 @@ def test_load_config_prefers_environment_over_dotenv(
                 "AGENT_ZERO_HOST=http://dotenv-host:5080",
                 "AGENT_ZERO_LAST_CONTEXT_ID=ctx-dotenv",
                 "AGENT_ZERO_LAST_CONTEXT_HOST=http://dotenv-host:5080",
+                "A0_DEFAULT_CHAT=ctx-default-dotenv",
+                "AGENT_ZERO_REMOTE_EXEC_ENABLED=0",
             )
         )
         + "\n",
@@ -205,6 +209,35 @@ def test_load_config_prefers_environment_over_dotenv(
     assert config.instance_url == "http://env-host:1234"
     assert config.last_context_id == "ctx-env"
     assert config.last_context_host == "http://env-host:1234"
+    assert config.default_context_id == "ctx-default-env"
+    assert config.remote_exec_enabled is True
+
+
+def test_load_config_reads_default_chat_and_remote_exec_from_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_dir = tmp_path / ".agent-zero"
+    env_dir.mkdir()
+    env_file = env_dir / ".env"
+    env_file.write_text(
+        "\n".join(
+            (
+                "A0_DEFAULT_CHAT=ctx-default",
+                "A0_REMOTE_EXEC=true",
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    import agent_zero_cli.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
+    config = load_config()
+
+    assert config.default_context_id == "ctx-default"
+    assert config.remote_exec_enabled is True
 
 
 def test_save_env_updates_existing_key(

@@ -451,6 +451,13 @@ def test_default_client_host_uses_splash_default() -> None:
     assert app.client.base_url == DEFAULT_HOST
 
 
+def test_remote_exec_config_sets_startup_default() -> None:
+    app = AgentZeroCLI(config=CLIConfig(remote_exec_enabled=True))
+
+    assert app._remote_exec_enabled is True
+    assert app._python_tty.enabled is True
+
+
 def test_profile_menu_item_click_stops_event_and_posts_selection() -> None:
     item = ProfileMenuItem("Developer", profile_key="developer")
     captured: list[object] = []
@@ -1183,6 +1190,66 @@ async def test_resolve_initial_context_restores_saved_chat_for_same_host(
 
     assert context_id == "ctx-saved"
     assert has_messages_hint is True
+
+
+async def test_resolve_initial_context_prefers_configured_default_chat(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.config.default_context_id = "ctx-default"
+    dummy_app.config.last_context_id = "ctx-saved"
+    dummy_app.config.last_context_host = "http://example.test"
+    dummy_app.connector_features = {"chat_get"}
+
+    async def fake_list_chats() -> list[dict[str, object]]:
+        return [{"id": "ctx-saved"}, {"id": "ctx-default"}]
+
+    async def fake_get_chat(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-default"
+        return {"last_message": "hello"}
+
+    async def fail_create_chat(*args, **kwargs) -> str:
+        del args, kwargs
+        raise AssertionError("create_chat should not run when the default context exists")
+
+    monkeypatch.setattr(dummy_app.client, "list_chats", fake_list_chats)
+    monkeypatch.setattr(dummy_app.client, "get_chat", fake_get_chat)
+    monkeypatch.setattr(dummy_app.client, "create_chat", fail_create_chat)
+
+    context_id, has_messages_hint = await connection._resolve_initial_context(
+        dummy_app,
+        "http://example.test",
+    )
+
+    assert context_id == "ctx-default"
+    assert has_messages_hint is True
+
+
+async def test_resolve_initial_context_uses_configured_default_without_chat_list(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.config.default_context_id = "ctx-direct"
+    dummy_app.connector_features = set()
+
+    async def fail_list_chats(*args, **kwargs) -> list[dict[str, object]]:
+        del args, kwargs
+        raise AssertionError("list_chats should not run for an explicit default context")
+
+    async def fail_create_chat(*args, **kwargs) -> str:
+        del args, kwargs
+        raise AssertionError("create_chat should not run for an explicit default context")
+
+    monkeypatch.setattr(dummy_app.client, "list_chats", fail_list_chats)
+    monkeypatch.setattr(dummy_app.client, "create_chat", fail_create_chat)
+
+    context_id, has_messages_hint = await connection._resolve_initial_context(
+        dummy_app,
+        "http://example.test",
+    )
+
+    assert context_id == "ctx-direct"
+    assert has_messages_hint is False
 
 
 async def test_resolve_initial_context_falls_back_to_new_chat_when_saved_chat_is_missing(

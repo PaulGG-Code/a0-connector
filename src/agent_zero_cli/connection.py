@@ -87,6 +87,17 @@ def _chat_identifier(chat: dict[str, Any]) -> str:
 
 
 async def _resolve_initial_context(app: AgentZeroCLI, host: str) -> tuple[str, bool]:
+    default_context_id = app.config.default_context_id.strip()
+    if default_context_id:
+        has_messages_hint = False
+        if "chat_get" in app.connector_features:
+            try:
+                metadata = await app.client.get_chat(default_context_id)
+            except Exception:
+                metadata = {}
+            has_messages_hint = bool(metadata.get("last_message") or metadata.get("log_entries"))
+        return default_context_id, has_messages_hint
+
     saved_context_id = app._saved_context_for_host(host)
     if saved_context_id:
         try:

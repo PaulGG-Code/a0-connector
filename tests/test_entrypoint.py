@@ -47,6 +47,8 @@ def test_main_help_exits_without_launching_app(
     assert exc_info.value.code == 0
     assert "usage: a0" in captured.out
     assert "--host URL" in captured.out
+    assert "--chat CONTEXT_ID" in captured.out
+    assert "--chat-last" in captured.out
     assert "--no-auto-connect" in captured.out
     assert "--no-docker-discovery" in captured.out
     assert "AGENT_ZERO_HOST" in captured.out
@@ -68,6 +70,8 @@ def test_main_connection_flags_route_to_app_launcher(
         [
             "--host",
             "https://example.trycloudflare.com",
+            "--chat",
+            "ctx-123",
             "--no-auto-connect",
             "--no-docker-discovery",
         ]
@@ -77,8 +81,34 @@ def test_main_connection_flags_route_to_app_launcher(
     assert launched == [
         {
             "host": "https://example.trycloudflare.com",
+            "chat": "ctx-123",
+            "chat_last": False,
             "auto_connect_single": False,
             "discover_instances": False,
+        }
+    ]
+
+
+def test_main_chat_last_flag_routes_to_app_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: list[dict[str, object]] = []
+
+    def fake_run_app(**kwargs: object) -> None:
+        launched.append(dict(kwargs))
+
+    monkeypatch.setattr(__main__, "_run_app", fake_run_app)
+
+    exit_code = __main__.main(["--chat-last"])
+
+    assert exit_code == 0
+    assert launched == [
+        {
+            "host": "",
+            "chat": "",
+            "chat_last": True,
+            "auto_connect_single": True,
+            "discover_instances": True,
         }
     ]
 

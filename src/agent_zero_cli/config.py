@@ -6,6 +6,10 @@ _ENV_DIR = Path.home() / ".agent-zero"
 _ENV_FILE = _ENV_DIR / ".env"
 _LAST_CONTEXT_ID_KEY = "AGENT_ZERO_LAST_CONTEXT_ID"
 _LAST_CONTEXT_HOST_KEY = "AGENT_ZERO_LAST_CONTEXT_HOST"
+_DEFAULT_CONTEXT_ID_KEY = "AGENT_ZERO_DEFAULT_CONTEXT_ID"
+_DEFAULT_CHAT_KEY = "A0_DEFAULT_CHAT"
+_REMOTE_EXEC_ENABLED_KEY = "AGENT_ZERO_REMOTE_EXEC_ENABLED"
+_A0_REMOTE_EXEC_KEY = "A0_REMOTE_EXEC"
 _COMPUTER_USE_ENABLED_KEY = "AGENT_ZERO_COMPUTER_USE_ENABLED"
 _COMPUTER_USE_TRUST_MODE_KEY = "AGENT_ZERO_COMPUTER_USE_TRUST_MODE"
 _COMPUTER_USE_RESTORE_TOKEN_KEY = "AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN"
@@ -24,6 +28,8 @@ class CLIConfig:
     instance_url: str = ""
     last_context_id: str = ""
     last_context_host: str = ""
+    default_context_id: str = ""
+    remote_exec_enabled: bool = False
     computer_use_enabled: bool = False
     computer_use_trust_mode: str = _DEFAULT_COMPUTER_USE_TRUST_MODE
     computer_use_restore_token: str = ""
@@ -189,6 +195,26 @@ def load_config() -> CLIConfig:
     instance_url = os.environ.get("AGENT_ZERO_HOST") or dotenv.get("AGENT_ZERO_HOST", "")
     last_context_id = os.environ.get(_LAST_CONTEXT_ID_KEY) or dotenv.get(_LAST_CONTEXT_ID_KEY, "")
     last_context_host = os.environ.get(_LAST_CONTEXT_HOST_KEY) or dotenv.get(_LAST_CONTEXT_HOST_KEY, "")
+    default_context_id = (
+        os.environ.get(_DEFAULT_CONTEXT_ID_KEY)
+        or os.environ.get(_DEFAULT_CHAT_KEY)
+        or dotenv.get(_DEFAULT_CONTEXT_ID_KEY, "")
+        or dotenv.get(_DEFAULT_CHAT_KEY, "")
+        or dotenv.get("default_chat", "")
+    ).strip()
+    remote_exec_enabled = _parse_bool(
+        os.environ.get(
+            _REMOTE_EXEC_ENABLED_KEY,
+            os.environ.get(
+                _A0_REMOTE_EXEC_KEY,
+                dotenv.get(
+                    _REMOTE_EXEC_ENABLED_KEY,
+                    dotenv.get(_A0_REMOTE_EXEC_KEY, "0"),
+                ),
+            ),
+        ),
+        default=False,
+    )
     computer_use_enabled = _parse_bool(
         os.environ.get(_COMPUTER_USE_ENABLED_KEY, dotenv.get(_COMPUTER_USE_ENABLED_KEY, "0")),
         default=False,
@@ -227,6 +253,8 @@ def load_config() -> CLIConfig:
         instance_url=instance_url,
         last_context_id=last_context_id,
         last_context_host=last_context_host,
+        default_context_id=default_context_id,
+        remote_exec_enabled=remote_exec_enabled,
         computer_use_enabled=computer_use_enabled,
         computer_use_trust_mode=computer_use_trust_mode,
         computer_use_restore_token=computer_use_restore_token,

@@ -5,6 +5,8 @@
 | Variable | Purpose | Default |
 |----------|---------|---------|
 | `AGENT_ZERO_HOST` | Agent Zero base URL | `http://localhost:5080` |
+| `AGENT_ZERO_DEFAULT_CONTEXT_ID` / `A0_DEFAULT_CHAT` | Chat context to open after connecting | Last remembered chat for the host, then a new chat |
+| `AGENT_ZERO_REMOTE_EXEC_ENABLED` / `A0_REMOTE_EXEC` | Start with host-side remote execution enabled | disabled |
 | `A0_UPDATE_CHECK` | Startup check for a newer CLI release. Set to `0`, `false`, `no`, or `off` to disable. | enabled |
 
 ## Resolution order
@@ -18,6 +20,16 @@ For `AGENT_ZERO_HOST`:
 
 `AGENT_ZERO_API_KEY` is ignored. The CLI no longer reads, writes, or uses it.
 
+For the initial chat:
+
+1. `a0 --chat CONTEXT_ID`
+2. `AGENT_ZERO_DEFAULT_CONTEXT_ID` or `A0_DEFAULT_CHAT`
+3. The last remembered chat for the connected host
+4. A new chat
+
+`a0 --chat-last` skips any configured default chat and uses the last remembered
+chat for the host.
+
 For frontend remote execution, the CLI no longer runtime-imports a local Agent Zero Core checkout. The backend sends execution settings in the WebSocket `connector_hello` payload, and the CLI keeps the platform-specific shell and TTY logic locally.
 
 ## First-run behavior
@@ -28,7 +40,8 @@ For frontend remote execution, the CLI no longer runtime-imports a local Agent Z
 4. Protected instances advance to login unless an in-memory session is already valid.
 5. Manual entry follows the same host rules.
 6. With `Remember this host` enabled, a successful connection writes only `AGENT_ZERO_HOST` to `~/.agent-zero/.env` and removes any stale `AGENT_ZERO_API_KEY`.
-7. Explicit disconnect clears the in-memory session cookie jar, attempts `/logout`, and returns to login for protected hosts or host selection for open hosts.
+7. Successful chat selection remembers the active chat for that host.
+8. Explicit disconnect clears the in-memory session cookie jar, attempts `/logout`, and returns to login for protected hosts or host selection for open hosts.
 
 ## Local discovery
 
@@ -48,5 +61,5 @@ Path: `~/.agent-zero/.env`
 
 - Created only when `Remember this host` is enabled
 - Read on next launch to seed the picker, manual URL, and single-instance auto-enter decisions
-- Stores only `AGENT_ZERO_HOST`
+- Stores `AGENT_ZERO_HOST` when the host is remembered, plus the last active chat host/context after chat selection
 - Never stores usernames, passwords, session cookies, or tokens

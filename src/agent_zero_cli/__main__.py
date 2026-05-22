@@ -40,6 +40,21 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip Docker host discovery and open manual URL entry immediately.",
     )
+    chat_options = connection_options.add_mutually_exclusive_group()
+    chat_options.add_argument(
+        "--chat",
+        metavar="CONTEXT_ID",
+        help=(
+            "Open a specific chat context after connecting. "
+            "Defaults to AGENT_ZERO_DEFAULT_CONTEXT_ID, A0_DEFAULT_CHAT, "
+            "or the last remembered chat for the host."
+        ),
+    )
+    chat_options.add_argument(
+        "--chat-last",
+        action="store_true",
+        help="Ignore any configured default chat and restore the last remembered chat for the host.",
+    )
     subparsers = parser.add_subparsers(dest="command", title="commands")
     subparsers.add_parser(
         "update",
@@ -51,6 +66,8 @@ def _build_parser() -> argparse.ArgumentParser:
 def _run_app(
     *,
     host: str = "",
+    chat: str = "",
+    chat_last: bool = False,
     auto_connect_single: bool = True,
     discover_instances: bool = True,
 ) -> None:
@@ -60,6 +77,10 @@ def _run_app(
     config = load_config()
     if host:
         config.instance_url = host
+    if chat:
+        config.default_context_id = chat
+    elif chat_last:
+        config.default_context_id = ""
     app = AgentZeroCLI(
         config,
         auto_connect_single_instance=auto_connect_single,
@@ -87,6 +108,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _run_app(
         host=args.host or "",
+        chat=args.chat or "",
+        chat_last=bool(args.chat_last),
         auto_connect_single=not args.no_auto_connect,
         discover_instances=not args.no_docker_discovery,
     )

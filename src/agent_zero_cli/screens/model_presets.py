@@ -9,6 +9,7 @@ from textual.binding import Binding
 from textual.containers import Center, Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
+from textual.widgets._select import SelectOverlay
 
 from agent_zero_cli.model_config import format_model_label
 
@@ -209,12 +210,26 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
     def current_result(self) -> ModelPresetsResult:
         return ModelPresetsResult(preset_name=self._selected_preset or None)
 
+    def _value_for_apply(self) -> str:
+        select = self.query_one("#model-presets-select", Select)
+        if select.expanded:
+            overlay = select.query_one(SelectOverlay)
+            highlighted = overlay.highlighted
+            options = getattr(select, "_options", ())
+            if isinstance(highlighted, int) and 0 <= highlighted < len(options):
+                value = options[highlighted][1]
+                return "" if value is Select.NULL else str(value)
+
+        value = select.value
+        return "" if value is Select.NULL else str(value)
+
     def action_cancel(self) -> None:
         self.dismiss(None)
 
     def action_apply(self) -> None:
         if not self._switch_allowed:
             return
+        self._selected_preset = self._value_for_apply()
         self.dismiss(self.current_result)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

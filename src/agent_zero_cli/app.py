@@ -184,7 +184,7 @@ class AgentZeroCLI(App):
         self._context_run_complete = False
         self._chat_intro_pending = True
         self._remote_file_write_enabled = True
-        self._remote_exec_enabled = False
+        self._remote_exec_enabled = self.config.remote_exec_enabled
         self._remote_tool_metadata_error = ""
         self._remote_files = RemoteFileUtility(
             scan_root=os.getcwd(),
