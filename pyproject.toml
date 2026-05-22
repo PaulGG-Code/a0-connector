@@ -4,13 +4,13 @@ requires = [
     "packaging==26.2",
     "pathspec==1.1.1",
     "pluggy==1.6.0",
-    "trove-classifiers==2026.5.20.19",
+    "trove-classifiers==2026.5.22.10",
 ]
 build-backend = "hatchling.build"
 
 [project]
 name = "a0"
-version = "1.9"
+version = "1.10"
 description = "Terminal chat interface for Agent Zero"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -45,7 +45,7 @@ dependencies = [
     "h11==0.16.0",
     "httpcore==1.0.9",
     "httpx==0.28.1",
-    "idna==3.15",
+    "idna==3.16",
     "jinja2==3.1.6",
     "linkify-it-py==2.1.0",
     "markdown-it-py==4.2.0",
@@ -64,8 +64,8 @@ dependencies = [
     "pyobjc-framework-cocoa==12.1 ; sys_platform == 'darwin'",
     "pyobjc-framework-coretext==12.1 ; sys_platform == 'darwin'",
     "pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin'",
-    "python-engineio==4.13.1",
-    "python-socketio==5.16.1",
+    "python-engineio==4.13.2",
+    "python-socketio==5.16.2",
     "python-xlib==0.33 ; sys_platform == 'linux'",
     "pywin32==311 ; sys_platform == 'win32'",
     "pywinauto==0.6.9 ; sys_platform == 'win32'",

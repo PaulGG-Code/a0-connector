@@ -63,6 +63,7 @@ def _compile_requirements(source: Path, output: Path) -> str:
             str(source.relative_to(ROOT)),
             "--universal",
             "--generate-hashes",
+            "--upgrade",
             "--custom-compile-command",
             "python devtools/lock_dependencies.py",
             "-o",

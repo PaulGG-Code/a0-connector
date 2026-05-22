@@ -318,9 +318,9 @@ httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via -r requirements/a0-runtime.in
-idna==3.15 \
-    --hash=sha256:048adeaf8c2d788c40fee287673ccaa74c24ffd8dcf09ffa555a2fbb59f10ac8 \
-    --hash=sha256:ca962446ea538f7092a95e057da437618e886f4d349216d2b1e294abfdb65fdc
+idna==3.16 \
+    --hash=sha256:cc246e3a3f89580c3a951b5ad298ca4638078b2cdd4f115654332b5c26daded5 \
+    --hash=sha256:d7a6da03db833450fca25d2358ac9ff06cd624577a4aea3a596d5c0f77b8e03d
     # via
     #   anyio
     #   httpx
@@ -957,13 +957,13 @@ pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin' \
     #   -r requirements/a0-runtime.in
     #   pyobjc-framework-applicationservices
     #   pyobjc-framework-coretext
-python-engineio==4.13.1 \
-    --hash=sha256:0a853fcef52f5b345425d8c2b921ac85023a04dfcf75d7b74696c61e940fd066 \
-    --hash=sha256:f32ad10589859c11053ad7d9bb3c9695cdf862113bfb0d20bc4d890198287399
+python-engineio==4.13.2 \
+    --hash=sha256:8c101cd170e400dc4e970cd523325cde22df8fc25140953f379327055d701a6b \
+    --hash=sha256:a7732e99cfb7db6ed1aee31f18d7f73bbae086a92f31dee019bc646155d9684e
     # via python-socketio
-python-socketio==5.16.1 \
-    --hash=sha256:a3eb1702e92aa2f2b5d3ba00261b61f062cce51f1cfb6900bf3ab4d1934d2d35 \
-    --hash=sha256:f863f98eacce81ceea2e742f6388e10ca3cdd0764be21d30d5196470edf5ea89
+python-socketio==5.16.2 \
+    --hash=sha256:ad88c228d921646efa436c0a0df217e364ef30ec072df4041484e54d49c15989 \
+    --hash=sha256:bef2da3374fd533aed4297f57b4f6512b52aa51604cb0da2165f401291c5ca20
     # via -r requirements/a0-runtime.in
 python-xlib==0.33 ; sys_platform == 'linux' \
     --hash=sha256:55af7906a2c75ce6cb280a584776080602444f75815a7aff4d287bb2d7018b32 \
