@@ -314,6 +314,7 @@ def test_backend_selection_returns_support_reason_when_no_backend_detects(
         detected=False,
         support_reason="XDG_SESSION_TYPE=tty is not supported by the Wayland portal backend.",
     )
+    monkeypatch.setattr(backend_mod.sys, "platform", "linux")
     monkeypatch.setattr(backend_mod, "available_backend_specs", lambda: [undetected])
 
     selection = backend_mod.resolve_backend_selection()
@@ -321,6 +322,69 @@ def test_backend_selection_returns_support_reason_when_no_backend_detects(
     assert selection.spec is undetected
     assert selection.supported is False
     assert "Wayland portal backend" in selection.support_reason
+
+
+def test_backend_selection_prefers_current_platform_reason_when_no_backend_detects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    macos = _backend_spec(
+        backend_id="macos",
+        backend_family="macos",
+        priority=100,
+        detected=False,
+        support_reason="macOS computer-use backend is only available on macOS.",
+    )
+    windows = _backend_spec(
+        backend_id="windows",
+        backend_family="windows",
+        priority=100,
+        detected=False,
+        support_reason="Windows desktop backend is only available on Windows.",
+    )
+    x11 = _backend_spec(
+        backend_id="x11",
+        backend_family="linux",
+        priority=90,
+        detected=False,
+        support_reason="DISPLAY is not set; an X11 display is required.",
+    )
+    monkeypatch.setattr(backend_mod.sys, "platform", "linux")
+    monkeypatch.setattr(backend_mod, "available_backend_specs", lambda: [macos, windows, x11])
+
+    selection = backend_mod.resolve_backend_selection()
+
+    assert selection.spec is x11
+    assert selection.supported is False
+    assert selection.support_reason == "DISPLAY is not set; an X11 display is required."
+
+
+def test_backend_selection_prefers_active_linux_display_stack_when_unsupported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wayland = _backend_spec(
+        backend_id="wayland",
+        backend_family="linux",
+        priority=100,
+        detected=False,
+        support_reason="XDG_SESSION_TYPE=x11 is not supported by the Wayland portal backend.",
+    )
+    x11 = _backend_spec(
+        backend_id="x11",
+        backend_family="linux",
+        priority=90,
+        detected=False,
+        support_reason="python-xlib is not importable.",
+    )
+    monkeypatch.setattr(backend_mod.sys, "platform", "linux")
+    monkeypatch.setenv("XDG_SESSION_TYPE", "x11")
+    monkeypatch.setenv("DISPLAY", ":0")
+    monkeypatch.setattr(backend_mod, "available_backend_specs", lambda: [wayland, x11])
+
+    selection = backend_mod.resolve_backend_selection()
+
+    assert selection.spec is x11
+    assert selection.supported is False
+    assert selection.support_reason == "python-xlib is not importable."
 
 
 async def test_hello_metadata_includes_backend_fields(

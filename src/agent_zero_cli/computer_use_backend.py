@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from importlib import metadata
+import os
+import sys
 from typing import Any, Callable, Protocol
 
 _ENTRY_POINT_GROUP = "a0.computer_use_backends"
@@ -111,6 +113,38 @@ def available_backend_specs() -> list[ComputerUseBackendSpec]:
     return sorted(merged.values(), key=lambda item: (-item.priority, item.backend_id))
 
 
+def _host_backend_families() -> tuple[str, ...]:
+    if sys.platform == "darwin":
+        return ("macos",)
+    if sys.platform == "win32":
+        return ("windows",)
+    if sys.platform.startswith("linux"):
+        return ("linux",)
+    return ()
+
+
+def _support_reason(spec: ComputerUseBackendSpec) -> str:
+    try:
+        return str(spec.support_reason() or "").strip()
+    except Exception as exc:
+        return f"{spec.backend_id} support_reason() failed: {exc}"
+
+
+def _unsupported_preference(spec: ComputerUseBackendSpec) -> int:
+    if not sys.platform.startswith("linux"):
+        return 0
+
+    backend_id = str(spec.backend_id or "").strip().lower()
+    session_type = (os.environ.get("XDG_SESSION_TYPE") or "").strip().lower()
+    display_name = (os.environ.get("DISPLAY") or "").strip()
+
+    if session_type == "wayland":
+        return 0 if backend_id == "wayland" else 1
+    if session_type in {"x11", "xorg"} or display_name:
+        return 0 if backend_id == "x11" else 1
+    return 0
+
+
 def resolve_backend_selection() -> ComputerUseBackendSelection:
     specs = sorted(available_backend_specs(), key=lambda item: (-item.priority, item.backend_id))
     if not specs:
@@ -124,15 +158,28 @@ def resolve_backend_selection() -> ComputerUseBackendSelection:
     for spec in specs:
         try:
             if spec.detect():
-                reason = str(spec.support_reason() or "").strip() or "Detected computer-use backend."
+                reason = _support_reason(spec) or "Detected computer-use backend."
                 return ComputerUseBackendSelection(spec=spec, supported=True, support_reason=reason)
         except Exception as exc:
             if detect_error is None:
                 detect_error = f"{spec.backend_id} detect() failed: {exc}"
             continue
 
-    spec = specs[0]
-    reason = str(spec.support_reason() or "").strip()
+    host_families = _host_backend_families()
+    host_specs = [
+        spec
+        for spec in specs
+        if str(spec.backend_family or "").strip().lower() in host_families
+    ]
+    host_specs = sorted(
+        host_specs,
+        key=lambda item: (_unsupported_preference(item), -item.priority, item.backend_id),
+    )
+    spec = host_specs[0] if host_specs else specs[0]
+    if not host_specs and host_families:
+        reason = f"No computer-use backend spec is registered for host platform {sys.platform!r}."
+    else:
+        reason = _support_reason(spec)
     if not reason:
         reason = detect_error or f"No detected backend matched {spec.backend_id!r}."
     return ComputerUseBackendSelection(spec=spec, supported=False, support_reason=reason)
