@@ -30,7 +30,7 @@ X11_BACKEND_SPEC = ComputerUseBackendSpec(
     ),
     interpreter_strategy="current_python",
     helper_target=str(HELPER_SCRIPT),
-    trust_mode_support=("interactive", "persistent", "free_run"),
+    trust_mode_support=("interactive", "persistent", "allow"),
     support_reason=x11_support_reason,
 )
 

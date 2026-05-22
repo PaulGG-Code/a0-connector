@@ -26,7 +26,7 @@ def test_wayland_backend_spec_exposes_expected_metadata() -> None:
     assert spec.helper_target == str(wayland_paths.HELPER_SCRIPT)
     assert spec.supports_trust_mode("interactive") is True
     assert spec.supports_trust_mode("persistent") is True
-    assert spec.supports_trust_mode("free_run") is True
+    assert spec.supports_trust_mode("allow") is True
     assert "portal-remote-desktop" in spec.features
     assert "inline-png-capture" in spec.features
     assert "fresh-frame-capture" in spec.features

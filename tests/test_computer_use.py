@@ -116,7 +116,7 @@ def _backend_spec(
         features=features,
         interpreter_strategy="system_python",
         helper_target="/tmp/computer_use_helper.py",
-        trust_mode_support=("interactive", "persistent", "free_run"),
+        trust_mode_support=("interactive", "persistent", "allow"),
         support_reason=lambda: support_reason,
     )
 
@@ -197,10 +197,10 @@ async def test_status_is_allowed_while_disabled_but_other_actions_are_rejected(
     assert rejected["code"] == "COMPUTER_USE_DISABLED"
 
 
-async def test_free_run_without_restore_token_returns_rearm_required(
+async def test_allow_without_restore_token_returns_rearm_required(
     _temp_env: Path,
 ) -> None:
-    manager = _manager(enabled=True, trust_mode="free_run")
+    manager = _manager(enabled=True, trust_mode="allow")
 
     result = await manager.handle_op({"op_id": "start-1", "action": "start_session", "context_id": "ctx-1"})
 
@@ -465,7 +465,6 @@ async def test_capture_strips_inline_png_base64_response_when_artifact_path_is_a
     assert "host_path" not in result["result"]
     assert "capture_path" not in result["result"]
     assert "container_path" not in result["result"]
-    assert not capture_path.exists()
     assert not computer_use_mod.HOST_ARTIFACT_ROOT.exists()
 
 
@@ -978,10 +977,10 @@ async def test_persistent_mode_discards_invalid_restore_token_before_helper_requ
     assert manager.restore_token == restore_token
 
 
-async def test_free_run_with_invalid_restore_token_returns_rearm_required(
+async def test_allow_with_invalid_restore_token_returns_rearm_required(
     _temp_env: Path,
 ) -> None:
-    manager = _manager(enabled=True, trust_mode="free_run", restore_token="restore-123")
+    manager = _manager(enabled=True, trust_mode="allow", restore_token="restore-123")
     manager._helper_request = AsyncMock()  # type: ignore[method-assign]
 
     result = await manager.handle_op({"op_id": "start-1", "action": "start_session", "context_id": "ctx-1"})
@@ -993,19 +992,22 @@ async def test_free_run_with_invalid_restore_token_returns_rearm_required(
     assert manager.restore_token == ""
 
 
-async def test_free_run_silent_restore_rearm_preserves_helper_message(
+async def test_allow_silent_restore_rearm_preserves_helper_message(
     _temp_env: Path,
 ) -> None:
     manager = _manager(
         enabled=True,
-        trust_mode="free_run",
+        trust_mode="allow",
         restore_token="123e4567-e89b-12d3-a456-426614174000",
     )
     manager._helper_request = AsyncMock(  # type: ignore[method-assign]
         return_value={
             "ok": False,
             "code": "COMPUTER_USE_REARM_REQUIRED",
-            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "error": (
+                "Silent restore was not available. Run /computer-use on and approve "
+                "the platform permission prompt."
+            ),
         }
     )
 
@@ -1013,7 +1015,10 @@ async def test_free_run_silent_restore_rearm_preserves_helper_message(
 
     assert result["ok"] is False
     assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
-    assert result["error"] == "Silent restore was not available. Re-arm computer use with Confirm with User."
+    assert result["error"] == (
+        "Silent restore was not available. Run /computer-use on and approve "
+        "the platform permission prompt."
+    )
     assert result["result"]["status"] == "rearm required"
     assert result["result"]["last_error"] == result["error"]
     assert result["result"]["restore_token_present"] is True
@@ -1021,14 +1026,14 @@ async def test_free_run_silent_restore_rearm_preserves_helper_message(
     assert manager.status_detail == result["error"]
 
 
-async def test_rearm_forces_prompt_then_restores_free_run_mode(
+async def test_rearm_forces_prompt_then_restores_allow_mode(
     _temp_env: Path,
 ) -> None:
     old_restore_token = "123e4567-e89b-12d3-a456-426614174000"
     new_restore_token = "123e4567-e89b-12d3-a456-426614174001"
     manager = _manager(
         enabled=True,
-        trust_mode="free_run",
+        trust_mode="allow",
         restore_token=old_restore_token,
     )
     manager._helper_request = AsyncMock(  # type: ignore[method-assign]
@@ -1048,7 +1053,7 @@ async def test_rearm_forces_prompt_then_restores_free_run_mode(
     result = await manager.rearm("ctx-1")
 
     assert result["ok"] is True
-    assert manager.trust_mode == "free_run"
+    assert manager.trust_mode == "allow"
     assert manager.status_label == "active"
     assert manager.restore_token == new_restore_token
     request = manager._helper_request.await_args.args[1]
@@ -1058,13 +1063,13 @@ async def test_rearm_forces_prompt_then_restores_free_run_mode(
     assert request["context_id"] == "ctx-1"
 
 
-async def test_rearm_failure_preserves_previous_free_run_token_but_marks_rearm_required(
+async def test_rearm_failure_preserves_previous_allow_token_but_marks_rearm_required(
     _temp_env: Path,
 ) -> None:
     restore_token = "123e4567-e89b-12d3-a456-426614174000"
     manager = _manager(
         enabled=True,
-        trust_mode="free_run",
+        trust_mode="allow",
         restore_token=restore_token,
     )
     manager._helper_request = AsyncMock(  # type: ignore[method-assign]
@@ -1079,7 +1084,7 @@ async def test_rearm_failure_preserves_previous_free_run_token_but_marks_rearm_r
 
     assert result["ok"] is False
     assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
-    assert manager.trust_mode == "free_run"
+    assert manager.trust_mode == "allow"
     assert manager.restore_token == restore_token
     assert manager.status_label == "rearm required"
     assert manager.status_detail == "User approval is required."

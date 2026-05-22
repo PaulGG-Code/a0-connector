@@ -81,7 +81,7 @@ def test_x11_backend_spec_exposes_expected_metadata() -> None:
     assert spec.helper_target == str(x11_paths.HELPER_SCRIPT)
     assert spec.supports_trust_mode("interactive") is True
     assert spec.supports_trust_mode("persistent") is True
-    assert spec.supports_trust_mode("free_run") is True
+    assert spec.supports_trust_mode("allow") is True
     assert "x11-xtest" in spec.features
     assert "inline-png-capture" in spec.features
     assert "global-pixel-actions" in spec.features
@@ -108,11 +108,11 @@ def test_x11_detection_and_support_reason_are_explicit(monkeypatch: pytest.Monke
     assert "DISPLAY is not set" in x11_detection.x11_support_reason()
 
 
-def test_x11_helper_rejects_free_run_without_restore_token() -> None:
+def test_x11_helper_rejects_allow_without_restore_token() -> None:
     helper = X11ComputerUseHelper(driver=_FakeDriver())
 
     with pytest.raises(X11ComputerUseError) as exc_info:
-        helper.start_session({"context_id": "ctx-1", "trust_mode": "free_run"})
+        helper.start_session({"context_id": "ctx-1", "trust_mode": "allow"})
 
     assert exc_info.value.code == "COMPUTER_USE_REARM_REQUIRED"
 

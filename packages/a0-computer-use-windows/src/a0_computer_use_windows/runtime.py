@@ -465,10 +465,10 @@ class WindowsComputerUseRuntime:
                 "COMPUTER_USE_UNSUPPORTED",
                 f"Unsupported trust mode: {trust_mode!r}",
             )
-        if policy.trust_mode == "free_run" and not policy.reuse_allowed:
+        if policy.trust_mode == "allow" and not policy.reuse_allowed:
             raise WindowsComputerUseError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "Free-run requires a stored restore token.",
+                "Allow requires a stored restore token.",
             )
 
         if self._session is not None and self._session.session.context_id == context_id:

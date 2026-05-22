@@ -17,7 +17,7 @@ def _message_for_status(status: str, *, enabled: bool) -> str:
         return "Agent Zero CLI is requesting computer control. Leave your mouse free if you approve the step."
     if normalized == "rearm required":
         return "Computer use needs re-arming before Agent Zero can control your computer again."
-    return "Agent Zero CLI can control your computer in this session. Leave your mouse free during computer-use steps."
+    return "Agent Zero CLI can control your computer in this session."
 
 
 class ComputerUseBanner(Static):

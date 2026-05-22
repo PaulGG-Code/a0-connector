@@ -136,7 +136,7 @@ You can optionally remember only the chosen host in `~/.agent-zero/.env` from in
 | `/pause` / `/resume` | Pause or resume the active agent run |
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
-| `/experimental` | Open experimental commands, including Computer Use controls |
+| `/computer-use on` / `/computer-use off` | Advertise or disable local Computer Use from this CLI; enabling arms the platform permission flow when needed |
 | `/browser status` | Show host-browser connector status |
 | `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |
 | `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |

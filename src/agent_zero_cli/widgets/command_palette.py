@@ -84,21 +84,6 @@ class OrderedSystemCommandsProvider(Provider):
             )
 
 
-class ExperimentalCommandsProvider(Provider):
-    """Expose experimental slash commands in their own command palette."""
-
-    async def discover(self):
-        for title, help_text, callback, discover in self.app.get_experimental_commands(self.screen):
-            if discover:
-                yield DiscoveryHit(title, callback, help=help_text)
-
-    async def search(self, query: str):
-        matcher = self.matcher(query)
-        for title, help_text, callback, *_ in self.app.get_experimental_commands(self.screen):
-            if (match := matcher.match(title)) > 0:
-                yield Hit(match, matcher.highlight(title), callback, help=help_text)
-
-
 def is_raw_slash_command(value: str) -> bool:
     raw = str(value or "").strip()
     return raw.startswith("/") and bool(raw.split(maxsplit=1)[0].strip()) and " " in raw

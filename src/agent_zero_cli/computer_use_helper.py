@@ -312,13 +312,13 @@ class PortalComputerUseHelper:
         trust_mode = str(params.get("trust_mode") or "persistent").strip().lower()
         context_id = str(params.get("context_id") or "default").strip() or "default"
         restore_token = str(params.get("restore_token") or "").strip()
-        allow_prompt = bool(params.get("allow_prompt", trust_mode != "free_run"))
+        allow_prompt = bool(params.get("allow_prompt", trust_mode != "allow"))
         request_timeout = float(params.get("request_timeout_seconds") or 0.0)
-        free_run = trust_mode == "free_run" or not allow_prompt
-        if trust_mode == "free_run" and not restore_token:
+        allow = trust_mode == "allow" or not allow_prompt
+        if trust_mode == "allow" and not restore_token:
             raise PortalError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "Free-run requires a stored restore token.",
+                "Allow requires a stored restore token.",
             )
 
         self._close_session()
@@ -330,13 +330,13 @@ class PortalComputerUseHelper:
                 trust_mode=trust_mode,
                 restore_token=restore_token,
                 timeout=timeout,
-                free_run=free_run,
+                allow=allow,
             )
-            self._select_sources(session_handle, timeout=timeout, free_run=free_run)
+            self._select_sources(session_handle, timeout=timeout, allow=allow)
             start_results = self._start_remote_desktop(
                 session_handle,
                 timeout=timeout,
-                free_run=free_run,
+                allow=allow,
             )
         except PortalError as exc:
             self._close_portal_session(session_handle)
@@ -545,13 +545,13 @@ class PortalComputerUseHelper:
         trust_mode: str,
         restore_token: str,
         timeout: float | None,
-        free_run: bool,
+        allow: bool,
     ) -> None:
         options: dict[str, Any] = {
             "types": _dbus_u32(DEVICE_TYPE_KEYBOARD | DEVICE_TYPE_POINTER),
             "persist_mode": _dbus_u32(PERSIST_MODE_NONE),
         }
-        if trust_mode in {"persistent", "free_run"}:
+        if trust_mode in {"persistent", "allow"}:
             options["persist_mode"] = _dbus_u32(PERSIST_MODE_EXPLICIT)
             if restore_token:
                 options["restore_token"] = restore_token
@@ -560,10 +560,10 @@ class PortalComputerUseHelper:
             options,
             dbus.ObjectPath(session_handle),
             timeout=timeout,
-            free_run=free_run,
+            allow=allow,
         )
 
-    def _select_sources(self, session_handle: str, *, timeout: float | None, free_run: bool) -> None:
+    def _select_sources(self, session_handle: str, *, timeout: float | None, allow: bool) -> None:
         self._call_request(
             self._screencast.SelectSources,
             {
@@ -573,7 +573,7 @@ class PortalComputerUseHelper:
             },
             dbus.ObjectPath(session_handle),
             timeout=timeout,
-            free_run=free_run,
+            allow=allow,
         )
 
     def _start_remote_desktop(
@@ -581,7 +581,7 @@ class PortalComputerUseHelper:
         session_handle: str,
         *,
         timeout: float | None,
-        free_run: bool,
+        allow: bool,
     ) -> dict[str, Any]:
         return self._call_request(
             self._remote_desktop.Start,
@@ -589,7 +589,7 @@ class PortalComputerUseHelper:
             dbus.ObjectPath(session_handle),
             "",
             timeout=timeout,
-            free_run=free_run,
+            allow=allow,
         )
 
     def _open_pipewire_remote(self, session_handle: str) -> int:
@@ -604,7 +604,7 @@ class PortalComputerUseHelper:
         options: dict[str, Any],
         *args: Any,
         timeout: float | None = None,
-        free_run: bool = False,
+        allow: bool = False,
     ) -> dict[str, Any]:
         token = self._token("req")
         request_path = self._request_path(token)
@@ -669,10 +669,10 @@ class PortalComputerUseHelper:
             )
 
         if outcome.get("timeout"):
-            if free_run:
+            if allow:
                 raise PortalError(
                     "COMPUTER_USE_REARM_REQUIRED",
-                    "Silent restore was not available. Re-arm computer use with Confirm with User.",
+                    "Silent restore was not available. Run /computer-use on and approve the platform permission prompt.",
                 )
             raise PortalError(
                 "COMPUTER_USE_REQUEST_TIMEOUT",
@@ -686,7 +686,7 @@ class PortalComputerUseHelper:
         if response == 0:
             return results
         if response == 1:
-            if free_run:
+            if allow:
                 raise PortalError(
                     "COMPUTER_USE_REARM_REQUIRED",
                     "The stored computer-use permission is no longer valid.",

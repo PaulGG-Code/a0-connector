@@ -18,7 +18,7 @@ WINDOWS_BACKEND_FEATURES = (
     "real-cursor-may-move",
     "session-reuse-metadata",
 )
-WINDOWS_TRUST_MODES = ("interactive", "persistent", "free_run")
+WINDOWS_TRUST_MODES = ("interactive", "persistent", "allow")
 STATE_DIR_ENV = "A0_COMPUTER_USE_WINDOWS_STATE_DIR"
 CAPTURE_DEBUG_DIR_ENV = "A0_COMPUTER_USE_WINDOWS_CAPTURE_DIR"
 
@@ -100,9 +100,9 @@ def resolve_trust_mode_policy(trust_mode: str, restore_token: str) -> TrustModeP
             silent_reuse=False,
             persist_metadata=False,
         )
-    if normalized_mode == "free_run":
+    if normalized_mode == "allow":
         return TrustModePolicy(
-            trust_mode="free_run",
+            trust_mode="allow",
             reuse_allowed=has_restore_token,
             silent_reuse=has_restore_token,
             persist_metadata=True,

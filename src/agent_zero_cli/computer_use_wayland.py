@@ -46,7 +46,7 @@ WAYLAND_BACKEND_SPEC = register_builtin_backend_spec(
         ),
         interpreter_strategy="system_python",
         helper_target=_HELPER_TARGET,
-        trust_mode_support=("interactive", "persistent", "free_run"),
+        trust_mode_support=("interactive", "persistent", "allow"),
         support_reason=_support_reason,
     )
 )

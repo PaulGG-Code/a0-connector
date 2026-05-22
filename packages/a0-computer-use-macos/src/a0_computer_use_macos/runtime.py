@@ -907,9 +907,9 @@ class MacOSComputerUseRuntime:
         trust_mode = str(params.get("trust_mode") or "persistent").strip().lower()
         context_id = normalize_context_id(params.get("context_id"))
         restore_token = normalize_restore_token(params.get("restore_token"))
-        allow_prompt = bool(params.get("allow_prompt", trust_mode != "free_run"))
+        allow_prompt = bool(params.get("allow_prompt", trust_mode != "allow"))
         request_timeout = float(params.get("request_timeout_seconds") or 0.0)
-        free_run = trust_mode == "free_run" or not allow_prompt
+        allow = trust_mode == "allow" or not allow_prompt
         policy = resolve_trust_mode_policy(trust_mode, restore_token)
         _emit_debug(
             "start_session.begin",
@@ -917,7 +917,7 @@ class MacOSComputerUseRuntime:
             trust_mode=trust_mode,
             allow_prompt=allow_prompt,
             request_timeout_seconds=request_timeout,
-            free_run=free_run,
+            allow=allow,
             restore_token_present=bool(restore_token),
         )
 
@@ -926,10 +926,10 @@ class MacOSComputerUseRuntime:
                 "COMPUTER_USE_UNSUPPORTED",
                 f"Unsupported trust mode: {trust_mode!r}",
             )
-        if policy.trust_mode == "free_run" and not policy.reuse_allowed:
+        if policy.trust_mode == "allow" and not policy.reuse_allowed:
             raise MacOSComputerUseError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "Free-run requires a stored restore token.",
+                "Allow requires a stored restore token.",
             )
 
         if self._session is not None and self._session.session.context_id == context_id:
@@ -945,14 +945,14 @@ class MacOSComputerUseRuntime:
         self._ensure_accessibility_permission(
             allow_prompt=allow_prompt,
             timeout=request_timeout,
-            free_run=free_run,
+            allow=allow,
         )
         _emit_debug("start_session.accessibility.ok", context_id=context_id)
         _emit_debug("start_session.capture_probe.begin", context_id=context_id)
         width, height = self._probe_capture_dimensions(
             allow_prompt=allow_prompt,
             timeout=request_timeout,
-            free_run=free_run,
+            allow=allow,
         )
         _emit_debug("start_session.capture_probe.ok", context_id=context_id, width=width, height=height)
 
@@ -1136,7 +1136,7 @@ class MacOSComputerUseRuntime:
         *,
         allow_prompt: bool,
         timeout: float,
-        free_run: bool,
+        allow: bool,
     ) -> None:
         accessibility = _load_accessibility_module()
         trusted = self._accessibility_trusted(accessibility, prompt=allow_prompt)
@@ -1145,7 +1145,7 @@ class MacOSComputerUseRuntime:
             allow_prompt=allow_prompt,
             trusted=trusted,
             timeout=timeout,
-            free_run=free_run,
+            allow=allow,
         )
         if trusted:
             return
@@ -1168,10 +1168,10 @@ class MacOSComputerUseRuntime:
                 if trusted:
                     return
 
-        if free_run:
+        if allow:
             raise MacOSComputerUseError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "macOS Accessibility permission is not available. Re-arm computer use with Confirm with User.",
+                "macOS Accessibility permission is not available. Run /computer-use on and approve the platform permission prompt.",
             )
         raise MacOSComputerUseError(
             "COMPUTER_USE_APPROVAL_REQUIRED",
@@ -1183,7 +1183,7 @@ class MacOSComputerUseRuntime:
         *,
         allow_prompt: bool,
         timeout: float,
-        free_run: bool,
+        allow: bool,
     ) -> tuple[int, int]:
         deadline = time.monotonic() + max(timeout, 0.0)
         attempt = 0
@@ -1195,7 +1195,7 @@ class MacOSComputerUseRuntime:
                     "capture_probe.attempt",
                     attempt=attempt,
                     allow_prompt=allow_prompt,
-                    free_run=free_run,
+                    allow=allow,
                 )
                 _png_bytes, width, height = self._driver.capture_png()
                 _emit_debug(
@@ -1218,10 +1218,10 @@ class MacOSComputerUseRuntime:
                 if allow_prompt and time.monotonic() < deadline:
                     time.sleep(1.0)
                     continue
-                if free_run:
+                if allow:
                     raise MacOSComputerUseError(
                         "COMPUTER_USE_REARM_REQUIRED",
-                        "Silent screen capture was not available. Re-arm computer use with Confirm with User.",
+                        "Silent screen capture was not available. Run /computer-use on and approve the platform permission prompt.",
                     ) from exc
                 if exc.code == "COMPUTER_USE_CAPTURE_UNAVAILABLE":
                     raise MacOSComputerUseError(

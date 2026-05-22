@@ -47,7 +47,6 @@ from agent_zero_cli.remote_files import RemoteFileUtility
 from agent_zero_cli.project_utils import normalize_project_list, normalize_project_summary
 from agent_zero_cli.widgets.command_palette import (
     AgentCommandPalette,
-    ExperimentalCommandsProvider,
     OrderedSystemCommandsProvider,
 )
 from agent_zero_cli.widgets import (
@@ -79,13 +78,13 @@ from agent_zero_cli.token_usage import (
     refresh_token_usage,
 )
 
-_HIDDEN_SLASH_COMMANDS = frozenset({"/computer-use", "/computer", "/cu"})
+_HIDDEN_SLASH_COMMANDS = frozenset({"/computer", "/cu"})
 _SPLASH_HIDDEN_COMMANDS = frozenset({"/profile", "/pause", "/resume", "/nudge"})
 _NO_AUTO_SLASH_PALETTE_COMMANDS = frozenset({"/attach", "/image", "/img"})
 _COMPUTER_USE_MODE_LABELS = {
-    "interactive": "Confirm with User",
-    "persistent": "Confirm with User",
-    "free_run": "Free Run",
+    "interactive": "Permission Prompt",
+    "persistent": "Permission Prompt",
+    "allow": "Allow",
 }
 _COMPUTER_USE_STATUS_LABELS = {
     **_COMPUTER_USE_MODE_LABELS,
@@ -330,45 +329,6 @@ class AgentZeroCLI(App):
             ),
         )
 
-    def get_experimental_commands(self, screen) -> Iterable[SystemCommand]:
-        del screen
-        for command, description in (
-            (
-                "/computer-use status",
-                "Show local computer-use access state.",
-            ),
-            (
-                "/computer-use on",
-                "Allow Agent Zero to request local computer-use access through this CLI session.",
-            ),
-            (
-                "/computer-use off",
-                "Stop advertising local computer-use access from this CLI session.",
-            ),
-            (
-                "/computer-use confirm",
-                "Ask before local computer-use access and remember the approval for future Free Run.",
-            ),
-            (
-                "/computer-use rearm",
-                "Open the platform permission flow and attach an approved computer-use session.",
-            ),
-            (
-                "/computer-use free-run",
-                "Use previously approved computer-use access without prompting.",
-            ),
-        ):
-            worker_name = f"experimental-{command.lstrip('/').replace('/', '-').replace(' ', '-')}"
-            yield SystemCommand(
-                command,
-                description,
-                lambda command=command, worker_name=worker_name: self.run_worker(
-                    self._dispatch_command(command),
-                    exclusive=True,
-                    name=worker_name,
-                ),
-            )
-
     def _build_command_registry(self) -> tuple[CommandSpec, ...]:
         return (
             CommandSpec(
@@ -391,13 +351,6 @@ class AgentZeroCLI(App):
                 "Clear the visible chat log.",
                 lambda app: CommandAvailability(True),
                 lambda app: chat_commands.cmd_clear(app),
-            ),
-            CommandSpec(
-                "/experimental",
-                (),
-                "Open experimental commands.",
-                lambda app: CommandAvailability(True),
-                lambda app: app._cmd_experimental(),
             ),
             CommandSpec(
                 "/project",
@@ -486,7 +439,7 @@ class AgentZeroCLI(App):
             CommandSpec(
                 "/computer-use",
                 ("/computer", "/cu"),
-                "Turn Computer Use on/off, or choose Confirm with User/Free Run mode.",
+                "Turn local Computer Use on or off.",
                 lambda app: CommandAvailability(True),
                 lambda app: app._cmd_computer_use(),
             ),
@@ -547,20 +500,6 @@ class AgentZeroCLI(App):
                 id="--command-palette",
                 initial_query=initial_query,
                 from_slash=from_slash,
-            )
-        )
-
-    def _open_experimental_command_palette(self) -> None:
-        if not self.use_command_palette or self._is_command_palette_open():
-            return
-
-        self._slash_palette_query = None
-        self.push_screen(
-            AgentCommandPalette(
-                providers=[ExperimentalCommandsProvider],
-                id="--experimental-command-palette",
-                initial_query="/computer-use",
-                from_slash=True,
             )
         )
 
@@ -1745,58 +1684,39 @@ class AgentZeroCLI(App):
     async def _cmd_nudge(self) -> None:
         await chat_commands.cmd_nudge(self)
 
-    async def _cmd_experimental(self) -> None:
-        self._open_experimental_command_palette()
-
-    async def _set_computer_use_mode(self, mode: str) -> None:
-        selected = self._computer_use.set_trust_mode(mode)
-        synced = await self._refresh_remote_tool_metadata()
-        if synced:
-            self._show_notice(f"Computer use set to {_computer_use_mode_label(selected)}.")
-        else:
-            self._show_notice(
-                "Computer use changed locally, but Agent Zero did not acknowledge "
-                f"the update: {self._remote_tool_metadata_error}",
-                error=True,
-            )
-        self._sync_computer_use_status()
-
     async def _set_computer_use_enabled(self, enabled: bool) -> None:
         was_enabled = self._computer_use.enabled
+        if enabled:
+            self._computer_use.set_trust_mode("allow")
         self._computer_use.set_enabled(enabled)
+        rearm_result: dict[str, Any] | None = None
+        if enabled and self._computer_use.status_label == "rearm required":
+            rearm_result = await self._computer_use.rearm(context_id=self.current_context)
         if not enabled and was_enabled:
             await self._computer_use.disconnect()
         synced = await self._refresh_remote_tool_metadata()
         state = "enabled" if self._computer_use.enabled else "disabled"
         if synced:
-            self._show_notice(
-                f"Computer use {state} for this CLI session "
-                f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
-            )
+            if rearm_result is not None and not bool(rearm_result.get("ok")):
+                message = str(
+                    rearm_result.get("error")
+                    or "Approve the platform permission prompt, then run /computer-use on again."
+                )
+                self._show_notice(
+                    f"Computer use {state}, but platform permission is not armed: {message}",
+                    error=True,
+                )
+            else:
+                self._show_notice(
+                    f"Computer use {state} for this CLI session "
+                    f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
+                )
         else:
             self._show_notice(
                 "Computer use changed locally, but Agent Zero did not acknowledge "
                 f"the update: {self._remote_tool_metadata_error}",
                 error=True,
             )
-        self._sync_computer_use_status()
-
-    async def _rearm_computer_use(self) -> None:
-        result = await self._computer_use.rearm(context_id=self.current_context)
-        synced = await self._refresh_remote_tool_metadata()
-        if bool(result.get("ok")):
-            mode = _computer_use_mode_label(self._computer_use.trust_mode)
-            self._show_notice(f"Computer use re-armed for this chat ({mode}).")
-        else:
-            message = str(result.get("error") or "Computer use could not be re-armed.")
-            if synced:
-                self._show_notice(message, error=True)
-            else:
-                self._show_notice(
-                    f"{message} Agent Zero did not acknowledge the update: "
-                    f"{self._remote_tool_metadata_error}",
-                    error=True,
-                )
         self._sync_computer_use_status()
 
     async def _cmd_computer_use(self, *, query: str = "") -> None:
@@ -1808,7 +1728,7 @@ class AgentZeroCLI(App):
                 "Computer use is "
                 f"{state} for this CLI session "
                 f"({_computer_use_mode_label(self._computer_use.trust_mode)}). "
-                "Use /computer-use on|off|confirm|free-run|rearm."
+                "Use /computer-use on|off."
             )
             return
         if action in {"on", "enable", "enabled", "true", "yes", "1"}:
@@ -1817,18 +1737,8 @@ class AgentZeroCLI(App):
         if action in {"off", "disable", "disabled", "false", "no", "0"}:
             await self._set_computer_use_enabled(False)
             return
-        if action in {"confirm", "confirm-with-user", "persistent", "interactive"}:
-            await self._set_computer_use_mode("persistent")
-            return
-        if action in {"free", "free-run", "freerun"}:
-            await self._set_computer_use_mode("free_run")
-            return
-        if action in {"rearm", "re-arm", "arm", "authorize", "authorise", "approval"}:
-            await self._rearm_computer_use()
-            return
-
         self._show_notice(
-            "Usage: /computer-use on|off|confirm|free-run|rearm|status",
+            "Usage: /computer-use on|off|status",
             error=True,
         )
 

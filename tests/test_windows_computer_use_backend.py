@@ -67,7 +67,7 @@ def test_windows_backend_spec_exports_expected_metadata() -> None:
     assert Path(spec.helper_target).name == "runtime.py"
     assert spec.supports_trust_mode("interactive") is True
     assert spec.supports_trust_mode("persistent") is True
-    assert spec.supports_trust_mode("free_run") is True
+    assert spec.supports_trust_mode("allow") is True
     assert "inline-png-capture" in spec.features
     assert "uia-automation" in spec.features
     assert "global-pixel-actions" in spec.features
@@ -100,11 +100,11 @@ def test_windows_action_normalization_matches_shared_surface() -> None:
     assert typed["text"] == "hello" and typed["submit"] is True
 
 
-def test_windows_runtime_rejects_free_run_without_restore_token(tmp_path: Path) -> None:
+def test_windows_runtime_rejects_allow_without_restore_token(tmp_path: Path) -> None:
     runtime = WindowsComputerUseRuntime(driver=_FakeDriver(), state_dir=tmp_path / "state")
 
     with pytest.raises(WindowsComputerUseError) as exc_info:
-        runtime.start_session({"context_id": "ctx-1", "trust_mode": "free_run"})
+        runtime.start_session({"context_id": "ctx-1", "trust_mode": "allow"})
 
     assert exc_info.value.code == "COMPUTER_USE_REARM_REQUIRED"
 

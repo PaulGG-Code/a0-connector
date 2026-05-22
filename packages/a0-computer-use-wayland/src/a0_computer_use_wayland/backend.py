@@ -24,7 +24,7 @@ WAYLAND_BACKEND_SPEC = ComputerUseBackendSpec(
     ),
     interpreter_strategy="system_python",
     helper_target=str(HELPER_SCRIPT),
-    trust_mode_support=("interactive", "persistent", "free_run"),
+    trust_mode_support=("interactive", "persistent", "allow"),
     support_reason=wayland_support_reason,
 )
 

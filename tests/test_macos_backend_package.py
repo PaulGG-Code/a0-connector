@@ -24,7 +24,7 @@ def test_macos_backend_spec_exposes_expected_metadata() -> None:
     assert Path(spec.helper_target).name == "runtime.py"
     assert spec.supports_trust_mode("interactive") is True
     assert spec.supports_trust_mode("persistent") is True
-    assert spec.supports_trust_mode("free_run") is True
+    assert spec.supports_trust_mode("allow") is True
     assert "inline-png-capture" in spec.features
     assert "coregraphics-screen-capture" in spec.features
     assert "background-screen-capture" in spec.features

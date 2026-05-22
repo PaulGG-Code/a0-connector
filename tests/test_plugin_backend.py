@@ -961,7 +961,7 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
                 "computer_use": {
                     "supported": True,
                     "enabled": True,
-                    "trust_mode": "persistent",
+                    "trust_mode": "allow",
                     "status": "active",
                     "last_error": "",
                     "restore_token_present": True,
@@ -981,7 +981,7 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
     assert stored == {
         "supported": True,
         "enabled": True,
-        "trust_mode": "persistent",
+        "trust_mode": "allow",
         "status": "active",
         "last_error": "",
         "restore_token_present": True,
@@ -1192,7 +1192,7 @@ def test_remote_tool_stubs_are_injected_when_enabled_cli_capabilities_are_availa
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "backend_id": "wayland",
             "backend_family": "linux",
             "features": ["inline-png-capture", "pointer-injection"],
@@ -1227,7 +1227,7 @@ def test_remote_tool_stubs_are_injected_when_enabled_cli_capabilities_are_availa
     assert "base_tool" in prompt
     assert "TEXT_EDITOR_STUB Read&Write Writes and patches are currently available." in prompt
     assert "CODE_EXEC_STUB Read&Write Mutating runtimes are currently available" in prompt
-    assert "COMPUTER_USE_STUB wayland/linux persistent inline-png-capture, pointer-injection" in prompt
+    assert "COMPUTER_USE_STUB wayland/linux allow inline-png-capture, pointer-injection" in prompt
 
 
 def test_remote_tool_stubs_reflect_read_only_file_access() -> None:
@@ -1289,7 +1289,7 @@ def test_remote_tool_stubs_are_not_injected_without_enabled_cli_capabilities() -
         {
             "supported": True,
             "enabled": False,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
         },
     )
 
@@ -1565,15 +1565,15 @@ def test_select_computer_use_target_sid_ignores_disabled_or_unsupported_clients(
 
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-disabled",
-        {"supported": True, "enabled": False, "trust_mode": "persistent", "artifact_root": "/a0/tmp"},
+        {"supported": True, "enabled": False, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
     )
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-unsupported",
-        {"supported": False, "enabled": True, "trust_mode": "persistent", "artifact_root": "/a0/tmp"},
+        {"supported": False, "enabled": True, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
     )
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-enabled",
-        {"supported": True, "enabled": True, "trust_mode": "persistent", "artifact_root": "/a0/tmp"},
+        {"supported": True, "enabled": True, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
     )
 
     assert ws_runtime_mod.select_computer_use_target_sid("ctx-1") == "sid-enabled"
@@ -1593,7 +1593,7 @@ def test_computer_use_remote_rejects_when_no_enabled_cli_is_subscribed() -> None
         {
             "supported": True,
             "enabled": False,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1614,11 +1614,17 @@ def test_computer_use_remote_rearm_metadata_tells_agent_to_stop_without_dispatch
             "op_id": payload["op_id"],
             "ok": False,
             "code": "COMPUTER_USE_REARM_REQUIRED",
-            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "error": (
+                "Silent restore was not available. Run /computer-use on and approve "
+                "the platform permission prompt."
+            ),
             "result": {
                 "status": "rearm required",
-                "trust_mode": "free_run",
-                "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+                "trust_mode": "allow",
+                "last_error": (
+                    "Silent restore was not available. Run /computer-use on and approve "
+                    "the platform permission prompt."
+                ),
             },
         }
 
@@ -1633,9 +1639,12 @@ def test_computer_use_remote_rearm_metadata_tells_agent_to_stop_without_dispatch
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "free_run",
+            "trust_mode": "allow",
             "status": "rearm required",
-            "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "last_error": (
+                "Silent restore was not available. Run /computer-use on and approve "
+                "the platform permission prompt."
+            ),
             "restore_token_present": True,
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
@@ -1661,11 +1670,17 @@ def test_computer_use_remote_runtime_rearm_result_tells_agent_to_stop() -> None:
             "op_id": payload["op_id"],
             "ok": False,
             "code": "COMPUTER_USE_REARM_REQUIRED",
-            "error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+            "error": (
+                "Silent restore was not available. Run /computer-use on and approve "
+                "the platform permission prompt."
+            ),
             "result": {
                 "status": "rearm required",
-                "trust_mode": "free_run",
-                "last_error": "Silent restore was not available. Re-arm computer use with Confirm with User.",
+                "trust_mode": "allow",
+                "last_error": (
+                    "Silent restore was not available. Run /computer-use on and approve "
+                    "the platform permission prompt."
+                ),
             },
         }
 
@@ -1680,8 +1695,8 @@ def test_computer_use_remote_runtime_rearm_result_tells_agent_to_stop() -> None:
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "free_run",
-            "status": "free_run",
+            "trust_mode": "allow",
+            "status": "allow",
             "last_error": "",
             "restore_token_present": True,
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
@@ -1726,7 +1741,7 @@ def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path:
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1774,7 +1789,7 @@ def test_computer_use_remote_capture_uses_shared_png_path(
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1827,7 +1842,7 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1871,7 +1886,7 @@ def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1929,7 +1944,7 @@ def test_computer_use_remote_start_session_auto_refreshes_screen(
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -1988,7 +2003,7 @@ def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -2048,7 +2063,7 @@ def test_computer_use_remote_click_auto_refreshes_screen(
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -2108,7 +2123,7 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )
@@ -2145,7 +2160,7 @@ def test_computer_use_remote_invalid_numeric_args_return_message() -> None:
         {
             "supported": True,
             "enabled": True,
-            "trust_mode": "persistent",
+            "trust_mode": "allow",
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         },
     )

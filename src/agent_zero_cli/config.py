@@ -14,18 +14,9 @@ _HOST_BROWSER_FAMILY_KEY = "AGENT_ZERO_HOST_BROWSER_FAMILY"
 _HOST_BROWSER_PROFILE_PATH_KEY = "AGENT_ZERO_HOST_BROWSER_PROFILE_PATH"
 _HOST_BROWSER_PROFILE_LABEL_KEY = "AGENT_ZERO_HOST_BROWSER_PROFILE_LABEL"
 _HOST_BROWSER_RELAUNCH_PREFERENCE_KEY = "AGENT_ZERO_HOST_BROWSER_RELAUNCH_PREFERENCE"
-_DEFAULT_COMPUTER_USE_TRUST_MODE = "persistent"
-_VALID_COMPUTER_USE_TRUST_MODES = {"persistent", "free_run"}
+_DEFAULT_COMPUTER_USE_TRUST_MODE = "allow"
+_VALID_COMPUTER_USE_TRUST_MODES = {"persistent", "allow"}
 _VALID_HOST_BROWSER_RELAUNCH_PREFERENCES = {"ask", "manual"}
-_COMPUTER_USE_TRUST_MODE_ALIASES = {
-    "confirm": "persistent",
-    "confirm with user": "persistent",
-    "confirm_with_user": "persistent",
-    "confirm-with-user": "persistent",
-    "interactive": "persistent",
-    "free run": "free_run",
-    "free-run": "free_run",
-}
 
 
 @dataclass
@@ -115,7 +106,6 @@ def _parse_bool(value: object, default: bool = False) -> bool:
 
 def normalize_computer_use_trust_mode(value: object) -> str:
     normalized = str(value or "").strip().lower()
-    normalized = _COMPUTER_USE_TRUST_MODE_ALIASES.get(normalized, normalized)
     if normalized in _VALID_COMPUTER_USE_TRUST_MODES:
         return normalized
     return _DEFAULT_COMPUTER_USE_TRUST_MODE

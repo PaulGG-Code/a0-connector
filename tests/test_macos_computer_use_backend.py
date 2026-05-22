@@ -71,7 +71,7 @@ def test_macos_backend_spec_exports_expected_metadata() -> None:
     assert Path(spec.helper_target).name == "runtime.py"
     assert spec.supports_trust_mode("interactive") is True
     assert spec.supports_trust_mode("persistent") is True
-    assert spec.supports_trust_mode("free_run") is True
+    assert spec.supports_trust_mode("allow") is True
     assert "inline-png-capture" in spec.features
     assert "coregraphics-screen-capture" in spec.features
     assert "background-screen-capture" in spec.features
@@ -113,11 +113,11 @@ def test_macos_action_normalization_matches_shared_surface() -> None:
     assert typed["text"] == "hello" and typed["submit"] is True
 
 
-def test_macos_runtime_rejects_free_run_without_restore_token(tmp_path: Path) -> None:
+def test_macos_runtime_rejects_allow_without_restore_token(tmp_path: Path) -> None:
     runtime = _runtime(tmp_path)
 
     with pytest.raises(MacOSComputerUseError) as exc_info:
-        runtime.start_session({"context_id": "ctx-1", "trust_mode": "free_run"})
+        runtime.start_session({"context_id": "ctx-1", "trust_mode": "allow"})
 
     assert exc_info.value.code == "COMPUTER_USE_REARM_REQUIRED"
 

@@ -211,10 +211,7 @@ class FakeComputerUseBanner:
         elif status == "Rearm Required":
             self.message = "Computer use needs re-arming before Agent Zero can control your computer again."
         else:
-            self.message = (
-                "Agent Zero CLI can control your computer in this session. Leave your mouse free during "
-                "computer-use steps."
-            )
+            self.message = "Agent Zero CLI can control your computer in this session."
         self.display = True
 
 
@@ -255,12 +252,13 @@ class FakeMessageQueueBar:
 class FakeComputerUseManager:
     def __init__(self) -> None:
         self.enabled = False
-        self.trust_mode = "persistent"
+        self.trust_mode = "allow"
         self.status_label = "disabled"
         self.status_detail = ""
         self.disconnect_calls = 0
         self.rearm_calls: list[str | None] = []
         self.handled_ops: list[dict[str, object]] = []
+        self.rearm_result: dict[str, object] = {"ok": True, "result": {"status": "active"}}
         self._status_callback = None
 
     def set_status_callback(self, callback) -> None:
@@ -274,7 +272,10 @@ class FakeComputerUseManager:
 
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
-        self.status_label = self.trust_mode if enabled else "disabled"
+        if enabled and self.trust_mode == "allow":
+            self.status_label = "rearm required"
+        else:
+            self.status_label = self.trust_mode if enabled else "disabled"
         self.status_detail = ""
         self._emit()
 
@@ -301,10 +302,14 @@ class FakeComputerUseManager:
     async def rearm(self, context_id: str | None = None) -> dict[str, object]:
         self.rearm_calls.append(context_id)
         self.enabled = True
-        self.status_label = "active"
-        self.status_detail = ""
+        if bool(self.rearm_result.get("ok")):
+            self.status_label = "active"
+            self.status_detail = ""
+        else:
+            self.status_label = "rearm required"
+            self.status_detail = str(self.rearm_result.get("error") or "")
         self._emit()
-        return {"ok": True, "result": {"status": "active"}}
+        return dict(self.rearm_result)
 
     async def handle_op(self, data: dict[str, object]) -> dict[str, object]:
         self.handled_ops.append(dict(data))
@@ -1574,7 +1579,7 @@ def test_pause_and_nudge_tokens_auto_open_slash_palette(
     assert opened == [("/pause", True), ("/nudge", True)]
 
 
-def test_computer_use_token_does_not_auto_open_main_slash_palette(
+def test_computer_use_token_auto_opens_main_slash_palette_but_aliases_stay_hidden(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1591,7 +1596,7 @@ def test_computer_use_token_does_not_auto_open_main_slash_palette(
             ChatInput.ValueChanged(value=value, input=input_widget)
         )
 
-    assert opened == []
+    assert opened == [("/computer-use", True)]
 
 
 def test_bare_slash_auto_opens_command_palette(
@@ -2207,10 +2212,12 @@ async def test_computer_use_slash_commands_update_notice_and_status(
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert dummy_app._computer_use.enabled is True
-    assert status.computer_use_status == "Confirm with User"
+    assert dummy_app._computer_use.trust_mode == "allow"
+    assert dummy_app._computer_use.rearm_calls == [None]
+    assert status.computer_use_status == "Active"
     assert banner.display is True
-    assert "can control your computer in this session" in banner.message
-    assert notices == [("Computer use enabled for this CLI session (Confirm with User).", False)]
+    assert "is controlling your computer" in banner.message
+    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
 
     await dummy_app._dispatch_command("/computer-use off")
 
@@ -2258,7 +2265,7 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
             "computer_use": {
                 "supported": True,
                 "enabled": True,
-                "trust_mode": "persistent",
+                "trust_mode": "allow",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
@@ -2276,7 +2283,7 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
             "computer_use": {
                 "supported": True,
                 "enabled": False,
-                "trust_mode": "persistent",
+                "trust_mode": "allow",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
@@ -2426,14 +2433,14 @@ async def test_browser_runtime_commands_update_agent_zero_config(
     assert all("Browser model-use settings" in notice[0] for notice in notices)
 
 
-def test_system_commands_hide_computer_use_behind_experimental(
+def test_system_commands_include_computer_use_without_experimental_menu(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
     commands = list(dummy_app.get_system_commands(None))
     titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
 
-    assert "/experimental" in titles
-    assert "/computer-use" not in titles
+    assert "/experimental" not in titles
+    assert "/computer-use" in titles
     assert all(not title.startswith("Computer Use: ") for title in titles)
     assert "Browser: Use Host" in titles
     assert "Browser: Docker Container" in titles
@@ -2443,35 +2450,7 @@ def test_system_commands_hide_computer_use_behind_experimental(
     assert "/nudge" in titles
     assert "Computer Use: Interactive" not in titles
     assert "Computer Use: Persistent" not in titles
-    assert "Computer Use: Free-Run" not in titles
-
-
-def test_experimental_commands_include_computer_use_slash_commands(
-    dummy_app: DummyAgentZeroCLI,
-) -> None:
-    commands = list(dummy_app.get_experimental_commands(None))
-    titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
-
-    assert titles == {
-        "/computer-use status",
-        "/computer-use on",
-        "/computer-use off",
-        "/computer-use confirm",
-        "/computer-use rearm",
-        "/computer-use free-run",
-    }
-
-
-async def test_experimental_command_opens_experimental_palette(
-    dummy_app: DummyAgentZeroCLI,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    opened = []
-    monkeypatch.setattr(dummy_app, "_open_experimental_command_palette", lambda: opened.append(True))
-
-    await dummy_app._dispatch_command("/experimental")
-
-    assert opened == [True]
+    assert "Computer Use: Allow" not in titles
 
 
 def test_welcome_actions_keep_run_controls_out_of_splash(
@@ -2488,65 +2467,71 @@ def test_welcome_actions_keep_run_controls_out_of_splash(
     assert "/nudge" not in action_keys
 
 
-async def test_computer_use_slash_commands_set_trust_mode(
+async def test_computer_use_removed_mode_commands_show_usage_without_fallback(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notices: list[tuple[str, bool]] = []
     monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
-    dummy_app._computer_use.set_enabled(True)
+    initial_mode = dummy_app._computer_use.trust_mode
 
-    await dummy_app._dispatch_command("/computer-use free-run")
-    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
-    assert dummy_app._computer_use.trust_mode == "free_run"
-    assert status.computer_use_status == "Free Run"
-
+    await dummy_app._dispatch_command("/computer-use allow")
     await dummy_app._dispatch_command("/computer confirm")
-    assert dummy_app._computer_use.trust_mode == "persistent"
-    assert status.computer_use_status == "Confirm with User"
+    await dummy_app._dispatch_command("/computer-use arm")
+
+    assert dummy_app._computer_use.trust_mode == initial_mode
+    assert dummy_app._computer_use.rearm_calls == []
     assert notices == [
-        ("Computer use set to Free Run.", False),
-        ("Computer use set to Confirm with User.", False),
+        ("Usage: /computer-use on|off|status", True),
+        ("Usage: /computer-use on|off|status", True),
+        ("Usage: /computer-use on|off|status", True),
     ]
 
 
-async def test_computer_use_rearm_slash_command_arms_current_chat(
+async def test_computer_use_on_arms_current_chat_when_allow_needs_permission(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notices: list[tuple[str, bool]] = []
     monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
-    dummy_app.client.connected = True
     dummy_app.current_context = "ctx-cua"
 
-    await dummy_app._dispatch_command("/computer-use rearm")
+    await dummy_app._dispatch_command("/computer-use on")
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
     assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
     assert dummy_app._computer_use.enabled is True
+    assert dummy_app._computer_use.trust_mode == "allow"
     assert status.computer_use_status == "Active"
-    assert notices == [("Computer use re-armed for this chat (Confirm with User).", False)]
+    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
 
 
-async def test_set_computer_use_mode_updates_status_for_free_run_and_confirm(
+async def test_computer_use_on_reports_rearm_failure_without_compat_command(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notices: list[tuple[str, bool]] = []
     monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
-    dummy_app._computer_use.set_enabled(True)
+    dummy_app.current_context = "ctx-cua"
+    dummy_app._computer_use.rearm_result = {
+        "ok": False,
+        "code": "COMPUTER_USE_REARM_REQUIRED",
+        "error": "Portal permission was denied.",
+    }
 
-    await dummy_app._set_computer_use_mode("free_run")
+    await dummy_app._dispatch_command("/computer-use on")
+
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
-    assert dummy_app._computer_use.trust_mode == "free_run"
-    assert status.computer_use_status == "Free Run"
 
-    await dummy_app._set_computer_use_mode("persistent")
-    assert dummy_app._computer_use.trust_mode == "persistent"
-    assert status.computer_use_status == "Confirm with User"
+    assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
+    assert dummy_app._computer_use.enabled is True
+    assert status.computer_use_status == "Rearm Required"
+    assert status.computer_use_detail == "Portal permission was denied."
     assert notices == [
-        ("Computer use set to Free Run.", False),
-        ("Computer use set to Confirm with User.", False),
+        (
+            "Computer use enabled, but platform permission is not armed: Portal permission was denied.",
+            True,
+        ),
     ]
 
 
@@ -2554,85 +2539,13 @@ def test_connection_status_endpoint_indicator_omits_computer_use_summary() -> No
     status = ConnectionStatus()
     status.status = "connected"
     status.url = "http://localhost:32080"
-    status.set_computer_use_state("Confirm with User", "")
+    status.set_computer_use_state("Allow", "")
 
     rendered = status._render_endpoint_indicator().plain
 
     assert rendered == "http://localhost:32080 •"
     assert "CU" not in rendered
-    assert "Confirm with User" not in rendered
-
-
-async def test_set_computer_use_mode_refreshes_hello_metadata_when_connected(
-    dummy_app: DummyAgentZeroCLI,
-) -> None:
-    calls: list[dict[str, object]] = []
-
-    async def fake_send_hello(
-        *,
-        context_id: str | None = None,
-        computer_use: dict[str, object] | None = None,
-        host_browser: dict[str, object] | None = None,
-        remote_files: dict[str, object] | None = None,
-        remote_exec: dict[str, object] | None = None,
-    ) -> dict[str, object]:
-        calls.append(
-            {
-                "context_id": context_id,
-                "computer_use": dict(computer_use or {}),
-                "host_browser": dict(host_browser or {}),
-                "remote_files": dict(remote_files or {}),
-                "remote_exec": dict(remote_exec or {}),
-            }
-        )
-        return {"exec_config": {"version": 1}}
-
-    dummy_app.client.connected = True
-    dummy_app.current_context = "ctx-remote"
-    dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
-    dummy_app._computer_use.set_enabled(True)
-
-    await dummy_app._set_computer_use_mode("free_run")
-    await dummy_app._set_computer_use_mode("persistent")
-
-    assert calls == [
-        {
-            "context_id": "ctx-remote",
-            "computer_use": {
-                "supported": True,
-                "enabled": True,
-                "trust_mode": "free_run",
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
-            },
-            "host_browser": _host_browser_metadata(False),
-            "remote_files": {
-                "enabled": True,
-                "write_enabled": True,
-                "mode": "read_write",
-            },
-            "remote_exec": {
-                "enabled": False,
-            },
-        },
-        {
-            "context_id": "ctx-remote",
-            "computer_use": {
-                "supported": True,
-                "enabled": True,
-                "trust_mode": "persistent",
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
-            },
-            "host_browser": _host_browser_metadata(False),
-            "remote_files": {
-                "enabled": True,
-                "write_enabled": True,
-                "mode": "read_write",
-            },
-            "remote_exec": {
-                "enabled": False,
-            },
-        },
-    ]
+    assert "Allow" not in rendered
 
 
 async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
@@ -2672,7 +2585,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             "computer_use": {
                 "supported": True,
                 "enabled": False,
-                "trust_mode": "persistent",
+                "trust_mode": "allow",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
@@ -2690,7 +2603,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             "computer_use": {
                 "supported": True,
                 "enabled": False,
-                "trust_mode": "persistent",
+                "trust_mode": "allow",
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),

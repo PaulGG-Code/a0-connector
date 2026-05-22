@@ -257,7 +257,7 @@ def test_load_config_reads_computer_use_defaults_and_overrides(
         "\n".join(
             (
                 "AGENT_ZERO_COMPUTER_USE_ENABLED=1",
-                "AGENT_ZERO_COMPUTER_USE_TRUST_MODE=interactive",
+                "AGENT_ZERO_COMPUTER_USE_TRUST_MODE=unknown",
                 "AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN=dotenv-token",
             )
         )
@@ -272,16 +272,16 @@ def test_load_config_reads_computer_use_defaults_and_overrides(
 
     dotenv_config = load_config()
     assert dotenv_config.computer_use_enabled is True
-    assert dotenv_config.computer_use_trust_mode == "persistent"
+    assert dotenv_config.computer_use_trust_mode == "allow"
     assert dotenv_config.computer_use_restore_token == "dotenv-token"
 
     monkeypatch.setenv("AGENT_ZERO_COMPUTER_USE_ENABLED", "0")
-    monkeypatch.setenv("AGENT_ZERO_COMPUTER_USE_TRUST_MODE", "free_run")
+    monkeypatch.setenv("AGENT_ZERO_COMPUTER_USE_TRUST_MODE", "allow")
     monkeypatch.setenv("AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN", "env-token")
 
     env_config = load_config()
     assert env_config.computer_use_enabled is False
-    assert env_config.computer_use_trust_mode == "free_run"
+    assert env_config.computer_use_trust_mode == "allow"
     assert env_config.computer_use_restore_token == "env-token"
 
 
@@ -299,20 +299,21 @@ def test_save_computer_use_settings_persist_to_dotenv(
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
 
     save_computer_use_enabled(True)
-    save_computer_use_trust_mode("free_run")
+    save_computer_use_trust_mode("allow")
     save_computer_use_restore_token("restore-token")
     save_computer_use_restore_token("")
 
     contents = env_file.read_text(encoding="utf-8").splitlines()
     assert "AGENT_ZERO_COMPUTER_USE_ENABLED=1" in contents
-    assert "AGENT_ZERO_COMPUTER_USE_TRUST_MODE=free_run" in contents
+    assert "AGENT_ZERO_COMPUTER_USE_TRUST_MODE=allow" in contents
     assert not any(line.startswith("AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN=") for line in contents)
 
 
-def test_normalize_computer_use_trust_mode_accepts_two_mode_labels() -> None:
-    assert normalize_computer_use_trust_mode("Confirm with User") == "persistent"
-    assert normalize_computer_use_trust_mode("interactive") == "persistent"
-    assert normalize_computer_use_trust_mode("Free Run") == "free_run"
+def test_normalize_computer_use_trust_mode_defaults_unknown_labels_to_allow() -> None:
+    assert normalize_computer_use_trust_mode("unknown") == "allow"
+    assert normalize_computer_use_trust_mode("") == "allow"
+    assert normalize_computer_use_trust_mode("persistent") == "persistent"
+    assert normalize_computer_use_trust_mode("Allow") == "allow"
 
 
 async def test_fetch_capabilities_raises_plugin_missing_on_404() -> None:
@@ -761,7 +762,7 @@ async def test_send_hello_includes_computer_use_metadata() -> None:
     metadata = {
         "supported": True,
         "enabled": True,
-        "trust_mode": "persistent",
+        "trust_mode": "allow",
         "artifact_root": "/a0/tmp/_a0_connector/computer_use",
     }
     await client.send_hello(computer_use=metadata)

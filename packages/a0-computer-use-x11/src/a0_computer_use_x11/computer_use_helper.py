@@ -403,10 +403,10 @@ class X11ComputerUseHelper:
         trust_mode = str(params.get("trust_mode") or "persistent").strip().lower()
         context_id = str(params.get("context_id") or "default").strip() or "default"
         restore_token = str(params.get("restore_token") or "").strip()
-        if trust_mode == "free_run" and not restore_token:
+        if trust_mode == "allow" and not restore_token:
             raise X11ComputerUseError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "Free-run requires a stored restore token.",
+                "Allow requires a stored restore token.",
             )
 
         width, height = self._driver.screen_size()

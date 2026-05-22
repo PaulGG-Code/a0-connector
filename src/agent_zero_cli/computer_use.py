@@ -45,7 +45,7 @@ _SUPPORTED_ACTIONS = {
     "type",
     "stop_session",
 }
-_SUPPORTED_TRUST_MODES = {"interactive", "persistent", "free_run"}
+_SUPPORTED_TRUST_MODES = {"interactive", "persistent", "allow"}
 _MUTATING_ACTIONS = {"move", "click", "scroll", "key", "type"}
 _DEFAULT_FRESH_CAPTURE_TIMEOUT_SECONDS = 0.45
 _CAPTURE_COORDINATE_SPACE = "normalized_global_screen"
@@ -55,8 +55,7 @@ _SESSION_REQUIRED_ERROR = "COMPUTER_USE_SESSION_REQUIRED"
 _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
 _REARM_REQUIRED_MESSAGE = (
     "Computer use is configured, but the installed desktop-control backend is not armed. "
-    "Re-arm it in the A0 CLI with Confirm with User, approve the platform permission "
-    "prompt if shown, then switch back to Free Run if desired."
+    "Run /computer-use on in the A0 CLI and approve the platform permission prompt if shown."
 )
 
 
@@ -370,7 +369,7 @@ class ComputerUseManager:
     def _configured_status(self) -> tuple[str, str]:
         if not self.enabled:
             return "disabled", ""
-        if self.trust_mode == "free_run" and not _normalize_restore_token(self.restore_token):
+        if self.trust_mode == "allow" and not _normalize_restore_token(self.restore_token):
             return "rearm required", _REARM_REQUIRED_MESSAGE
         return self.trust_mode, ""
 
@@ -390,7 +389,7 @@ class ComputerUseManager:
 
     def set_trust_mode(self, mode: str) -> str:
         normalized = self._store_trust_mode(mode)
-        if self.enabled and self.status in {"interactive", "persistent", "free_run", "rearm required"}:
+        if self.enabled and self.status in {"interactive", "persistent", "allow", "rearm required"}:
             status, error = self._configured_status()
             self._set_status(status, error=error)
         return normalized
@@ -510,10 +509,10 @@ class ComputerUseManager:
         elif not self.restore_token:
             self.restore_token = previous_restore_token
 
-        if previous_trust_mode == "free_run":
-            self._store_trust_mode("free_run")
+        if previous_trust_mode == "allow":
+            self._store_trust_mode("allow")
             if bool(result.get("ok")):
-                self._set_status("active" if session.active else "free_run")
+                self._set_status("active" if session.active else "allow")
             elif result.get("code") == _REARM_REQUIRED_ERROR:
                 self._set_status("rearm required", error=str(result.get("error") or _REARM_REQUIRED_MESSAGE))
 
@@ -909,7 +908,7 @@ class ComputerUseManager:
             trust_mode=self.trust_mode,
             restore_token_present=bool(restore_token),
         )
-        if self.trust_mode == "free_run" and not restore_token:
+        if self.trust_mode == "allow" and not restore_token:
             self._set_status("rearm required", error=_REARM_REQUIRED_MESSAGE)
             return self._error(
                 op_id,
@@ -932,14 +931,14 @@ class ComputerUseManager:
             "trust_mode": self.trust_mode,
             "restore_token": restore_token,
         }
-        if self.trust_mode == "free_run":
+        if self.trust_mode == "allow":
             request["allow_prompt"] = False
             request["request_timeout_seconds"] = 2.0
         else:
             request["allow_prompt"] = True
             request["request_timeout_seconds"] = 180.0
 
-        self._set_status("approval required" if self.trust_mode != "free_run" else "free_run")
+        self._set_status("approval required" if self.trust_mode != "allow" else "allow")
         response = await self._helper_request(session, request)
         return self._normalize_helper_response(op_id, session, response, action="start_session")
 
@@ -1052,7 +1051,7 @@ class ComputerUseManager:
             if action_name == "capture":
                 result_dict = self._normalize_capture_result(result_dict)
             restore_token = str(result_dict.get("restore_token", "") or "").strip()
-            if restore_token and self.trust_mode in {"persistent", "free_run"}:
+            if restore_token and self.trust_mode in {"persistent", "allow"}:
                 self.update_restore_token(restore_token)
             if action_name == "capture":
                 keep_path = str(
