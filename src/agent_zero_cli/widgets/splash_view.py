@@ -29,7 +29,7 @@ _STAGE_LABELS: dict[SplashStage, str] = {
 
 
 def _connection_target_summary(host: str) -> tuple[str, str, bool]:
-    normalized_host = host.strip() or DEFAULT_HOST
+    normalized_host = _normalize_connection_target(host) or DEFAULT_HOST
     try:
         parsed = urlparse(normalized_host)
     except ValueError:
@@ -59,13 +59,25 @@ def _connection_target_summary(host: str) -> tuple[str, str, bool]:
     return label, normalized_host, scheme == "https"
 
 
+def _normalize_connection_target(host: str) -> str:
+    raw_host = host.strip()
+    if not raw_host:
+        return ""
+    if raw_host.startswith("//"):
+        return f"http:{raw_host}".rstrip("/")
+    if "://" not in raw_host:
+        return f"http://{raw_host}".rstrip("/")
+    return raw_host.rstrip("/")
+
+
 def _validate_connection_target(host: str) -> tuple[bool, str]:
     raw_host = host.strip()
     if not raw_host:
         return True, ""
+    normalized_host = _normalize_connection_target(raw_host)
 
     try:
-        parsed = urlparse(raw_host)
+        parsed = urlparse(normalized_host)
     except ValueError:
         return False, "Invalid URL format. Use http://host[:port] or https://host[:port]."
 
@@ -80,6 +92,9 @@ def _validate_connection_target(host: str) -> tuple[bool, str]:
         port = parsed.port
     except ValueError:
         return False, "Invalid URL format. Port must be numeric."
+
+    if normalized_host != raw_host:
+        return True, f"URL format looks valid. Using {normalized_host}."
 
     if port is None:
         return True, "URL format looks valid. Standard ports 80/443 are optional."
@@ -329,7 +344,7 @@ class SplashHostPanel(Vertical):
 
     @property
     def host(self) -> str:
-        return self._host.value.strip() or DEFAULT_HOST
+        return _normalize_connection_target(self._host.value) or DEFAULT_HOST
 
     @property
     def is_valid(self) -> bool:
@@ -347,7 +362,7 @@ class SplashHostPanel(Vertical):
     @property
     def connect_host(self) -> str:
         if self._state.manual_entry_expanded:
-            return self._host.value.strip()
+            return _normalize_connection_target(self._host.value)
         return self.selected_host_url
 
     @property
