@@ -1846,6 +1846,53 @@ def test_computer_use_remote_runtime_rearm_result_tells_agent_to_stop() -> None:
     assert [call["action"] for call in calls] == ["start_session"]
 
 
+def test_computer_use_remote_runtime_approval_required_tells_agent_to_stop() -> None:
+    calls: list[dict[str, object]] = []
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        calls.append(dict(payload))
+        return {
+            "op_id": payload["op_id"],
+            "ok": False,
+            "code": "COMPUTER_USE_APPROVAL_REQUIRED",
+            "error": "macOS Accessibility permission is required.",
+            "result": {
+                "status": "rearm required",
+                "trust_mode": "allow",
+                "last_error": "macOS Accessibility permission is required.",
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "status": "allow",
+            "last_error": "",
+            "restore_token_present": True,
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="start_session").execute()
+    )
+
+    assert "COMPUTER_USE_REARM_REQUIRED" in response.message
+    assert "macOS Accessibility permission is required" in response.message
+    assert "Stop using computer_use_remote for now" in response.message
+    assert "Do not retry or use screenshot fallbacks" in response.message
+    assert [call["action"] for call in calls] == ["start_session"]
+
+
 def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path: Path) -> None:
     image_path = _write_png_fixture(tmp_path)
 

@@ -54,6 +54,7 @@ _DEFAULT_FRESH_CAPTURE_TIMEOUT_SECONDS = 0.45
 _CAPTURE_COORDINATE_SPACE = "normalized_global_screen"
 _DISABLED_ERROR = "COMPUTER_USE_DISABLED"
 _REARM_REQUIRED_ERROR = "COMPUTER_USE_REARM_REQUIRED"
+_APPROVAL_REQUIRED_ERROR = "COMPUTER_USE_APPROVAL_REQUIRED"
 _SESSION_REQUIRED_ERROR = "COMPUTER_USE_SESSION_REQUIRED"
 _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
 _REARM_REQUIRED_MESSAGE = (
@@ -1210,8 +1211,15 @@ class ComputerUseManager:
             self._set_status("active" if session.active else self.trust_mode)
             return self._success(op_id, result_dict)
 
-        if code == _REARM_REQUIRED_ERROR or error == _REARM_REQUIRED_ERROR:
-            message = error or _REARM_REQUIRED_MESSAGE
+        if (
+            code in {_REARM_REQUIRED_ERROR, _APPROVAL_REQUIRED_ERROR}
+            or error in {_REARM_REQUIRED_ERROR, _APPROVAL_REQUIRED_ERROR}
+        ):
+            message = (
+                error
+                if error and error not in {_REARM_REQUIRED_ERROR, _APPROVAL_REQUIRED_ERROR}
+                else _REARM_REQUIRED_MESSAGE
+            )
             self._set_status("rearm required", error=message)
             return self._error(
                 op_id,

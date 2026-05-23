@@ -14,7 +14,7 @@ def _message_for_status(status: str, *, enabled: bool) -> str:
     if normalized == "active":
         return "Computer Use is active for this CLI session."
     if normalized == "approval required":
-        return "Computer Use is waiting for your platform permission prompt."
+        return "Computer Use is waiting for your platform permission prompt. If you already approved it, restart the CLI."
     if normalized == "rearm required":
         return "Computer use needs re-arming before Agent Zero can control your computer again."
     return "Agent Zero CLI can control your computer in this session."

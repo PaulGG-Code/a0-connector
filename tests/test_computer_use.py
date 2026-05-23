@@ -1204,6 +1204,32 @@ async def test_ensure_armed_marks_stale_allow_token_rearm_required(
     assert manager.hello_metadata()["status"] == "rearm required"
 
 
+async def test_ensure_armed_maps_approval_required_to_rearm_required(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token="123e4567-e89b-12d3-a456-426614174000",
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": False,
+            "code": "COMPUTER_USE_APPROVAL_REQUIRED",
+            "error": "macOS Accessibility permission is required.",
+        }
+    )
+
+    result = await manager.ensure_armed("ctx-1")
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert result["error"] == "macOS Accessibility permission is required."
+    assert manager.status_label == "rearm required"
+    assert manager.status_detail == "macOS Accessibility permission is required."
+    assert manager.hello_metadata()["status"] == "rearm required"
+
+
 async def test_rearm_forces_prompt_then_restores_allow_mode(
     _temp_env: Path,
 ) -> None:
@@ -1313,6 +1339,33 @@ async def test_rearm_failure_preserves_previous_allow_token_but_marks_rearm_requ
     assert manager.restore_token == restore_token
     assert manager.status_label == "rearm required"
     assert manager.status_detail == "User approval is required."
+
+
+async def test_rearm_approval_required_restores_allow_mode_and_marks_rearm_required(
+    _temp_env: Path,
+) -> None:
+    restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token=restore_token,
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": False,
+            "code": "COMPUTER_USE_APPROVAL_REQUIRED",
+            "error": "macOS Accessibility permission is required.",
+        }
+    )
+
+    result = await manager.rearm("ctx-1")
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert manager.trust_mode == "allow"
+    assert manager.restore_token == restore_token
+    assert manager.status_label == "rearm required"
+    assert manager.status_detail == "macOS Accessibility permission is required."
 
 
 async def test_stop_session_normalizes_success_and_closes_helper(

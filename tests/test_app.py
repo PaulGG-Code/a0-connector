@@ -205,7 +205,10 @@ class FakeComputerUseBanner:
         if status == "Active":
             self.message = "Computer Use is active for this CLI session."
         elif status == "Approval Required":
-            self.message = "Computer Use is waiting for your platform permission prompt."
+            self.message = (
+                "Computer Use is waiting for your platform permission prompt. "
+                "If you already approved it, restart the CLI."
+            )
         elif status == "Rearm Required":
             self.message = "Computer use needs re-arming before Agent Zero can control your computer again."
         else:
