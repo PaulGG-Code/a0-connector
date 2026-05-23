@@ -40,6 +40,9 @@ BTN_MIDDLE = 274
 _KEY_ALIASES = {
     "alt": "Alt_L",
     "backspace": "BackSpace",
+    "cmd": "Super_L",
+    "command": "Super_L",
+    "control": "Control_L",
     "ctrl": "Control_L",
     "delete": "Delete",
     "down": "Down",
@@ -55,8 +58,123 @@ _KEY_ALIASES = {
     "shift": "Shift_L",
     "space": "space",
     "super": "Super_L",
+    "win": "Super_L",
+    "windows": "Super_L",
     "tab": "Tab",
     "up": "Up",
+}
+_EVDEV_KEY_ALIASES = {
+    "alt": 56,
+    "backspace": 14,
+    "cmd": 125,
+    "command": 125,
+    "control": 29,
+    "ctrl": 29,
+    "delete": 111,
+    "del": 111,
+    "down": 108,
+    "end": 107,
+    "enter": 28,
+    "esc": 1,
+    "escape": 1,
+    "home": 102,
+    "insert": 110,
+    "ins": 110,
+    "left": 105,
+    "leftalt": 56,
+    "leftctrl": 29,
+    "leftmeta": 125,
+    "leftshift": 42,
+    "leftsuper": 125,
+    "menu": 139,
+    "meta": 125,
+    "pagedown": 109,
+    "pageup": 104,
+    "pgdn": 109,
+    "pgup": 104,
+    "print": 99,
+    "printscreen": 99,
+    "prtsc": 99,
+    "right": 106,
+    "rightalt": 100,
+    "rightctrl": 97,
+    "rightmeta": 126,
+    "rightshift": 54,
+    "rightsuper": 126,
+    "shift": 42,
+    "space": 57,
+    "super": 125,
+    "tab": 15,
+    "up": 103,
+    "win": 125,
+    "windows": 125,
+}
+_EVDEV_CHAR_KEYCODES = {
+    "1": 2,
+    "2": 3,
+    "3": 4,
+    "4": 5,
+    "5": 6,
+    "6": 7,
+    "7": 8,
+    "8": 9,
+    "9": 10,
+    "0": 11,
+    "-": 12,
+    "_": 12,
+    "=": 13,
+    "+": 13,
+    "q": 16,
+    "w": 17,
+    "e": 18,
+    "r": 19,
+    "t": 20,
+    "y": 21,
+    "u": 22,
+    "i": 23,
+    "o": 24,
+    "p": 25,
+    "[": 26,
+    "{": 26,
+    "]": 27,
+    "}": 27,
+    "a": 30,
+    "s": 31,
+    "d": 32,
+    "f": 33,
+    "g": 34,
+    "h": 35,
+    "j": 36,
+    "k": 37,
+    "l": 38,
+    ";": 39,
+    ":": 39,
+    "'": 40,
+    '"': 40,
+    "`": 41,
+    "~": 41,
+    "\\": 43,
+    "|": 43,
+    "z": 44,
+    "x": 45,
+    "c": 46,
+    "v": 47,
+    "b": 48,
+    "n": 49,
+    "m": 50,
+    ",": 51,
+    "<": 51,
+    ".": 52,
+    ">": 52,
+    "/": 53,
+    "?": 53,
+    " ": 57,
+}
+_EVDEV_FUNCTION_KEYCODES = {
+    **{f"f{number}": 58 + number for number in range(1, 11)},
+    "f11": 87,
+    "f12": 88,
+    **{f"f{number}": 170 + number for number in range(13, 25)},
 }
 
 _DBUS_NATIVE_TYPES = (
@@ -468,21 +586,11 @@ class PortalComputerUseHelper:
         keys = params.get("keys")
         if not isinstance(keys, list) or not keys:
             raise PortalError("COMPUTER_USE_KEYS_REQUIRED", "key requires a non-empty keys list")
-        normalized = [self._keysym(name) for name in keys]
-        for keysym in normalized:
-            self._remote_desktop.NotifyKeyboardKeysym(
-                dbus.ObjectPath(session.session_handle),
-                _dbus_dict({}),
-                dbus.Int32(keysym),
-                dbus.UInt32(1),
-            )
-        for keysym in reversed(normalized):
-            self._remote_desktop.NotifyKeyboardKeysym(
-                dbus.ObjectPath(session.session_handle),
-                _dbus_dict({}),
-                dbus.Int32(keysym),
-                dbus.UInt32(0),
-            )
+        normalized = [self._keyboard_event(name) for name in keys]
+        for kind, code in normalized:
+            self._notify_keyboard(session, kind=kind, code=code, state=1)
+        for kind, code in reversed(normalized):
+            self._notify_keyboard(session, kind=kind, code=code, state=0)
         return {"keys": keys, "session_id": session.session_id}
 
     def type_text(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -718,6 +826,40 @@ class PortalComputerUseHelper:
         if keysym <= 0:
             raise PortalError("COMPUTER_USE_BAD_KEY", f"Unsupported key: {value}")
         return keysym
+
+    def _keyboard_event(self, value: str) -> tuple[str, int]:
+        keycode = self._evdev_keycode(value)
+        if keycode is not None:
+            return "keycode", keycode
+        return "keysym", self._keysym(value)
+
+    def _evdev_keycode(self, value: str) -> int | None:
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        if normalized in _EVDEV_KEY_ALIASES:
+            return _EVDEV_KEY_ALIASES[normalized]
+        if normalized in _EVDEV_FUNCTION_KEYCODES:
+            return _EVDEV_FUNCTION_KEYCODES[normalized]
+        if len(normalized) == 1:
+            return _EVDEV_CHAR_KEYCODES.get(normalized)
+        return None
+
+    def _notify_keyboard(self, session: PortalSession, *, kind: str, code: int, state: int) -> None:
+        if kind == "keycode":
+            self._remote_desktop.NotifyKeyboardKeycode(
+                dbus.ObjectPath(session.session_handle),
+                _dbus_dict({}),
+                dbus.Int32(code),
+                dbus.UInt32(state),
+            )
+            return
+        self._remote_desktop.NotifyKeyboardKeysym(
+            dbus.ObjectPath(session.session_handle),
+            _dbus_dict({}),
+            dbus.Int32(code),
+            dbus.UInt32(state),
+        )
 
     def _request_path(self, token: str) -> str:
         sender = self._bus_name.lstrip(":").replace(".", "_")
