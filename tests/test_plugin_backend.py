@@ -639,6 +639,34 @@ def _assert_capture_response_content(
     assert raw_content[1]["image_url"]["url"] == image_url
 
 
+def _assert_capture_history_message(
+    agent: _FakeRemoteAgent,
+    *,
+    message: str,
+    preview: str,
+    image_url: str,
+) -> None:
+    assert len(agent.tool_results) == 1
+    tool_result = agent.tool_results[0]
+    assert tool_result["tool_name"] == "computer_use_remote"
+    assert tool_result["tool_result"] == message
+    assert "raw_content" not in tool_result
+    assert "preview" not in tool_result
+
+    assert len(agent.history_messages) == 1
+    history_message = agent.history_messages[0]
+    assert history_message["ai"] is False
+    assert history_message["tokens"] == 1500
+    content = history_message["content"]
+    assert isinstance(content, dict)
+    assert content["preview"] == preview
+    raw_content = content["raw_content"]
+    assert raw_content[0]["type"] == "text"
+    assert raw_content[0]["text"] == message
+    assert raw_content[1]["type"] == "image_url"
+    assert raw_content[1]["image_url"]["url"] == image_url
+
+
 def test_capabilities_advertise_current_ws_contract() -> None:
     _install_fake_helpers()
     _reload("plugins._a0_connector.api.v1.base")
@@ -1869,8 +1897,12 @@ def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path:
     tool = _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1")
     tool.name = "computer_use_remote"
     asyncio.run(tool.after_execution(response))
-    assert agent.tool_results[0]["raw_content"][0]["text"] == response.message
-    assert agent.tool_results[0]["raw_content"][1]["image_url"]["url"] == str(image_path)
+    _assert_capture_history_message(
+        agent,
+        message=response.message,
+        preview=_expected_capture_summary(),
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_capture_uses_shared_png_path(
@@ -1981,6 +2013,63 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
     image_url = raw_content[1]["image_url"]["url"]
     assert image_url == f"data:image/png;base64,{base64.b64encode(capture_bytes).decode('ascii')}"
     assert list(tmp_path.rglob("*.png")) == [image_path]
+
+
+def test_computer_use_remote_capture_prefers_shared_path_over_base64_artifact(
+    tmp_path: Path,
+) -> None:
+    image_path = _write_png_fixture(tmp_path)
+    capture_bytes = image_path.read_bytes()
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": str(image_path),
+                "artifact": {
+                    "filename": "capture.png",
+                    "mime": "image/png",
+                    "encoding": "base64",
+                    "data": base64.b64encode(capture_bytes).decode("ascii"),
+                },
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1").execute()
+    )
+
+    expected_summary = _expected_capture_summary()
+    assert response.message == (
+        f"Current screen attached: {expected_summary} {_capture_verification_note(tool_mod)}"
+    )
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=expected_summary,
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None:
