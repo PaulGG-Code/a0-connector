@@ -585,6 +585,8 @@ class ComputerUseManager:
         # silently revive the old token; force the backend to ask the platform.
         self.restore_token = ""
         session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
+        if session.active or session.session_id:
+            await self._close_helper_session(session)
         result = await self._start_session(op_id, session)
         if bool(result.get("ok")):
             if not _normalize_restore_token(self.restore_token):

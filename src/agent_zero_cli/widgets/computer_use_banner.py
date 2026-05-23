@@ -12,9 +12,9 @@ def _message_for_status(status: str, *, enabled: bool) -> str:
     if not enabled or normalized == "disabled":
         return ""
     if normalized == "active":
-        return "Agent Zero CLI is controlling your computer. Leave your mouse free."
+        return "Computer Use is active for this CLI session."
     if normalized == "approval required":
-        return "Agent Zero CLI is requesting computer control. Leave your mouse free if you approve the step."
+        return "Computer Use is waiting for your platform permission prompt."
     if normalized == "rearm required":
         return "Computer use needs re-arming before Agent Zero can control your computer again."
     return "Agent Zero CLI can control your computer in this session."

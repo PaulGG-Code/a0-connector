@@ -203,11 +203,9 @@ class FakeComputerUseBanner:
             self.message = ""
             return
         if status == "Active":
-            self.message = "Agent Zero CLI is controlling your computer. Leave your mouse free."
+            self.message = "Computer Use is active for this CLI session."
         elif status == "Approval Required":
-            self.message = (
-                "Agent Zero CLI is requesting computer control. Leave your mouse free if you approve the step."
-            )
+            self.message = "Computer Use is waiting for your platform permission prompt."
         elif status == "Rearm Required":
             self.message = "Computer use needs re-arming before Agent Zero can control your computer again."
         else:
@@ -2481,7 +2479,7 @@ async def test_computer_use_slash_commands_update_notice_and_status(
     assert dummy_app._computer_use.rearm_calls == [None]
     assert status.computer_use_status == "Active"
     assert banner.display is True
-    assert "is controlling your computer" in banner.message
+    assert banner.message == "Computer Use is active for this CLI session."
     assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
 
     await dummy_app._dispatch_command("/computer-use off")
@@ -2973,7 +2971,7 @@ def test_sync_computer_use_status_shows_active_banner_copy(
 
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert banner.display is True
-    assert banner.message == "Agent Zero CLI is controlling your computer. Leave your mouse free."
+    assert banner.message == "Computer Use is active for this CLI session."
 
 
 async def test_reset_disconnected_state_disconnects_computer_use_manager(

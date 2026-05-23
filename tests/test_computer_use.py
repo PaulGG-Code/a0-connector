@@ -1246,6 +1246,48 @@ async def test_rearm_forces_prompt_then_restores_allow_mode(
     assert request["context_id"] == "ctx-1"
 
 
+async def test_rearm_closes_stale_active_session_before_prompting(
+    _temp_env: Path,
+) -> None:
+    old_restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    new_restore_token = "123e4567-e89b-12d3-a456-426614174001"
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token=old_restore_token,
+    )
+    manager._sessions["ctx-1"] = _HelperSession(
+        context_id="ctx-1",
+        session_id="stale-session",
+        active=True,
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": True,
+            "result": {
+                "active": True,
+                "status": "active",
+                "session_id": "fresh-session",
+                "restore_token": new_restore_token,
+                "width": 1280,
+                "height": 720,
+            },
+        }
+    )
+
+    result = await manager.rearm("ctx-1")
+
+    assert result["ok"] is True
+    manager._helper_request.assert_awaited_once()
+    request = manager._helper_request.await_args.args[1]
+    assert request["trust_mode"] == "persistent"
+    assert request["allow_prompt"] is True
+    assert request["restore_token"] == ""
+    assert manager._sessions["ctx-1"].session_id == "fresh-session"
+    assert manager.restore_token == new_restore_token
+    assert manager.status_label == "active"
+
+
 async def test_rearm_failure_preserves_previous_allow_token_but_marks_rearm_required(
     _temp_env: Path,
 ) -> None:
