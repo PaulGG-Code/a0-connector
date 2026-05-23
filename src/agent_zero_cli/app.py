@@ -90,6 +90,7 @@ _COMPUTER_USE_MODE_LABELS = {
 _COMPUTER_USE_STATUS_LABELS = {
     **_COMPUTER_USE_MODE_LABELS,
     "active": "Active",
+    "arming": "Arming",
     "approval required": "Approval Required",
     "disabled": "Disabled",
     "rearm required": "Rearm Required",

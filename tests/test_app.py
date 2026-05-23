@@ -204,6 +204,8 @@ class FakeComputerUseBanner:
             return
         if status == "Active":
             self.message = "Computer Use is active for this CLI session."
+        elif status == "Arming":
+            self.message = "Computer Use is checking host permissions."
         elif status == "Approval Required":
             self.message = (
                 "Computer Use is waiting for your platform permission prompt. "
@@ -294,7 +296,7 @@ class FakeComputerUseManager:
 
     def mark_approval_pending(self) -> None:
         if self.enabled:
-            self.status_label = "approval required"
+            self.status_label = "arming"
             self.status_detail = ""
             self._emit()
 
@@ -2975,6 +2977,23 @@ def test_sync_computer_use_status_shows_active_banner_copy(
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert banner.display is True
     assert banner.message == "Computer Use is active for this CLI session."
+
+
+def test_sync_computer_use_status_shows_arming_banner_copy(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context_has_messages = True
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.status_label = "arming"
+
+    dummy_app._sync_computer_use_status()
+
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+    banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
+    assert status.computer_use_status == "Arming"
+    assert banner.display is True
+    assert banner.message == "Computer Use is checking host permissions."
 
 
 async def test_reset_disconnected_state_disconnects_computer_use_manager(

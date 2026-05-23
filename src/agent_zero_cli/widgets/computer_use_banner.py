@@ -13,6 +13,8 @@ def _message_for_status(status: str, *, enabled: bool) -> str:
         return ""
     if normalized == "active":
         return "Computer Use is active for this CLI session."
+    if normalized == "arming":
+        return "Computer Use is checking host permissions."
     if normalized == "approval required":
         return "Computer Use is waiting for your platform permission prompt. If you already approved it, restart the CLI."
     if normalized == "rearm required":

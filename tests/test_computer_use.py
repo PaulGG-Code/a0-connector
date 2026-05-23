@@ -217,6 +217,21 @@ async def test_allow_without_restore_token_returns_rearm_required(
     assert manager.hello_metadata()["restore_token_present"] is False
 
 
+def test_allow_with_restore_token_starts_in_allow_status(
+    _temp_env: Path,
+) -> None:
+    restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token=restore_token,
+    )
+
+    assert manager.status_label == "allow"
+    assert manager.hello_metadata()["status"] == "allow"
+    assert manager.hello_metadata()["restore_token_present"] is True
+
+
 def test_reset_enabled_for_shutdown_disables_next_run_without_erasing_restore_token(
     _temp_env: Path,
 ) -> None:
@@ -1170,8 +1185,8 @@ async def test_ensure_armed_validates_saved_allow_token(
 
     assert result["ok"] is True
     assert manager.status_label == "active"
-    assert "approval required" in status_updates
-    assert "allow" not in status_updates
+    assert "arming" in status_updates
+    assert "approval required" not in status_updates
     request = manager._helper_request.await_args.args[1]
     assert request["trust_mode"] == "allow"
     assert request["allow_prompt"] is False

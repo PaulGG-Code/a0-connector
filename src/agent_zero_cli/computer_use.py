@@ -57,6 +57,7 @@ _REARM_REQUIRED_ERROR = "COMPUTER_USE_REARM_REQUIRED"
 _APPROVAL_REQUIRED_ERROR = "COMPUTER_USE_APPROVAL_REQUIRED"
 _SESSION_REQUIRED_ERROR = "COMPUTER_USE_SESSION_REQUIRED"
 _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
+_ARMING_STATUS = "arming"
 _REARM_REQUIRED_MESSAGE = (
     "Computer use is configured, but the installed desktop-control backend is not armed. "
     "Run /computer-use on in the A0 CLI and approve the platform permission prompt if shown."
@@ -444,7 +445,7 @@ class ComputerUseManager:
         if self.trust_mode == "allow" and not _normalize_restore_token(self.restore_token):
             return "rearm required", _REARM_REQUIRED_MESSAGE
         if self.trust_mode == "allow":
-            return "approval required", ""
+            return "allow", ""
         return self.trust_mode, ""
 
     def _store_trust_mode(self, mode: str) -> str:
@@ -469,7 +470,7 @@ class ComputerUseManager:
 
     def set_trust_mode(self, mode: str) -> str:
         normalized = self._store_trust_mode(mode)
-        if self.enabled and self.status in {"interactive", "persistent", "allow", "rearm required"}:
+        if self.enabled and self.status in {"interactive", "persistent", "allow", _ARMING_STATUS, "rearm required"}:
             status, error = self._configured_status()
             self._set_status(status, error=error)
         return normalized
@@ -494,7 +495,7 @@ class ComputerUseManager:
 
     def mark_approval_pending(self) -> None:
         if self.enabled:
-            self._set_status("approval required")
+            self._set_status(_ARMING_STATUS)
 
     def _session_snapshot(self) -> dict[str, Any]:
         active_contexts = sorted(
@@ -1079,7 +1080,7 @@ class ComputerUseManager:
             request["allow_prompt"] = True
             request["request_timeout_seconds"] = 180.0
 
-        self._set_status("approval required")
+        self._set_status("approval required" if _coerce_bool(request.get("allow_prompt")) else _ARMING_STATUS)
         response = await self._helper_request(session, request)
         return self._normalize_helper_response(op_id, session, response, action="start_session")
 
