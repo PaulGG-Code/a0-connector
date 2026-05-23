@@ -11,6 +11,8 @@ WINDOWS_BACKEND_FEATURES = (
     "inline-png-capture",
     "dxcam-screen-capture",
     "normalized-screen-coordinates",
+    "virtual-screen-coordinates",
+    "multi-monitor-virtual-screen",
     "global-pixel-actions",
     "uia-automation",
     "mouse-injection",

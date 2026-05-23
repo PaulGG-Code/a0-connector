@@ -18,6 +18,7 @@ if str(WINDOWS_PACKAGE_SRC) not in sys.path:
 from a0_computer_use_windows.backend import WINDOWS_BACKEND_SPEC, WindowsComputerUseBackend
 import a0_computer_use_windows.runtime as windows_runtime_mod
 from a0_computer_use_windows.runtime import (
+    ScreenGeometry,
     WindowsComputerUseError,
     WindowsComputerUseRuntime,
     WindowsSessionStore,
@@ -28,8 +29,19 @@ from a0_computer_use_windows.shared import normalize_action_payload
 class _FakeDriver:
     def __init__(self) -> None:
         self.calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+        self._origin_x = 0
+        self._origin_y = 0
         self._width = 1280
         self._height = 720
+
+    def screen_geometry(self) -> ScreenGeometry:
+        self.calls.append(("screen_geometry", tuple(), {}))
+        return ScreenGeometry(
+            origin_x=self._origin_x,
+            origin_y=self._origin_y,
+            width=self._width,
+            height=self._height,
+        )
 
     def screen_size(self) -> tuple[int, int]:
         self.calls.append(("screen_size", tuple(), {}))
@@ -71,6 +83,8 @@ def test_windows_backend_spec_exports_expected_metadata() -> None:
     assert "inline-png-capture" in spec.features
     assert "uia-automation" in spec.features
     assert "global-pixel-actions" in spec.features
+    assert "virtual-screen-coordinates" in spec.features
+    assert "multi-monitor-virtual-screen" in spec.features
     assert "real-cursor-may-move" in spec.features
 
 
@@ -162,6 +176,8 @@ def test_windows_runtime_capture_returns_inline_png_payload(tmp_path: Path) -> N
 
     assert capture["width"] == 1
     assert capture["height"] == 1
+    assert capture["origin_x"] == 0
+    assert capture["origin_y"] == 0
     assert capture["png_base64"]
     assert base64.b64decode(capture["png_base64"])
 
@@ -199,13 +215,43 @@ def test_windows_desktop_automation_prefers_dxcam_numpy_processor(monkeypatch: p
 
     automation = windows_runtime_mod._WindowsDesktopAutomation.__new__(windows_runtime_mod._WindowsDesktopAutomation)
     automation._camera = None
+    automation.screen_geometry = lambda: ScreenGeometry(origin_x=0, origin_y=0, width=1, height=1)
     monkeypatch.setattr(windows_runtime_mod, "_load_dxcam_module", lambda: types.SimpleNamespace(create=create))
 
-    png_bytes, width, height = automation.capture_png()
+    png_bytes, width, height, origin_x, origin_y = automation.capture_png()
 
     assert png_bytes
     assert (width, height) == (1, 1)
+    assert (origin_x, origin_y) == (0, 0)
     assert calls == [{"output_idx": 0, "processor_backend": "numpy"}]
+
+
+def test_windows_runtime_uses_virtual_screen_origin_for_normalized_actions(tmp_path: Path) -> None:
+    driver = _FakeDriver()
+    driver._origin_x = -1920
+    driver._origin_y = -120
+    driver._width = 3200
+    driver._height = 1200
+    runtime = WindowsComputerUseRuntime(driver=driver, state_dir=tmp_path / "state")
+    session = runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    moved = runtime.move({"context_id": "ctx-1", "x": 0.25, "y": 0.5})
+    clicked = runtime.click({"context_id": "ctx-1", "x": 1.0, "y": 0.0, "button": "left", "count": 1})
+
+    assert session["origin_x"] == -1920
+    assert session["origin_y"] == -120
+    assert moved["pixel_x"] == -1120
+    assert moved["pixel_y"] == 480
+    assert clicked["pixel_x"] == 1280
+    assert clicked["pixel_y"] == -120
+    assert ("move", (-1120.0, 480.0), {}) in driver.calls
+    assert ("click", (1280.0, -120.0), {"button": "left", "count": 1}) in driver.calls
 
 
 def test_windows_runtime_normalizes_actions_and_routes_input(tmp_path: Path) -> None:
@@ -225,7 +271,8 @@ def test_windows_runtime_normalizes_actions_and_routes_input(tmp_path: Path) -> 
     runtime.key({"context_id": "ctx-1", "keys": ["ctrl", "alt", "t"]})
     runtime.type_text({"context_id": "ctx-1", "text": "hello", "submit": True})
 
-    assert [call[0] for call in driver.calls if call[0] != "screen_size"] == [
+    setup_calls = {"screen_geometry", "screen_size"}
+    assert [call[0] for call in driver.calls if call[0] not in setup_calls] == [
         "move",
         "click",
         "scroll",

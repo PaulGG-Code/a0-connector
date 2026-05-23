@@ -58,7 +58,7 @@ class WindowsDesktopDriver(Protocol):
     def screen_size(self) -> tuple[int, int]:
         ...
 
-    def capture_png(self) -> tuple[bytes, int, int]:
+    def capture_png(self) -> tuple[bytes, int, int] | tuple[bytes, int, int, int, int]:
         ...
 
     def move(self, x: float, y: float) -> None:
@@ -77,6 +77,14 @@ class WindowsDesktopDriver(Protocol):
         ...
 
 
+@dataclass(frozen=True)
+class ScreenGeometry:
+    origin_x: int
+    origin_y: int
+    width: int
+    height: int
+
+
 @dataclass
 class WindowsSession:
     context_id: str
@@ -86,6 +94,8 @@ class WindowsSession:
     active: bool = False
     width: int = 0
     height: int = 0
+    origin_x: int = 0
+    origin_y: int = 0
     updated_at: float = field(default_factory=time.time)
 
     def to_payload(self, *, reused: bool = False) -> dict[str, Any]:
@@ -97,6 +107,8 @@ class WindowsSession:
             "status": "active" if self.active else "stopped",
             "width": self.width,
             "height": self.height,
+            "origin_x": self.origin_x,
+            "origin_y": self.origin_y,
             "backend_id": WINDOWS_BACKEND_ID,
             "backend_family": WINDOWS_BACKEND_FAMILY,
             "features": list(WINDOWS_BACKEND_FEATURES),
@@ -118,6 +130,8 @@ class WindowsSession:
             "active": self.active,
             "width": self.width,
             "height": self.height,
+            "origin_x": self.origin_x,
+            "origin_y": self.origin_y,
             "updated_at": self.updated_at,
         }
 
@@ -131,6 +145,8 @@ class WindowsSession:
             active=bool(payload.get("active")),
             width=coerce_int(payload.get("width"), name="width", default=0),
             height=coerce_int(payload.get("height"), name="height", default=0),
+            origin_x=coerce_int(payload.get("origin_x"), name="origin_x", default=0),
+            origin_y=coerce_int(payload.get("origin_y"), name="origin_y", default=0),
             updated_at=float(payload.get("updated_at") or time.time()),
         )
 
@@ -240,19 +256,51 @@ class _WindowsDesktopAutomation:
                 "pywinauto UIA desktop automation could not initialize.",
             ) from exc
 
-    def screen_size(self) -> tuple[int, int]:
+    def screen_geometry(self) -> ScreenGeometry:
         try:  # pragma: no cover - only exercised on Windows
             import ctypes
 
             user32 = ctypes.windll.user32
-            return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+            origin_x = int(user32.GetSystemMetrics(76))  # SM_XVIRTUALSCREEN
+            origin_y = int(user32.GetSystemMetrics(77))  # SM_YVIRTUALSCREEN
+            width = int(user32.GetSystemMetrics(78))  # SM_CXVIRTUALSCREEN
+            height = int(user32.GetSystemMetrics(79))  # SM_CYVIRTUALSCREEN
+            if width <= 0 or height <= 0:
+                width = int(user32.GetSystemMetrics(0))
+                height = int(user32.GetSystemMetrics(1))
+                origin_x = 0
+                origin_y = 0
+            return ScreenGeometry(origin_x=origin_x, origin_y=origin_y, width=width, height=height)
         except Exception as exc:
             raise WindowsComputerUseError(
                 "COMPUTER_USE_CAPTURE_UNAVAILABLE",
-                "Unable to read the Windows desktop dimensions.",
+                "Unable to read the Windows virtual desktop dimensions.",
             ) from exc
 
-    def capture_png(self) -> tuple[bytes, int, int]:
+    def screen_size(self) -> tuple[int, int]:
+        geometry = self.screen_geometry()
+        return geometry.width, geometry.height
+
+    def _capture_all_screens_png(self, geometry: ScreenGeometry) -> tuple[bytes, int, int, int, int] | None:
+        if sys.platform != "win32":
+            return None
+        try:  # pragma: no cover - only exercised on Windows
+            from PIL import ImageGrab
+
+            image = ImageGrab.grab(all_screens=True)
+        except Exception:
+            return None
+
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        return buffer.getvalue(), int(image.width), int(image.height), geometry.origin_x, geometry.origin_y
+
+    def capture_png(self) -> tuple[bytes, int, int, int, int]:
+        geometry = self.screen_geometry()
+        all_screens = self._capture_all_screens_png(geometry)
+        if all_screens is not None:
+            return all_screens
+
         dxcam = _load_dxcam_module()
         camera = self._camera
         if camera is None:
@@ -277,7 +325,7 @@ class _WindowsDesktopAutomation:
         image = Image.fromarray(frame)
         buffer = io.BytesIO()
         image.save(buffer, format="PNG")
-        return buffer.getvalue(), int(image.width), int(image.height)
+        return buffer.getvalue(), int(image.width), int(image.height), 0, 0
 
     def move(self, x: float, y: float) -> None:  # pragma: no cover - only exercised on Windows
         _, mouse = _load_pywinauto_modules()
@@ -402,6 +450,62 @@ class WindowsComputerUseRuntime:
             "support_reason": windows_backend_support_reason(),
         }
 
+    def _screen_geometry(self) -> ScreenGeometry:
+        screen_geometry = getattr(self._driver, "screen_geometry", None)
+        if callable(screen_geometry):
+            geometry = screen_geometry()
+            if isinstance(geometry, ScreenGeometry):
+                return geometry
+            if isinstance(geometry, dict):
+                return ScreenGeometry(
+                    origin_x=coerce_int(geometry.get("origin_x"), name="origin_x", default=0),
+                    origin_y=coerce_int(geometry.get("origin_y"), name="origin_y", default=0),
+                    width=coerce_int(geometry.get("width"), name="width", default=0),
+                    height=coerce_int(geometry.get("height"), name="height", default=0),
+                )
+            if isinstance(geometry, (list, tuple)) and len(geometry) >= 4:
+                return ScreenGeometry(
+                    origin_x=coerce_int(geometry[0], name="origin_x"),
+                    origin_y=coerce_int(geometry[1], name="origin_y"),
+                    width=coerce_int(geometry[2], name="width"),
+                    height=coerce_int(geometry[3], name="height"),
+                )
+
+        width, height = self._driver.screen_size()
+        return ScreenGeometry(origin_x=0, origin_y=0, width=int(width), height=int(height))
+
+    def _capture_png(
+        self,
+        *,
+        fallback_origin_x: int,
+        fallback_origin_y: int,
+    ) -> tuple[bytes, ScreenGeometry]:
+        captured = self._driver.capture_png()
+        if isinstance(captured, (list, tuple)) and len(captured) >= 5:
+            png_bytes, width, height, origin_x, origin_y = captured[:5]
+            return bytes(png_bytes), ScreenGeometry(
+                origin_x=coerce_int(origin_x, name="origin_x"),
+                origin_y=coerce_int(origin_y, name="origin_y"),
+                width=coerce_int(width, name="width"),
+                height=coerce_int(height, name="height"),
+            )
+        if isinstance(captured, (list, tuple)) and len(captured) >= 3:
+            png_bytes, width, height = captured[:3]
+            return bytes(png_bytes), ScreenGeometry(
+                origin_x=fallback_origin_x,
+                origin_y=fallback_origin_y,
+                width=coerce_int(width, name="width"),
+                height=coerce_int(height, name="height"),
+            )
+        raise WindowsComputerUseError(
+            "COMPUTER_USE_CAPTURE_UNAVAILABLE",
+            "Windows capture backend returned an invalid screen frame.",
+        )
+
+    @staticmethod
+    def _to_screen_pixels(session: WindowsSession, x: float, y: float) -> tuple[float, float]:
+        return session.origin_x + (session.width * x), session.origin_y + (session.height * y)
+
     def status(self, params: dict[str, Any]) -> dict[str, Any]:
         context_id = normalize_context_id(params.get("context_id"))
         if self._session is not None and self._session.session.context_id == context_id:
@@ -485,20 +589,24 @@ class WindowsComputerUseRuntime:
                 active=True,
                 width=reusable.width,
                 height=reusable.height,
+                origin_x=reusable.origin_x,
+                origin_y=reusable.origin_y,
             )
             self._session = _RuntimeSession(session=reusable, policy=policy)
             self._store.put(reusable)
             return reusable.to_payload(reused=True)
 
-        width, height = self._driver.screen_size()
+        geometry = self._screen_geometry()
         session = WindowsSession(
             context_id=context_id,
             session_id=uuid.uuid4().hex,
             trust_mode=policy.trust_mode,
             restore_token=restore_token if policy.persist_metadata else "",
             active=True,
-            width=width,
-            height=height,
+            width=geometry.width,
+            height=geometry.height,
+            origin_x=geometry.origin_x,
+            origin_y=geometry.origin_y,
         )
         if policy.persist_metadata and not session.restore_token:
             session = WindowsSession(
@@ -509,6 +617,8 @@ class WindowsComputerUseRuntime:
                 active=session.active,
                 width=session.width,
                 height=session.height,
+                origin_x=session.origin_x,
+                origin_y=session.origin_y,
             )
         self._session = _RuntimeSession(session=session, policy=policy)
         if policy.persist_metadata:
@@ -517,9 +627,14 @@ class WindowsComputerUseRuntime:
 
     def capture(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
-        png_bytes, width, height = self._driver.capture_png()
-        session.session.width = width
-        session.session.height = height
+        png_bytes, geometry = self._capture_png(
+            fallback_origin_x=session.session.origin_x,
+            fallback_origin_y=session.session.origin_y,
+        )
+        session.session.width = geometry.width
+        session.session.height = geometry.height
+        session.session.origin_x = geometry.origin_x
+        session.session.origin_y = geometry.origin_y
         session.session.updated_at = time.time()
         if session.policy.persist_metadata:
             self._store.put(session.session)
@@ -527,8 +642,10 @@ class WindowsComputerUseRuntime:
         result = {
             "session_id": session.session.session_id,
             "context_id": session.session.context_id,
-            "width": width,
-            "height": height,
+            "width": geometry.width,
+            "height": geometry.height,
+            "origin_x": geometry.origin_x,
+            "origin_y": geometry.origin_y,
             "captured_at": time.time(),
         }
         capture_path_value = str(params.get("capture_path") or "").strip()
@@ -553,8 +670,7 @@ class WindowsComputerUseRuntime:
         session = self._require_session(params)
         x = float(params.get("x"))
         y = float(params.get("y"))
-        pixel_x = session.session.width * x
-        pixel_y = session.session.height * y
+        pixel_x, pixel_y = self._to_screen_pixels(session.session, x, y)
         self._driver.move(pixel_x, pixel_y)
         return {
             "session_id": session.session.session_id,
@@ -570,8 +686,7 @@ class WindowsComputerUseRuntime:
         y = float(params.get("y", 0.5))
         button_name = str(params.get("button") or "left").strip().lower()
         count = max(1, int(params.get("count") or 1))
-        pixel_x = session.session.width * x
-        pixel_y = session.session.height * y
+        pixel_x, pixel_y = self._to_screen_pixels(session.session, x, y)
         self._driver.click(pixel_x, pixel_y, button=button_name, count=count)
         return {
             "session_id": session.session.session_id,
@@ -579,6 +694,8 @@ class WindowsComputerUseRuntime:
             "count": count,
             "x": x,
             "y": y,
+            "pixel_x": pixel_x,
+            "pixel_y": pixel_y,
         }
 
     def scroll(self, params: dict[str, Any]) -> dict[str, Any]:
