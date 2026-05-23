@@ -53,6 +53,11 @@ class _FakeHelperStdin:
         return None
 
 
+class _StuckHelperStdin(_FakeHelperStdin):
+    async def drain(self) -> None:
+        await asyncio.Event().wait()
+
+
 class _FakeHelperProcess:
     def __init__(self, stdout_lines: list[str]) -> None:
         self.stdin = _FakeHelperStdin()
@@ -210,6 +215,22 @@ async def test_allow_without_restore_token_returns_rearm_required(
     assert manager.status_label == "rearm required"
     assert manager.hello_metadata()["status"] == "rearm required"
     assert manager.hello_metadata()["restore_token_present"] is False
+
+
+def test_reset_enabled_for_shutdown_disables_next_run_without_erasing_restore_token(
+    _temp_env: Path,
+) -> None:
+    restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    manager = _manager(enabled=True, trust_mode="allow", restore_token=restore_token)
+
+    manager.reset_enabled_for_shutdown()
+
+    assert manager.enabled is False
+    assert manager.config.computer_use_enabled is False
+    assert manager.restore_token == restore_token
+    assert manager.config.computer_use_restore_token == restore_token
+    assert manager.status_label == "disabled"
+    assert "AGENT_ZERO_COMPUTER_USE_ENABLED=0" in _temp_env.read_text(encoding="utf-8")
 
 
 async def test_start_session_persists_restore_token_in_persistent_mode(
@@ -761,6 +782,100 @@ async def test_helper_request_ignores_protocol_noise_until_matching_response(
     assert json.loads(session.process.stdin.buffer.decode("utf-8"))["request_id"] == "req-1"
 
 
+async def test_helper_request_times_out_stuck_permission_prompt(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(enabled=True)
+    session = _HelperSession(context_id="ctx-1")
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = _FakeHelperStdin()
+            self.stdout = asyncio.StreamReader()
+            self.stderr = _FakeStream()
+            self.returncode = None
+            self.pid = 123
+
+        def terminate(self) -> None:
+            self.returncode = -15
+            self.stdout.feed_eof()
+
+        def kill(self) -> None:
+            self.returncode = -9
+            self.stdout.feed_eof()
+
+        async def wait(self) -> int | None:
+            return self.returncode
+
+    session.process = FakeProcess()
+    manager._ensure_helper = AsyncMock(return_value=session)  # type: ignore[method-assign]
+    monkeypatch.setattr(computer_use_mod, "_helper_response_timeout_seconds", lambda _payload: 0.01)
+
+    result = await manager._helper_request(
+        session,
+        {
+            "request_id": "req-timeout",
+            "action": "start_session",
+            "context_id": "ctx-1",
+            "allow_prompt": True,
+            "request_timeout_seconds": 180.0,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert "Timed out while waiting for the platform permission prompt" in result["error"]
+    assert session.process is None
+
+
+async def test_helper_request_times_out_when_helper_stops_reading_stdin(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(enabled=True)
+    session = _HelperSession(context_id="ctx-1")
+
+    class FakeProcess:
+        def __init__(self) -> None:
+            self.stdin = _StuckHelperStdin()
+            self.stdout = asyncio.StreamReader()
+            self.stderr = _FakeStream()
+            self.returncode = None
+            self.pid = 123
+
+        def terminate(self) -> None:
+            self.returncode = -15
+            self.stdout.feed_eof()
+
+        def kill(self) -> None:
+            self.returncode = -9
+            self.stdout.feed_eof()
+
+        async def wait(self) -> int | None:
+            return self.returncode
+
+    session.process = FakeProcess()
+    manager._ensure_helper = AsyncMock(return_value=session)  # type: ignore[method-assign]
+    monkeypatch.setattr(computer_use_mod, "_helper_response_timeout_seconds", lambda _payload: 0.01)
+    monkeypatch.setattr(computer_use_mod, "_HELPER_CLOSE_DRAIN_TIMEOUT_SECONDS", 0.01)
+
+    result = await manager._helper_request(
+        session,
+        {
+            "request_id": "req-timeout",
+            "action": "start_session",
+            "context_id": "ctx-1",
+            "allow_prompt": True,
+            "request_timeout_seconds": 180.0,
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert session.process is None
+
+
 async def test_ensure_helper_uses_expanded_stdio_limit_for_large_capture_payloads(
     _temp_env: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1026,6 +1141,69 @@ async def test_allow_silent_restore_rearm_preserves_helper_message(
     assert manager.status_detail == result["error"]
 
 
+async def test_ensure_armed_validates_saved_allow_token(
+    _temp_env: Path,
+) -> None:
+    restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token=restore_token,
+    )
+    status_updates: list[str] = []
+    manager.set_status_callback(lambda label, _detail: status_updates.append(label))
+    status_updates.clear()
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": True,
+            "result": {
+                "active": True,
+                "status": "active",
+                "session_id": "sess-1",
+                "width": 1280,
+                "height": 720,
+            },
+        }
+    )
+
+    result = await manager.ensure_armed("ctx-1")
+
+    assert result["ok"] is True
+    assert manager.status_label == "active"
+    assert "approval required" in status_updates
+    assert "allow" not in status_updates
+    request = manager._helper_request.await_args.args[1]
+    assert request["trust_mode"] == "allow"
+    assert request["allow_prompt"] is False
+    assert request["restore_token"] == restore_token
+    assert request["context_id"] == "ctx-1"
+
+
+async def test_ensure_armed_marks_stale_allow_token_rearm_required(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token="123e4567-e89b-12d3-a456-426614174000",
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "Silent restore was not available.",
+        }
+    )
+
+    result = await manager.ensure_armed("ctx-1")
+
+    assert result["ok"] is False
+    assert result["code"] == "COMPUTER_USE_REARM_REQUIRED"
+    assert manager.status_label == "rearm required"
+    assert manager.status_detail == "Silent restore was not available."
+    assert manager.hello_metadata()["status"] == "rearm required"
+
+
 async def test_rearm_forces_prompt_then_restores_allow_mode(
     _temp_env: Path,
 ) -> None:
@@ -1036,6 +1214,9 @@ async def test_rearm_forces_prompt_then_restores_allow_mode(
         trust_mode="allow",
         restore_token=old_restore_token,
     )
+    status_updates: list[str] = []
+    manager.set_status_callback(lambda label, _detail: status_updates.append(label))
+    status_updates.clear()
     manager._helper_request = AsyncMock(  # type: ignore[method-assign]
         return_value={
             "ok": True,
@@ -1053,6 +1234,8 @@ async def test_rearm_forces_prompt_then_restores_allow_mode(
     result = await manager.rearm("ctx-1")
 
     assert result["ok"] is True
+    assert "approval required" in status_updates
+    assert "persistent" not in status_updates
     assert manager.trust_mode == "allow"
     assert manager.status_label == "active"
     assert manager.restore_token == new_restore_token

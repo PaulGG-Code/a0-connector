@@ -454,6 +454,7 @@ async def disconnect_and_exit(app: AgentZeroCLI) -> None:
     app._stop_token_refresh()
     app._stop_state_sync()
     await app._python_tty.close()
+    app._computer_use.reset_enabled_for_shutdown()
     await app._computer_use.disconnect()
     await app._host_browser.disconnect()
     try:

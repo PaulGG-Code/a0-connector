@@ -599,6 +599,10 @@ def _expected_capture_summary(
     return summary
 
 
+def _capture_verification_note(tool_mod) -> str:
+    return tool_mod.CAPTURE_VERIFICATION_NOTE
+
+
 def test_capabilities_advertise_current_ws_contract() -> None:
     _install_fake_helpers()
     _reload("plugins._a0_connector.api.v1.base")
@@ -1814,7 +1818,9 @@ def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path:
         _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1").execute()
     )
 
-    assert response.message == f"Current screen attached: {_expected_capture_summary()}"
+    assert response.message == (
+        f"Current screen attached: {_expected_capture_summary()} {_capture_verification_note(tool_mod)}"
+    )
     assert shared_ws_manager.calls[0]["payload"]["action"] == "capture"
     assert len(agent.history_messages) == 1
     raw_message = agent.history_messages[0]["content"]
@@ -1862,7 +1868,9 @@ def test_computer_use_remote_capture_uses_shared_png_path(
         _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1").execute()
     )
 
-    assert response.message == f"Current screen attached: {_expected_capture_summary()}"
+    assert response.message == (
+        f"Current screen attached: {_expected_capture_summary()} {_capture_verification_note(tool_mod)}"
+    )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["capture"]
     assert len(agent.history_messages) == 1
     raw_message = agent.history_messages[0]["content"]
@@ -1916,7 +1924,9 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
     )
 
     expected_summary = _expected_capture_summary("host-only")
-    assert response.message == f"Current screen attached: {expected_summary}"
+    assert response.message == (
+        f"Current screen attached: {expected_summary} {_capture_verification_note(tool_mod)}"
+    )
     assert len(agent.history_messages) == 1
     raw_message = agent.history_messages[0]["content"]
     image_url = raw_message["raw_content"][1]["image_url"]["url"]
@@ -2019,7 +2029,8 @@ def test_computer_use_remote_start_session_auto_refreshes_screen(
 
     assert response.message == (
         "Computer-use session started: session_id=sess-1 size=1x1 "
-        f"Latest screen attached: {_expected_capture_summary(fresh=True)}"
+        f"Latest screen attached: {_expected_capture_summary(fresh=True)} "
+        f"{_capture_verification_note(tool_mod)}"
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["start_session", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
@@ -2137,7 +2148,8 @@ def test_computer_use_remote_click_auto_refreshes_screen(
     )
 
     assert response.message == (
-        f"Clicked left button 1 time(s). Latest screen attached: {_expected_capture_summary(fresh=True)}"
+        f"Clicked left button 1 time(s). Latest screen attached: {_expected_capture_summary(fresh=True)} "
+        f"{_capture_verification_note(tool_mod)}"
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["click", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
@@ -2204,7 +2216,8 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
     )
 
     assert response.message == (
-        f"Typed 21 character(s) and submitted. Latest screen attached: {_expected_capture_summary(fresh=True)}"
+        f"Typed 21 character(s) and submitted. Latest screen attached: "
+        f"{_expected_capture_summary(fresh=True)} {_capture_verification_note(tool_mod)}"
     )
     assert shared_ws_manager.calls[0]["payload"]["submit"] is True
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["type", "capture"]

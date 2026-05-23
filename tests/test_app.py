@@ -256,8 +256,14 @@ class FakeComputerUseManager:
         self.status_label = "disabled"
         self.status_detail = ""
         self.disconnect_calls = 0
+        self.arm_calls: list[str | None] = []
         self.rearm_calls: list[str | None] = []
         self.handled_ops: list[dict[str, object]] = []
+        self.arm_result: dict[str, object] = {
+            "ok": False,
+            "code": "COMPUTER_USE_REARM_REQUIRED",
+            "error": "Computer use is not armed.",
+        }
         self.rearm_result: dict[str, object] = {"ok": True, "result": {"status": "active"}}
         self._status_callback = None
 
@@ -279,6 +285,18 @@ class FakeComputerUseManager:
         self.status_detail = ""
         self._emit()
 
+    def reset_enabled_for_shutdown(self) -> None:
+        self.enabled = False
+        self.status_label = "disabled"
+        self.status_detail = ""
+        self._emit()
+
+    def mark_approval_pending(self) -> None:
+        if self.enabled:
+            self.status_label = "approval required"
+            self.status_detail = ""
+            self._emit()
+
     def set_trust_mode(self, mode: str) -> str:
         self.trust_mode = mode
         if self.enabled:
@@ -291,6 +309,9 @@ class FakeComputerUseManager:
             "supported": True,
             "enabled": self.enabled,
             "trust_mode": self.trust_mode,
+            "status": self.status_label,
+            "last_error": self.status_detail,
+            "restore_token_present": False,
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         }
 
@@ -310,6 +331,22 @@ class FakeComputerUseManager:
             self.status_detail = str(self.rearm_result.get("error") or "")
         self._emit()
         return dict(self.rearm_result)
+
+    async def ensure_armed(self, context_id: str | None = None) -> dict[str, object]:
+        self.arm_calls.append(context_id)
+        self.enabled = True
+        if bool(self.arm_result.get("ok")):
+            self.status_label = "active"
+            self.status_detail = ""
+        else:
+            result = self.arm_result.get("result")
+            result_status = result.get("status") if isinstance(result, dict) else ""
+            self.status_label = str(result_status or "error")
+            if self.arm_result.get("code") == "COMPUTER_USE_REARM_REQUIRED":
+                self.status_label = "rearm required"
+            self.status_detail = str(self.arm_result.get("error") or "")
+        self._emit()
+        return dict(self.arm_result)
 
     async def handle_op(self, data: dict[str, object]) -> dict[str, object]:
         self.handled_ops.append(dict(data))
@@ -458,6 +495,39 @@ def test_remote_exec_config_sets_startup_default() -> None:
     assert app._python_tty.enabled is True
 
 
+async def test_full_cli_quit_resets_computer_use_enablement(dummy_app: DummyAgentZeroCLI) -> None:
+    class FakePythonTty:
+        def __init__(self) -> None:
+            self.close_calls = 0
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.disconnect_calls = 0
+
+        async def disconnect(self) -> None:
+            self.disconnect_calls += 1
+
+    fake_tty = FakePythonTty()
+    fake_client = FakeClient()
+    exit_calls: list[bool] = []
+    dummy_app._python_tty = fake_tty  # type: ignore[assignment]
+    dummy_app.client = fake_client  # type: ignore[assignment]
+    dummy_app.exit = lambda: exit_calls.append(True)  # type: ignore[method-assign]
+    dummy_app._computer_use.set_enabled(True)
+
+    await dummy_app._disconnect_and_exit()
+
+    assert dummy_app._computer_use.enabled is False
+    assert dummy_app._computer_use.status_label == "disabled"
+    assert dummy_app._computer_use.disconnect_calls == 1
+    assert fake_tty.close_calls == 1
+    assert fake_client.disconnect_calls == 1
+    assert exit_calls == [True]
+
+
 def test_profile_menu_item_click_stops_event_and_posts_selection() -> None:
     item = ProfileMenuItem("Developer", profile_key="developer")
     captured: list[object] = []
@@ -488,11 +558,17 @@ def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
 
 def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
-    quit_binding = next(binding for binding in AgentZeroCLI.BINDINGS if binding.key.lower() == "ctrl+c")
+    quit_bindings = [
+        binding
+        for binding in AgentZeroCLI.BINDINGS
+        if binding.key.lower() in {"ctrl+c", "ctrl+q"}
+    ]
+    quit_keys = {binding.key.lower() for binding in quit_bindings}
 
     assert "toggle_computer_use" not in bindings
     assert all(binding.key != "f2" for binding in AgentZeroCLI.BINDINGS)
-    assert quit_binding.show is False
+    assert {"ctrl+c", "ctrl+q"} <= quit_keys
+    assert all(binding.show is False for binding in quit_bindings)
     assert bindings["toggle_remote_file_mode"].key == "f3"
     assert bindings["toggle_remote_file_mode"].key_display == "F3"
     assert bindings["toggle_remote_exec"].key == "f4"
@@ -2401,6 +2477,7 @@ async def test_computer_use_slash_commands_update_notice_and_status(
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert dummy_app._computer_use.enabled is True
     assert dummy_app._computer_use.trust_mode == "allow"
+    assert dummy_app._computer_use.arm_calls == [None]
     assert dummy_app._computer_use.rearm_calls == [None]
     assert status.computer_use_status == "Active"
     assert banner.display is True
@@ -2454,6 +2531,9 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
                 "supported": True,
                 "enabled": True,
                 "trust_mode": "allow",
+                "status": "active",
+                "last_error": "",
+                "restore_token_present": False,
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
@@ -2472,6 +2552,9 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
                 "supported": True,
                 "enabled": False,
                 "trust_mode": "allow",
+                "status": "disabled",
+                "last_error": "",
+                "restore_token_present": False,
                 "artifact_root": "/a0/tmp/_a0_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
@@ -2688,6 +2771,7 @@ async def test_computer_use_on_arms_current_chat_when_allow_needs_permission(
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
     assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
+    assert dummy_app._computer_use.arm_calls == ["ctx-cua"]
     assert dummy_app._computer_use.enabled is True
     assert dummy_app._computer_use.trust_mode == "allow"
     assert status.computer_use_status == "Active"
@@ -2711,16 +2795,41 @@ async def test_computer_use_on_reports_rearm_failure_without_compat_command(
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
 
+    assert dummy_app._computer_use.arm_calls == ["ctx-cua"]
     assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
     assert dummy_app._computer_use.enabled is True
     assert status.computer_use_status == "Rearm Required"
     assert status.computer_use_detail == "Portal permission was denied."
     assert notices == [
         (
-            "Computer use enabled, but platform permission is not armed: Portal permission was denied.",
+            "Computer use enabled locally, but platform permission is not armed: Portal permission was denied.",
             True,
         ),
     ]
+
+
+async def test_computer_use_on_rearms_after_runtime_marked_token_stale(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+    dummy_app.current_context = "ctx-stale-token"
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.trust_mode = "allow"
+    dummy_app._computer_use.status_label = "rearm required"
+    dummy_app._computer_use.status_detail = "Silent restore was not available."
+    dummy_app._computer_use.arm_result = {"ok": True, "result": {"status": "active"}}
+
+    await dummy_app._dispatch_command("/computer-use on")
+
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+
+    assert dummy_app._computer_use.arm_calls == []
+    assert dummy_app._computer_use.rearm_calls == ["ctx-stale-token"]
+    assert dummy_app._computer_use.enabled is True
+    assert status.computer_use_status == "Active"
+    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
 
 
 def test_connection_status_endpoint_indicator_omits_computer_use_summary() -> None:
@@ -2767,15 +2876,19 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
     await dummy_app.action_toggle_remote_file_mode()
     await dummy_app.action_toggle_remote_exec()
 
+    computer_use_metadata = {
+        "supported": True,
+        "enabled": False,
+        "trust_mode": "allow",
+        "status": "disabled",
+        "last_error": "",
+        "restore_token_present": False,
+        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+    }
     assert calls == [
         {
             "context_id": "ctx-remote",
-            "computer_use": {
-                "supported": True,
-                "enabled": False,
-                "trust_mode": "allow",
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
-            },
+            "computer_use": computer_use_metadata,
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,
@@ -2788,12 +2901,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
         },
         {
             "context_id": "ctx-remote",
-            "computer_use": {
-                "supported": True,
-                "enabled": False,
-                "trust_mode": "allow",
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
-            },
+            "computer_use": computer_use_metadata,
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
                 "enabled": True,

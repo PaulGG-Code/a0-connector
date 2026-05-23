@@ -34,6 +34,9 @@ _DEBUG_LOG_ENV = "A0_COMPUTER_USE_DEBUG_LOG"
 _DEFAULT_CONTAINER_ARTIFACT_ROOT = "/a0/tmp/_a0_connector/computer_use"
 _HELPER_PROTOCOL_NOISE_MAX_LINES = 8
 _HELPER_STDIO_LIMIT = 32 * 1024 * 1024
+_HELPER_DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
+_HELPER_RESPONSE_GRACE_SECONDS = 8.0
+_HELPER_CLOSE_DRAIN_TIMEOUT_SECONDS = 1.0
 _SUPPORTED_ACTIONS = {
     "start_session",
     "status",
@@ -199,6 +202,74 @@ def _default_host_artifact_root(_container_root: str) -> Path:
         return Path(configured).expanduser()
 
     return Path(tempfile.gettempdir()) / "_a0_connector" / "computer_use"
+
+
+def _helper_response_timeout_seconds(payload: dict[str, Any]) -> float:
+    request_timeout = payload.get("request_timeout_seconds")
+    try:
+        timeout = float(request_timeout)
+    except (TypeError, ValueError):
+        timeout = 0.0
+    if timeout > 0:
+        return timeout + _HELPER_RESPONSE_GRACE_SECONDS
+
+    fresh_timeout = payload.get("fresh_timeout_seconds")
+    try:
+        timeout = float(fresh_timeout)
+    except (TypeError, ValueError):
+        timeout = 0.0
+    if timeout > 0:
+        return timeout + _HELPER_RESPONSE_GRACE_SECONDS
+    return _HELPER_DEFAULT_RESPONSE_TIMEOUT_SECONDS
+
+
+def _helper_timeout_response(payload: dict[str, Any], *, request_id: str, timeout: float) -> dict[str, Any]:
+    action = str(payload.get("action", "") or "").strip().lower()
+    if action == "start_session":
+        if _coerce_bool(payload.get("allow_prompt")):
+            message = (
+                "Timed out while waiting for the platform permission prompt. "
+                "Run /computer-use on and approve the prompt if shown."
+            )
+        else:
+            message = (
+                "Silent restore was not available. Run /computer-use on and approve "
+                "the platform permission prompt."
+            )
+        return {
+            "request_id": request_id,
+            "ok": False,
+            "code": _REARM_REQUIRED_ERROR,
+            "error": message,
+        }
+    return {
+        "request_id": request_id,
+        "ok": False,
+        "code": "COMPUTER_USE_HELPER_TIMEOUT",
+        "error": f"Timed out after {timeout:.1f}s waiting for the computer-use helper.",
+    }
+
+
+async def _await_helper_io(awaitable: Any, *, timeout: float) -> tuple[Any, asyncio.Task[Any] | None]:
+    task = asyncio.create_task(awaitable)
+    done, _pending = await asyncio.wait({task}, timeout=max(0.0, timeout))
+    if task in done:
+        return task.result(), None
+    return None, task
+
+
+async def _abandon_helper_io_task(task: asyncio.Task[Any] | None) -> None:
+    if task is None:
+        return
+    if task.done():
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()
+        return
+    task.cancel()
+    done, _pending = await asyncio.wait({task}, timeout=0.1)
+    if task in done:
+        with contextlib.suppress(asyncio.CancelledError, Exception):
+            task.result()
 
 
 CONTAINER_ARTIFACT_ROOT = _normalize_container_artifact_root(
@@ -371,6 +442,8 @@ class ComputerUseManager:
             return "disabled", ""
         if self.trust_mode == "allow" and not _normalize_restore_token(self.restore_token):
             return "rearm required", _REARM_REQUIRED_MESSAGE
+        if self.trust_mode == "allow":
+            return "approval required", ""
         return self.trust_mode, ""
 
     def _store_trust_mode(self, mode: str) -> str:
@@ -386,6 +459,12 @@ class ComputerUseManager:
         save_computer_use_enabled(self.enabled)
         status, error = self._configured_status()
         self._set_status(status, error=error)
+
+    def reset_enabled_for_shutdown(self) -> None:
+        self.enabled = False
+        self.config.computer_use_enabled = False
+        save_computer_use_enabled(False)
+        self._set_status("disabled", error="")
 
     def set_trust_mode(self, mode: str) -> str:
         normalized = self._store_trust_mode(mode)
@@ -411,6 +490,10 @@ class ComputerUseManager:
         self.last_error = error
         if self._status_callback is not None:
             self._status_callback(status, error)
+
+    def mark_approval_pending(self) -> None:
+        if self.enabled:
+            self._set_status("approval required")
 
     def _session_snapshot(self) -> dict[str, Any]:
         active_contexts = sorted(
@@ -496,7 +579,7 @@ class ComputerUseManager:
         previous_restore_token = self.restore_token
         if self.trust_mode != "persistent":
             self._store_trust_mode("persistent")
-            self._set_status("persistent")
+            self._set_status("approval required")
 
         # Re-arming is an intentional user-approved flow. Do not try to
         # silently revive the old token; force the backend to ask the platform.
@@ -517,6 +600,21 @@ class ComputerUseManager:
                 self._set_status("rearm required", error=str(result.get("error") or _REARM_REQUIRED_MESSAGE))
 
         return result
+
+    async def ensure_armed(self, context_id: str | None = None) -> dict[str, Any]:
+        """Validate that the configured allow session can actually start."""
+        op_id = f"arm-{uuid.uuid4().hex}"
+        context_id = _normalize_context_id(context_id)
+
+        if not self.supported:
+            self._set_status("error", error=_UNSUPPORTED_ERROR)
+            return self._error(op_id, _UNSUPPORTED_ERROR, result=self._session_snapshot())
+
+        if not self.enabled:
+            self.set_enabled(True)
+
+        session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
+        return await self._start_session(op_id, session)
 
     async def handle_op(self, payload: dict[str, Any]) -> dict[str, Any]:
         op_id = str(payload.get("op_id", "")).strip()
@@ -742,34 +840,53 @@ class ComputerUseManager:
         payload = dict(request)
         payload.setdefault("request_id", uuid.uuid4().hex)
         expected_request_id = str(payload.get("request_id", "") or "")
+        response_timeout = _helper_response_timeout_seconds(payload)
         started_at = time.monotonic()
         self._debug("helper.request.send", **_request_debug_fields(payload))
 
+        close_timed_out_helper = False
+        timed_out_io_task: asyncio.Task[Any] | None = None
+        stray_stdout: list[str] = []
+        response: dict[str, Any] | None = None
+        deadline = started_at + response_timeout
+
         async with session.lock:
             process.stdin.write((json.dumps(payload, ensure_ascii=True) + "\n").encode("utf-8"))
-            await process.stdin.drain()
-            stray_stdout: list[str] = []
-            while True:
-                raw = await process.stdout.readline()
-                if not raw:
-                    raise RuntimeError("computer use helper closed its stdout")
-
-                raw_text = raw.decode("utf-8", errors="replace").strip()
-                if not raw_text:
-                    continue
-
-                try:
-                    response = json.loads(raw_text)
-                except json.JSONDecodeError:
-                    stray_stdout.append(raw_text)
-                    self._debug(
-                        "helper.stdout.noise",
-                        request_id=expected_request_id,
-                        line=raw_text,
-                        noise_lines=len(stray_stdout),
+            _drained, timed_out_io_task = await _await_helper_io(
+                process.stdin.drain(),
+                timeout=deadline - time.monotonic(),
+            )
+            if timed_out_io_task is not None:
+                response = _helper_timeout_response(
+                    payload,
+                    request_id=expected_request_id,
+                    timeout=response_timeout,
+                )
+                close_timed_out_helper = True
+            else:
+                while True:
+                    raw, timed_out_io_task = await _await_helper_io(
+                        process.stdout.readline(),
+                        timeout=deadline - time.monotonic(),
                     )
-                else:
-                    if not isinstance(response, dict):
+                    if timed_out_io_task is not None:
+                        response = _helper_timeout_response(
+                            payload,
+                            request_id=expected_request_id,
+                            timeout=response_timeout,
+                        )
+                        close_timed_out_helper = True
+                        break
+                    if not raw:
+                        raise RuntimeError("computer use helper closed its stdout")
+
+                    raw_text = raw.decode("utf-8", errors="replace").strip()
+                    if not raw_text:
+                        continue
+
+                    try:
+                        response = json.loads(raw_text)
+                    except json.JSONDecodeError:
                         stray_stdout.append(raw_text)
                         self._debug(
                             "helper.stdout.noise",
@@ -778,12 +895,7 @@ class ComputerUseManager:
                             noise_lines=len(stray_stdout),
                         )
                     else:
-                        response_request_id = str(response.get("request_id", "") or "")
-                        if (
-                            expected_request_id
-                            and response_request_id
-                            and response_request_id != expected_request_id
-                        ):
+                        if not isinstance(response, dict):
                             stray_stdout.append(raw_text)
                             self._debug(
                                 "helper.stdout.noise",
@@ -792,18 +904,44 @@ class ComputerUseManager:
                                 noise_lines=len(stray_stdout),
                             )
                         else:
-                            break
+                            response_request_id = str(response.get("request_id", "") or "")
+                            if (
+                                expected_request_id
+                                and response_request_id
+                                and response_request_id != expected_request_id
+                            ):
+                                stray_stdout.append(raw_text)
+                                self._debug(
+                                    "helper.stdout.noise",
+                                    request_id=expected_request_id,
+                                    line=raw_text,
+                                    noise_lines=len(stray_stdout),
+                                )
+                            else:
+                                break
 
-                if len(stray_stdout) >= _HELPER_PROTOCOL_NOISE_MAX_LINES:
-                    preview = " | ".join(line[:160] for line in stray_stdout[-3:])
-                    raise RuntimeError(
-                        "computer use helper emitted unexpected stdout before its JSON response: "
-                        f"{preview}"
-                    )
+                    if len(stray_stdout) >= _HELPER_PROTOCOL_NOISE_MAX_LINES:
+                        preview = " | ".join(line[:160] for line in stray_stdout[-3:])
+                        raise RuntimeError(
+                            "computer use helper emitted unexpected stdout before its JSON response: "
+                            f"{preview}"
+                        )
+
+        if close_timed_out_helper:
+            self._debug(
+                "helper.request.timeout",
+                elapsed_ms=round((time.monotonic() - started_at) * 1000, 1),
+                timeout_seconds=response_timeout,
+                **_response_debug_fields(response or {}),
+            )
 
         if not isinstance(response, dict):
             raise RuntimeError("computer use helper returned an invalid response")
         session.last_result = response
+        if close_timed_out_helper:
+            await self._close_helper_session(session)
+            await _abandon_helper_io_task(timed_out_io_task)
+            return response
         self._debug(
             "helper.request.recv",
             elapsed_ms=round((time.monotonic() - started_at) * 1000, 1),
@@ -938,7 +1076,7 @@ class ComputerUseManager:
             request["allow_prompt"] = True
             request["request_timeout_seconds"] = 180.0
 
-        self._set_status("approval required" if self.trust_mode != "allow" else "allow")
+        self._set_status("approval required")
         response = await self._helper_request(session, request)
         return self._normalize_helper_response(op_id, session, response, action="start_session")
 
@@ -985,10 +1123,14 @@ class ComputerUseManager:
         )
 
         if process is not None and process.returncode is None:
+            shutdown_drain_task: asyncio.Task[Any] | None = None
             with contextlib.suppress(Exception):
                 if process.stdin is not None:
                     process.stdin.write(b"{\"action\":\"shutdown\"}\n")
-                    await process.stdin.drain()
+                    _drained, shutdown_drain_task = await _await_helper_io(
+                        process.stdin.drain(),
+                        timeout=_HELPER_CLOSE_DRAIN_TIMEOUT_SECONDS,
+                    )
             with contextlib.suppress(ProcessLookupError):
                 process.terminate()
             with contextlib.suppress(Exception):
@@ -998,6 +1140,7 @@ class ComputerUseManager:
                     process.kill()
                 with contextlib.suppress(Exception):
                     await process.wait()
+            await _abandon_helper_io_task(shutdown_drain_task)
 
         stderr_task = session.stderr_task
         session.stderr_task = None

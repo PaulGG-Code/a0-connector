@@ -106,6 +106,18 @@ def _computer_use_mode_label(value: str) -> str:
     return _COMPUTER_USE_MODE_LABELS.get(normalized, str(value or "").strip())
 
 
+def _computer_use_result_code(result: Mapping[str, Any] | None) -> str:
+    if not isinstance(result, Mapping):
+        return ""
+    return str(result.get("code") or result.get("error") or "").strip()
+
+
+def _computer_use_result_message(result: Mapping[str, Any] | None) -> str:
+    if not isinstance(result, Mapping):
+        return ""
+    return str(result.get("error") or result.get("code") or "").strip()
+
+
 class AgentZeroCLI(App):
     """Agent Zero CLI - terminal-native connector shell."""
 
@@ -115,6 +127,7 @@ class AgentZeroCLI(App):
     # Keep the canonical key names here and use `key_display` for the footer.
     BINDINGS = [
         Binding("Ctrl+C", "Quit", "Exit", show=False),
+        Binding("Ctrl+Q", "Quit", "Exit", show=False),
         Binding(
             "f3",
             "toggle_remote_file_mode",
@@ -1964,24 +1977,46 @@ class AgentZeroCLI(App):
 
     async def _set_computer_use_enabled(self, enabled: bool) -> None:
         was_enabled = self._computer_use.enabled
+        was_rearm_required = self._computer_use.status_label == "rearm required"
         if enabled:
             self._computer_use.set_trust_mode("allow")
         self._computer_use.set_enabled(enabled)
+        arm_result: dict[str, Any] | None = None
         rearm_result: dict[str, Any] | None = None
-        if enabled and self._computer_use.status_label == "rearm required":
+        if enabled and not was_rearm_required:
+            self._computer_use.mark_approval_pending()
+            arm_result = await self._computer_use.ensure_armed(context_id=self.current_context)
+        if (
+            enabled
+            and (
+                was_rearm_required
+                or self._computer_use.status_label == "rearm required"
+                or _computer_use_result_code(arm_result) == "COMPUTER_USE_REARM_REQUIRED"
+            )
+        ):
             rearm_result = await self._computer_use.rearm(context_id=self.current_context)
         if not enabled and was_enabled:
             await self._computer_use.disconnect()
         synced = await self._refresh_remote_tool_metadata()
         state = "enabled" if self._computer_use.enabled else "disabled"
         if synced:
+            activation_error = None
             if rearm_result is not None and not bool(rearm_result.get("ok")):
-                message = str(
-                    rearm_result.get("error")
+                activation_error = rearm_result
+            elif rearm_result is None and arm_result is not None and not bool(arm_result.get("ok")):
+                activation_error = arm_result
+            if activation_error is not None:
+                message = (
+                    _computer_use_result_message(activation_error)
                     or "Approve the platform permission prompt, then run /computer-use on again."
                 )
+                reason = (
+                    "platform permission is not armed"
+                    if _computer_use_result_code(activation_error) == "COMPUTER_USE_REARM_REQUIRED"
+                    else "activation did not complete"
+                )
                 self._show_notice(
-                    f"Computer use {state}, but platform permission is not armed: {message}",
+                    f"Computer use {state} locally, but {reason}: {message}",
                     error=True,
                 )
             else:
