@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import sys
 import time
 import uuid
@@ -39,6 +40,41 @@ from a0_computer_use_windows.shared import (
     resolve_trust_mode_policy,
     safe_context_segment,
 )
+
+_UIA_DEFAULT_MAX_DEPTH = 4
+_UIA_DEFAULT_MAX_NODES = 200
+_UIA_HARD_MAX_DEPTH = 8
+_UIA_HARD_MAX_NODES = 500
+_UIA_TEXT_LIMIT = 240
+_WINDOW_OPERATION_ALIASES = {
+    "activate_window": "focus_window",
+    "bring_to_front": "focus_window",
+    "foreground": "focus_window",
+    "foreground_window": "focus_window",
+    "window_focus": "focus_window",
+    "minimize_window": "minimize",
+    "hide": "minimize",
+    "restore_window": "restore",
+    "normal": "restore",
+    "show": "restore",
+    "maximize_window": "maximize",
+    "close_window": "close",
+}
+_WINDOW_OPERATIONS = {"focus_window", "minimize", "restore", "maximize", "close"}
+_WINDOW_VISUAL_STATES = {
+    "normal": 0,
+    "restore": 0,
+    "maximized": 1,
+    "maximize": 1,
+    "minimized": 2,
+    "minimize": 2,
+}
+_SW_HIDE = 0
+_SW_NORMAL = 1
+_SW_SHOW = 5
+_SW_MINIMIZE = 6
+_SW_RESTORE = 9
+_SW_MAXIMIZE = 3
 
 
 class WindowsComputerUseError(RuntimeError):
@@ -74,6 +110,9 @@ class WindowsDesktopDriver(Protocol):
         ...
 
     def type_text(self, text: str, *, submit: bool) -> None:
+        ...
+
+    def uia_roots(self) -> list[Any]:
         ...
 
 
@@ -217,7 +256,7 @@ def _load_dxcam_module() -> Any:
     except Exception as exc:  # pragma: no cover - only exercised on Windows
         raise WindowsComputerUseError(
             "COMPUTER_USE_UNSUPPORTED",
-            "dxcam is required for Windows computer-use capture.",
+            "dxcam is required for Windows computer-use capture. Reinstall the A0 CLI Windows dependencies in the active virtual environment.",
         ) from exc
     return dxcam
 
@@ -253,7 +292,12 @@ class _WindowsDesktopAutomation:
         except Exception as exc:  # pragma: no cover - only exercised on Windows
             raise WindowsComputerUseError(
                 "COMPUTER_USE_UNSUPPORTED",
-                "pywinauto UIA desktop automation could not initialize.",
+                (
+                    "pywinauto UIA desktop automation could not initialize. Run the A0 CLI "
+                    "inside the same interactive Windows desktop session as the target apps; "
+                    "services, disconnected Remote Desktop sessions, and UAC/elevated-app "
+                    "isolation can block desktop automation."
+                ),
             ) from exc
 
     def screen_geometry(self) -> ScreenGeometry:
@@ -274,7 +318,11 @@ class _WindowsDesktopAutomation:
         except Exception as exc:
             raise WindowsComputerUseError(
                 "COMPUTER_USE_CAPTURE_UNAVAILABLE",
-                "Unable to read the Windows virtual desktop dimensions.",
+                (
+                    "Unable to read the Windows virtual desktop dimensions. Make sure the "
+                    "desktop session is unlocked and the A0 CLI is not running as a service "
+                    "or in a disconnected Remote Desktop session."
+                ),
             ) from exc
 
     def screen_size(self) -> tuple[int, int]:
@@ -310,14 +358,21 @@ class _WindowsDesktopAutomation:
         if camera is None:
             raise WindowsComputerUseError(
                 "COMPUTER_USE_CAPTURE_UNAVAILABLE",
-                "dxcam could not initialize a capture session.",
+                (
+                    "dxcam could not initialize a Windows capture session. Make sure the "
+                    "desktop is unlocked and visible to the same user session running A0 CLI."
+                ),
             )
 
         frame = camera.grab()
         if frame is None:
             raise WindowsComputerUseError(
                 "COMPUTER_USE_CAPTURE_UNAVAILABLE",
-                "dxcam did not return a screen frame.",
+                (
+                    "dxcam did not return a Windows screen frame. This can happen when the "
+                    "desktop is locked, a Remote Desktop session is disconnected/minimized, "
+                    "or the CLI is isolated from the interactive desktop."
+                ),
             )
 
         from PIL import Image
@@ -357,6 +412,20 @@ class _WindowsDesktopAutomation:
         keyboard.send_keys(text, pause=0.01, with_spaces=True)
         if submit:
             keyboard.send_keys("{ENTER}", pause=0.01, with_spaces=True)
+
+    def uia_roots(self) -> list[Any]:  # pragma: no cover - only exercised on Windows
+        try:
+            return list(self._desktop.windows())
+        except Exception as exc:
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_UIA_UNAVAILABLE",
+                (
+                    "Windows UI Automation roots are unavailable. Make sure the A0 CLI "
+                    "is running in the interactive desktop session and is not isolated "
+                    "from the target UI by UAC elevation, services, or a disconnected "
+                    "Remote Desktop session."
+                ),
+            ) from exc
 
 
 def _normalize_key_token(key: str) -> str:
@@ -405,6 +474,371 @@ def _format_key_sequence(keys: list[str]) -> str:
     if len(body) == 1:
         return prefix + body + suffix
     return prefix + f"{{{body}}}" + suffix
+
+
+def _bounded_text(value: Any, *, limit: int = _UIA_TEXT_LIMIT) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _uia_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, bytes):
+        return _bounded_text(value.decode("utf-8", errors="replace"))
+    return _bounded_text(value)
+
+
+def _normalize_uia_path(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                loaded = json.loads(text)
+            except json.JSONDecodeError:
+                loaded = []
+            return _normalize_uia_path(loaded)
+        parts = [part for part in text.replace(".", "/").split("/") if part.strip()]
+        return [int(part) for part in parts]
+    if isinstance(value, (list, tuple)):
+        return [int(part) for part in value]
+    raise ValueError("UIA path must be a list of integers or a slash-delimited string.")
+
+
+def _call_noarg(target: Any, name: str) -> Any:
+    member = getattr(target, name, None)
+    if not callable(member):
+        return None
+    try:
+        return member()
+    except Exception:
+        return None
+
+
+def _uia_info(element: Any) -> Any:
+    return getattr(element, "element_info", element)
+
+
+def _read_attr(target: Any, name: str) -> Any:
+    value = getattr(target, name, None)
+    if callable(value):
+        try:
+            return value()
+        except Exception:
+            return None
+    return value
+
+
+def _read_first_attr(*sources: Any, names: tuple[str, ...]) -> Any:
+    for source in sources:
+        if source is None:
+            continue
+        for name in names:
+            value = _read_attr(source, name)
+            if value is not None and value != "":
+                return value
+    return None
+
+
+def _float_or_none(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _rect_value(rect: Any, name: str) -> float | None:
+    return _float_or_none(_read_attr(rect, name))
+
+
+def _uia_frame_from_rect(rect: Any, geometry: ScreenGeometry) -> dict[str, Any] | None:
+    if rect is None:
+        return None
+
+    x = y = width = height = None
+    if isinstance(rect, dict):
+        x = _float_or_none(rect.get("x", rect.get("left")))
+        y = _float_or_none(rect.get("y", rect.get("top")))
+        width = _float_or_none(rect.get("width"))
+        height = _float_or_none(rect.get("height"))
+        right = _float_or_none(rect.get("right"))
+        bottom = _float_or_none(rect.get("bottom"))
+        if width is None and x is not None and right is not None:
+            width = right - x
+        if height is None and y is not None and bottom is not None:
+            height = bottom - y
+    elif isinstance(rect, (list, tuple)) and len(rect) >= 4:
+        x = _float_or_none(rect[0])
+        y = _float_or_none(rect[1])
+        third = _float_or_none(rect[2])
+        fourth = _float_or_none(rect[3])
+        if third is not None and fourth is not None:
+            width = third
+            height = fourth
+    else:
+        x = _rect_value(rect, "left")
+        y = _rect_value(rect, "top")
+        right = _rect_value(rect, "right")
+        bottom = _rect_value(rect, "bottom")
+        width = _rect_value(rect, "width")
+        height = _rect_value(rect, "height")
+        if width is None and x is not None and right is not None:
+            width = right - x
+        if height is None and y is not None and bottom is not None:
+            height = bottom - y
+
+    if x is None or y is None or width is None or height is None:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+
+    frame: dict[str, Any] = {
+        "x": round(x, 2),
+        "y": round(y, 2),
+        "width": round(width, 2),
+        "height": round(height, 2),
+    }
+    if geometry.width > 0 and geometry.height > 0:
+        frame["normalized"] = {
+            "x": round((x - geometry.origin_x) / geometry.width, 6),
+            "y": round((y - geometry.origin_y) / geometry.height, 6),
+            "width": round(width / geometry.width, 6),
+            "height": round(height / geometry.height, 6),
+        }
+    return frame
+
+
+def _uia_children(element: Any) -> list[Any]:
+    for method_name in ("children", "iter_children"):
+        method = getattr(element, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            children = method()
+        except Exception:
+            continue
+        try:
+            return list(children)
+        except TypeError:
+            return []
+
+    info = _uia_info(element)
+    for method_name in ("children", "iter_children"):
+        method = getattr(info, method_name, None)
+        if not callable(method):
+            continue
+        try:
+            children = method()
+        except Exception:
+            continue
+        try:
+            return list(children)
+        except TypeError:
+            return []
+    return []
+
+
+def _int_or_none(value: Any) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        return int(text, 0)
+    except ValueError:
+        return None
+
+
+def _uia_native_handle(element: Any) -> int | None:
+    info = _uia_info(element)
+    value = _read_first_attr(
+        info,
+        element,
+        names=("handle", "hwnd", "native_window_handle", "native_handle"),
+    )
+    handle = _int_or_none(value)
+    if handle is None or handle <= 0:
+        return None
+    return handle
+
+
+def _uia_role_text(element: Any, summary: dict[str, Any] | None = None) -> str:
+    if summary is not None:
+        role = str(summary.get("role") or "").strip()
+        if role:
+            return role
+    info = _uia_info(element)
+    role = _read_first_attr(info, element, names=("control_type", "friendly_class_name"))
+    return str(role or "").strip()
+
+
+def _uia_is_window_like(element: Any, summary: dict[str, Any] | None = None) -> bool:
+    role = _uia_role_text(element, summary).lower()
+    if role in {"window", "dialog"}:
+        return True
+    path = summary.get("path") if isinstance(summary, dict) else None
+    if isinstance(path, list) and len(path) == 1 and _uia_native_handle(element) is not None:
+        return True
+    return False
+
+
+def _uia_parent(element: Any) -> Any | None:
+    for target in (element, _uia_info(element)):
+        if target is None:
+            continue
+        for name in ("parent", "parent_element"):
+            value = _read_attr(target, name)
+            if value is not None and value is not element:
+                return value
+    return None
+
+
+def _uia_window_element(element: Any) -> Any:
+    top_level_parent = getattr(element, "top_level_parent", None)
+    if callable(top_level_parent):
+        with contextlib.suppress(Exception):
+            parent = top_level_parent()
+            if parent is not None:
+                return parent
+
+    candidate = element
+    seen: set[int] = set()
+    for _ in range(32):
+        marker = id(candidate)
+        if marker in seen:
+            break
+        seen.add(marker)
+        parent = _uia_parent(candidate)
+        if parent is None:
+            break
+        candidate = parent
+    return candidate
+
+
+def _uia_selector_value(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if re.search(r"\s|['\":&>]", text):
+        escaped = text.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return text
+
+
+def _uia_selector_from_summary(summary: dict[str, Any]) -> str:
+    parts: list[str] = []
+    role = _uia_selector_value(summary.get("role"))
+    if role:
+        parts.append(f"role:{role}")
+    automation_id = _uia_selector_value(summary.get("automation_id"))
+    if automation_id:
+        parts.append(f"id:{automation_id}")
+    title = _uia_selector_value(summary.get("title"))
+    if title:
+        parts.append(f"name:{title}")
+    class_name = _uia_selector_value(summary.get("class_name"))
+    if class_name:
+        parts.append(f"classname:{class_name}")
+    return " && ".join(parts)
+
+
+def _parse_uia_selector(selector: Any) -> dict[str, str]:
+    text = str(selector or "").strip()
+    if not text:
+        return {}
+    segment = text.split(">>")[-1].strip()
+    if not segment:
+        return {}
+
+    mapping = {
+        "automationid": "automation_id",
+        "automation_id": "automation_id",
+        "class": "class_name",
+        "classname": "class_name",
+        "class_name": "class_name",
+        "controltype": "role",
+        "framework": "framework_id",
+        "frameworkid": "framework_id",
+        "framework_id": "framework_id",
+        "handle": "handle",
+        "hwnd": "handle",
+        "id": "automation_id",
+        "name": "title",
+        "nativeid": "handle",
+        "native_id": "handle",
+        "process": "process_id",
+        "processid": "process_id",
+        "process_id": "process_id",
+        "role": "role",
+        "text": "title",
+        "title": "title",
+    }
+    fields: dict[str, str] = {}
+    for part in re.split(r"\s*&&\s*", segment):
+        key, separator, value = part.partition(":")
+        if not separator:
+            continue
+        normalized_key = re.sub(r"[\s_-]+", "", key.strip().lower())
+        target_key = mapping.get(normalized_key)
+        if not target_key:
+            continue
+        cleaned = value.strip().strip("'\"")
+        if cleaned:
+            fields[target_key] = cleaned.replace('\\"', '"').replace("\\\\", "\\")
+    return fields
+
+
+def _expand_uia_target(target: dict[str, Any]) -> dict[str, Any]:
+    expanded = dict(target)
+    for key, value in _parse_uia_selector(expanded.get("selector")).items():
+        expanded.setdefault(key, value)
+    return expanded
+
+
+def _windows_show_window(handle: Any, command: int) -> bool:
+    hwnd = _int_or_none(handle)
+    if hwnd is None or hwnd <= 0 or sys.platform != "win32":
+        return False
+    try:  # pragma: no cover - only exercised on Windows
+        import ctypes
+
+        ctypes.windll.user32.ShowWindow(ctypes.c_void_p(hwnd), command)
+        return True
+    except Exception:
+        return False
+
+
+def _windows_set_foreground(handle: Any) -> bool:
+    hwnd = _int_or_none(handle)
+    if hwnd is None or hwnd <= 0 or sys.platform != "win32":
+        return False
+    try:  # pragma: no cover - only exercised on Windows
+        import ctypes
+
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(ctypes.c_void_p(hwnd), _SW_RESTORE)
+        user32.BringWindowToTop(ctypes.c_void_p(hwnd))
+        return bool(user32.SetForegroundWindow(ctypes.c_void_p(hwnd)))
+    except Exception:
+        return False
+
+
+def _uia_operation_error(operation: str) -> WindowsComputerUseError:
+    return WindowsComputerUseError(
+        "COMPUTER_USE_UIA_ACTION_UNSUPPORTED",
+        f"Windows UIA element does not support operation {operation!r}.",
+    )
 
 
 def _load_default_driver() -> _WindowsDesktopAutomation:
@@ -535,6 +969,8 @@ class WindowsComputerUseRuntime:
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "uia_snapshot": self.uia_snapshot,
+            "uia_action": self.uia_action,
             "move": self.move,
             "click": self.click,
             "scroll": self.scroll,
@@ -550,7 +986,7 @@ class WindowsComputerUseRuntime:
             )
         normalized_method = str(method or "").strip().lower()
         normalized_params = dict(params)
-        if normalized_method in {"capture", "move", "click", "scroll", "key", "type"}:
+        if normalized_method in {"capture", "uia_snapshot", "uia_action", "move", "click", "scroll", "key", "type"}:
             normalized_params = normalize_action_payload(
                 normalized_method,
                 normalized_params,
@@ -666,6 +1102,110 @@ class WindowsComputerUseRuntime:
             result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         return result
 
+    def uia_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        max_depth = min(
+            _UIA_HARD_MAX_DEPTH,
+            max(0, coerce_int(params.get("max_depth"), name="max_depth", default=_UIA_DEFAULT_MAX_DEPTH)),
+        )
+        max_nodes = min(
+            _UIA_HARD_MAX_NODES,
+            max(1, coerce_int(params.get("max_nodes"), name="max_nodes", default=_UIA_DEFAULT_MAX_NODES)),
+        )
+        roots = self._uia_roots()
+        geometry = ScreenGeometry(
+            origin_x=session.session.origin_x,
+            origin_y=session.session.origin_y,
+            width=session.session.width,
+            height=session.session.height,
+        )
+        budget = {"count": 1, "truncated": False}
+        tree: dict[str, Any] = {
+            "path": [],
+            "role": "Desktop",
+            "title": "Windows desktop",
+            "frame": {
+                "x": geometry.origin_x,
+                "y": geometry.origin_y,
+                "width": geometry.width,
+                "height": geometry.height,
+                "normalized": {"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0},
+            },
+        }
+        children: list[dict[str, Any]] = []
+        for index, root in enumerate(roots):
+            child_node = self._serialize_uia_element(
+                root,
+                path=[index],
+                depth=1,
+                max_depth=max_depth,
+                max_nodes=max_nodes,
+                budget=budget,
+                geometry=geometry,
+            )
+            if child_node is not None:
+                children.append(child_node)
+            if bool(budget.get("truncated")):
+                break
+        if children:
+            tree["children"] = children
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "app": {"name": "Windows desktop", "backend": "uia"},
+            "tree": tree,
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def uia_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        operation = str(
+            params.get("operation")
+            or params.get("uia_action")
+            or params.get("name")
+            or "invoke"
+        ).strip().lower()
+        if operation in {"press", "activate"}:
+            operation = "invoke"
+        if operation in {"type", "type_text"}:
+            operation = "set_value"
+        operation = _WINDOW_OPERATION_ALIASES.get(operation, operation)
+        allowed_operations = {"invoke", "click", "focus", "set_value", *_WINDOW_OPERATIONS}
+        if operation not in allowed_operations:
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_BAD_UIA_ACTION",
+                "uia_action operation must be one of: invoke, click, focus, set_value, "
+                "focus_window, minimize, restore, maximize, close.",
+            )
+
+        element, target = self._resolve_uia_target(params)
+        if operation == "invoke":
+            self._invoke_uia_element(element)
+        elif operation == "click":
+            self._click_uia_element(element)
+        elif operation == "focus":
+            self._focus_uia_element(element)
+        elif operation in _WINDOW_OPERATIONS:
+            self._window_uia_element_action(element, operation)
+        else:
+            value = params.get("value", params.get("text"))
+            if value is None:
+                raise WindowsComputerUseError(
+                    "COMPUTER_USE_UIA_VALUE_REQUIRED",
+                    "uia_action set_value requires value or text.",
+                )
+            self._set_uia_element_value(element, str(value), submit=coerce_bool(params.get("submit")))
+
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "operation": operation,
+            "target": target,
+        }
+
     def move(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
         x = float(params.get("x"))
@@ -756,6 +1296,463 @@ class WindowsComputerUseRuntime:
             self._session = None
         return {"active": False, "status": "stopped", "session_id": ""}
 
+    def _uia_roots(self) -> list[Any]:
+        roots_method = getattr(self._driver, "uia_roots", None)
+        if callable(roots_method):
+            try:
+                return list(roots_method())
+            except WindowsComputerUseError:
+                raise
+            except Exception as exc:
+                raise WindowsComputerUseError(
+                    "COMPUTER_USE_UIA_UNAVAILABLE",
+                    "Windows UI Automation roots are unavailable.",
+                ) from exc
+        raise WindowsComputerUseError(
+            "COMPUTER_USE_UIA_UNAVAILABLE",
+            "The Windows backend does not expose UI Automation roots.",
+        )
+
+    def _serialize_uia_element(
+        self,
+        element: Any,
+        *,
+        path: list[int],
+        depth: int,
+        max_depth: int,
+        max_nodes: int,
+        budget: dict[str, Any],
+        geometry: ScreenGeometry,
+    ) -> dict[str, Any] | None:
+        if int(budget.get("count") or 0) >= max_nodes:
+            budget["truncated"] = True
+            return None
+        budget["count"] = int(budget.get("count") or 0) + 1
+
+        node = self._uia_target_summary(element, path=path, geometry=geometry)
+        if depth >= max_depth:
+            return node
+
+        children: list[dict[str, Any]] = []
+        for index, child in enumerate(_uia_children(element)):
+            child_node = self._serialize_uia_element(
+                child,
+                path=[*path, index],
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_nodes=max_nodes,
+                budget=budget,
+                geometry=geometry,
+            )
+            if child_node is not None:
+                children.append(child_node)
+            if bool(budget.get("truncated")):
+                break
+        if children:
+            node["children"] = children
+        return node
+
+    def _uia_target_summary(
+        self,
+        element: Any,
+        *,
+        path: list[int],
+        geometry: ScreenGeometry,
+    ) -> dict[str, Any]:
+        info = _uia_info(element)
+        summary: dict[str, Any] = {"path": list(path)}
+        field_specs = (
+            ("role", ("control_type", "friendly_class_name")),
+            ("title", ("name", "window_text")),
+            ("value", ("value",)),
+            ("automation_id", ("automation_id",)),
+            ("class_name", ("class_name",)),
+            ("framework_id", ("framework_id",)),
+            ("process_id", ("process_id",)),
+            ("handle", ("handle",)),
+            ("enabled", ("enabled",)),
+            ("visible", ("visible",)),
+        )
+        for output_key, names in field_specs:
+            value = _read_first_attr(info, element, names=names)
+            if value is None or value == "":
+                continue
+            summary[output_key] = _uia_scalar(value)
+
+        focused = _call_noarg(element, "has_keyboard_focus")
+        if focused is not None:
+            summary["focused"] = bool(focused)
+
+        frame = _uia_frame_from_rect(_read_first_attr(info, element, names=("rectangle",)), geometry)
+        if frame:
+            summary["frame"] = frame
+
+        actions = self._uia_available_actions(element, summary)
+        if actions:
+            summary["actions"] = actions
+        selector = _uia_selector_from_summary(summary)
+        if selector:
+            summary["selector"] = selector
+        return summary
+
+    def _uia_available_actions(self, element: Any, summary: dict[str, Any]) -> list[str]:
+        actions: list[str] = []
+        is_window_like = _uia_is_window_like(element, summary)
+        if is_window_like:
+            actions.extend(["focus_window", "minimize", "restore", "maximize"])
+
+        has_invoke = callable(getattr(element, "invoke", None))
+        if not is_window_like and has_invoke:
+            actions.append("invoke")
+        if not is_window_like and not has_invoke and callable(getattr(element, "click_input", None)):
+            actions.append("click")
+        if not is_window_like and (
+            callable(getattr(element, "set_focus", None))
+            or callable(getattr(element, "set_keyboard_focus", None))
+        ):
+            actions.append("focus")
+
+        role = str(summary.get("role") or "").strip().lower()
+        if (
+            callable(getattr(element, "set_edit_text", None))
+            or callable(getattr(element, "type_keys", None))
+            or role in {"edit", "document", "combobox", "textbox"}
+        ):
+            actions.append("set_value")
+        return actions
+
+    def _resolve_uia_target(self, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        target_value = params.get("target")
+        target = dict(target_value) if isinstance(target_value, dict) else {}
+        if params.get("selector") is not None:
+            target["selector"] = params.get("selector")
+        target = _expand_uia_target(target)
+        path = _normalize_uia_path(params.get("path", target.get("path")))
+        roots = self._uia_roots()
+        geometry = self._current_geometry()
+
+        if path:
+            element = self._uia_element_for_path(roots, path)
+            if element is not None:
+                summary = self._uia_target_summary(element, path=path, geometry=geometry)
+                if self._uia_summary_matches(summary, target, allow_empty=True):
+                    return element, summary
+
+        matches = self._find_uia_matches(roots, target=target, geometry=geometry)
+        if not matches:
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_UIA_TARGET_NOT_FOUND",
+                "No matching Windows UI Automation element was found.",
+            )
+        best_score = matches[0][0]
+        best = [item for item in matches if item[0] == best_score]
+        if len(best) > 1:
+            previews = [item[2] for item in best[:5]]
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_UIA_TARGET_AMBIGUOUS",
+                f"UIA target matched {len(best)} elements. Narrow the target. Matches: {previews}",
+            )
+        _score, element, summary = best[0]
+        return element, summary
+
+    def _current_geometry(self) -> ScreenGeometry:
+        if self._session is not None:
+            session = self._session.session
+            return ScreenGeometry(
+                origin_x=session.origin_x,
+                origin_y=session.origin_y,
+                width=session.width,
+                height=session.height,
+            )
+        return self._screen_geometry()
+
+    def _uia_element_for_path(self, roots: list[Any], path: list[int]) -> Any | None:
+        if not path:
+            return None
+        root_index = path[0]
+        if root_index < 0 or root_index >= len(roots):
+            return None
+        element = roots[root_index]
+        for index in path[1:]:
+            children = _uia_children(element)
+            if index < 0 or index >= len(children):
+                return None
+            element = children[index]
+        return element
+
+    def _find_uia_matches(
+        self,
+        roots: list[Any],
+        *,
+        target: dict[str, Any],
+        geometry: ScreenGeometry,
+    ) -> list[tuple[int, Any, dict[str, Any]]]:
+        if not any(
+            str(target.get(key) or "").strip()
+            for key in (
+                "role",
+                "title",
+                "name",
+                "text",
+                "value",
+                "automation_id",
+                "identifier",
+                "native_id",
+                "class_name",
+                "framework_id",
+                "process_id",
+                "handle",
+                "selector",
+            )
+        ):
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_UIA_TARGET_REQUIRED",
+                "uia_action requires path or a semantic target.",
+            )
+
+        matches: list[tuple[int, Any, dict[str, Any]]] = []
+        queue: list[tuple[Any, list[int], int]] = [
+            (element, [index], 0) for index, element in enumerate(roots)
+        ]
+        visited = 0
+        while queue and visited < _UIA_HARD_MAX_NODES:
+            element, path, depth = queue.pop(0)
+            visited += 1
+            summary = self._uia_target_summary(element, path=path, geometry=geometry)
+            score = self._uia_match_score(summary, target)
+            if score > 0:
+                matches.append((score, element, summary))
+            if depth >= _UIA_HARD_MAX_DEPTH:
+                continue
+            for index, child in enumerate(_uia_children(element)):
+                queue.append((child, [*path, index], depth + 1))
+        return sorted(matches, key=lambda item: item[0], reverse=True)
+
+    def _uia_summary_matches(
+        self,
+        summary: dict[str, Any],
+        target: dict[str, Any],
+        *,
+        allow_empty: bool = False,
+    ) -> bool:
+        if allow_empty and not target:
+            return True
+        return self._uia_match_score(summary, target) > 0
+
+    def _uia_match_score(self, summary: dict[str, Any], target: dict[str, Any]) -> int:
+        score = 0
+        used = 0
+        key_specs = (
+            ("automation_id", ("automation_id", "identifier", "native_id"), 90, False),
+            ("handle", ("handle",), 100, False),
+            ("role", ("role",), 25, False),
+            ("class_name", ("class_name",), 20, False),
+            ("framework_id", ("framework_id",), 10, False),
+            ("process_id", ("process_id",), 10, False),
+            ("title", ("title", "name", "text"), 55, True),
+            ("value", ("value",), 25, True),
+        )
+        for actual_key, target_keys, weight, allow_contains in key_specs:
+            expected = ""
+            for target_key in target_keys:
+                expected = str(target.get(target_key) or "").strip().lower()
+                if expected:
+                    break
+            if not expected:
+                continue
+            used += 1
+            actual = str(summary.get(actual_key) or "").strip().lower()
+            if not actual:
+                return 0
+            if actual == expected:
+                score += weight
+            elif allow_contains and expected in actual:
+                score += max(1, weight // 2)
+            else:
+                return 0
+        return score if used else 0
+
+    def _invoke_uia_element(self, element: Any) -> None:
+        self._activate_owning_window(element)
+        invoke = getattr(element, "invoke", None)
+        if callable(invoke):
+            try:
+                invoke()
+                return
+            except Exception:
+                pass
+        raise _uia_operation_error("invoke")
+
+    def _click_uia_element(self, element: Any) -> None:
+        self._activate_owning_window(element)
+        click_input = getattr(element, "click_input", None)
+        if callable(click_input):
+            click_input()
+            return
+        raise _uia_operation_error("click")
+
+    def _focus_uia_element(self, element: Any) -> None:
+        self._activate_owning_window(element)
+        for method_name in ("set_focus", "set_keyboard_focus"):
+            method = getattr(element, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method()
+                return
+            except Exception:
+                continue
+        if _uia_is_window_like(element) and self._activate_uia_window(element):
+            return
+        raise _uia_operation_error("focus")
+
+    def _set_uia_element_value(self, element: Any, value: str, *, submit: bool) -> None:
+        self._activate_owning_window(element)
+        set_edit_text = getattr(element, "set_edit_text", None)
+        if callable(set_edit_text):
+            set_edit_text(value)
+            if submit:
+                self._focus_uia_element(element)
+                self._driver.key(["enter"])
+            return
+
+        value_pattern = None
+        with contextlib.suppress(Exception):
+            value_pattern = getattr(element, "iface_value", None)
+        set_value = getattr(value_pattern, "SetValue", None) or getattr(value_pattern, "set_value", None)
+        if callable(set_value):
+            set_value(value)
+            if submit:
+                self._focus_uia_element(element)
+                self._driver.key(["enter"])
+            return
+
+        self._focus_uia_element(element)
+        self._driver.type_text(value, submit=submit)
+
+    def _activate_owning_window(self, element: Any) -> bool:
+        window = _uia_window_element(element)
+        activated = self._activate_uia_window(window)
+        if window is not element:
+            return activated
+        return activated
+
+    def _activate_uia_window(self, window: Any) -> bool:
+        ok = False
+        for method_name in ("restore", "show"):
+            method = getattr(window, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method()
+                ok = True
+                break
+            except Exception:
+                continue
+
+        ok = self._set_uia_window_visual_state(window, "restore") or ok
+
+        handle = _uia_native_handle(window)
+        if handle is not None:
+            ok = _windows_show_window(handle, _SW_RESTORE) or ok
+            ok = _windows_set_foreground(handle) or ok
+
+        for method_name in ("set_focus", "set_keyboard_focus"):
+            method = getattr(window, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method()
+                ok = True
+                break
+            except Exception:
+                continue
+        return ok
+
+    def _set_uia_window_visual_state(self, window: Any, state_name: str) -> bool:
+        state = _WINDOW_VISUAL_STATES.get(state_name)
+        if state is None:
+            return False
+        pattern = None
+        with contextlib.suppress(Exception):
+            pattern = getattr(window, "iface_window", None)
+        if pattern is None:
+            return False
+        for method_name in ("SetWindowVisualState", "set_window_visual_state"):
+            method = getattr(pattern, method_name, None)
+            if not callable(method):
+                continue
+            try:
+                method(state)
+                return True
+            except Exception:
+                continue
+        return False
+
+    def _window_uia_element_action(self, element: Any, operation: str) -> None:
+        window = _uia_window_element(element)
+        if operation == "focus_window":
+            if self._activate_uia_window(window):
+                return
+            raise _uia_operation_error(operation)
+
+        if operation == "minimize":
+            method = getattr(window, "minimize", None)
+            if callable(method):
+                try:
+                    method()
+                    return
+                except Exception:
+                    pass
+            if self._set_uia_window_visual_state(window, "minimize"):
+                return
+            if _windows_show_window(_uia_native_handle(window), _SW_MINIMIZE):
+                return
+            raise _uia_operation_error(operation)
+
+        if operation == "restore":
+            if self._activate_uia_window(window):
+                return
+            raise _uia_operation_error(operation)
+
+        if operation == "maximize":
+            method = getattr(window, "maximize", None)
+            if callable(method):
+                try:
+                    method()
+                    return
+                except Exception:
+                    pass
+            if self._set_uia_window_visual_state(window, "maximize"):
+                return
+            if _windows_show_window(_uia_native_handle(window), _SW_MAXIMIZE):
+                return
+            raise _uia_operation_error(operation)
+
+        if operation == "close":
+            method = getattr(window, "close", None)
+            if callable(method):
+                try:
+                    method()
+                    return
+                except Exception:
+                    pass
+            pattern = None
+            with contextlib.suppress(Exception):
+                pattern = getattr(window, "iface_window", None)
+            close_pattern = getattr(pattern, "Close", None) if pattern is not None else None
+            if callable(close_pattern):
+                try:
+                    close_pattern()
+                    return
+                except Exception:
+                    pass
+            self._activate_uia_window(window)
+            self._driver.key(["alt", "f4"])
+            return
+
+        raise _uia_operation_error(operation)
+
     def _require_session(self, params: dict[str, Any]) -> _RuntimeSession:
         context_id = normalize_context_id(params.get("context_id"))
         session = self._session
@@ -831,7 +1828,19 @@ def serve_stdio(runtime: WindowsComputerUseRuntime | None = None) -> int:
 
             try:
                 with contextlib.redirect_stdout(sys.stderr):
-                    if action in {"start_session", "status", "capture", "move", "click", "scroll", "key", "type", "stop_session"}:
+                    if action in {
+                        "start_session",
+                        "status",
+                        "capture",
+                        "uia_snapshot",
+                        "uia_action",
+                        "move",
+                        "click",
+                        "scroll",
+                        "key",
+                        "type",
+                        "stop_session",
+                    }:
                         if action not in {"start_session", "status", "stop_session"}:
                             request = normalize_action_payload(action, request, context_id=normalize_context_id(request.get("context_id")))
                         result = runtime.dispatch(action, request)

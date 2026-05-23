@@ -740,7 +740,7 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
             "",
             "",
             {
-                "extension_paths": ["/tmp/ext"],
+                "extension_paths": [os.path.normpath("/tmp/ext")],
                 "default_homepage": "https://example.com",
                 "autofocus_active_page": False,
                 "max_open_tabs": 32,
@@ -2406,6 +2406,135 @@ def test_computer_use_remote_ax_action_auto_refreshes_screen(
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["ax_action", "capture"]
     assert shared_ws_manager.calls[0]["payload"]["target"] == {"role": "AXButton", "title": "Save"}
     assert shared_ws_manager.calls[0]["payload"]["operation"] == "press"
+    _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
+
+
+def test_computer_use_remote_uia_snapshot_formats_structural_tree() -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        assert payload["action"] == "uia_snapshot"
+        assert payload["max_depth"] == 3
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "app": {"name": "Windows desktop"},
+                "node_count": 3,
+                "truncated": False,
+                "tree": {
+                    "path": [],
+                    "role": "Desktop",
+                    "title": "Windows desktop",
+                },
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(
+            tool_mod,
+            agent,
+            action="uia_snapshot",
+            max_depth=3,
+        ).execute()
+    )
+
+    assert response.message == (
+        "Windows UIA snapshot for Windows desktop: 3 node(s). Root Desktop 'Windows desktop'. "
+        "Prefer node actions with uia_action; use focus_window/minimize/restore/maximize "
+        "for windows, and reserve click for a last resort."
+    )
+    assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["uia_snapshot"]
+
+
+def test_computer_use_remote_uia_action_auto_refreshes_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_path = _write_png_fixture(tmp_path)
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        if payload["action"] == "uia_action":
+            return {
+                "op_id": payload["op_id"],
+                "ok": True,
+                "result": {
+                    "status": "active",
+                    "session_id": "sess-1",
+                    "operation": "invoke",
+                    "target": {"path": [0, 1], "role": "Button", "title": "Save"},
+                },
+            }
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": str(image_path),
+                "fresh": bool(payload.get("fresh")),
+                "fresh_after_satisfied": True,
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    monkeypatch.setattr(tool_mod.asyncio, "sleep", _no_sleep)
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(
+            tool_mod,
+            agent,
+            action="uia_action",
+            target={"role": "Button", "title": "Save"},
+            selector="role:Button && name:Save",
+            operation="invoke",
+        ).execute()
+    )
+
+    assert response.message == (
+        "Performed Windows UIA invoke on Button 'Save' path=[0, 1]. "
+        f"Latest screen attached: {_expected_capture_summary(fresh=True)} "
+        f"{_capture_verification_note(tool_mod)}"
+    )
+    assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["uia_action", "capture"]
+    assert shared_ws_manager.calls[0]["payload"]["target"] == {
+        "role": "Button",
+        "title": "Save",
+        "selector": "role:Button && name:Save",
+    }
+    assert shared_ws_manager.calls[0]["payload"]["operation"] == "invoke"
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
 
 

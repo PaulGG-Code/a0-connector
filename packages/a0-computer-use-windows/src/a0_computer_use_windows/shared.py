@@ -15,6 +15,10 @@ WINDOWS_BACKEND_FEATURES = (
     "multi-monitor-virtual-screen",
     "global-pixel-actions",
     "uia-automation",
+    "uia-tree-snapshot",
+    "uia-structural-targeting",
+    "uia-element-action",
+    "uia-window-management",
     "mouse-injection",
     "keyboard-injection",
     "real-cursor-may-move",
@@ -133,6 +137,35 @@ def normalize_action_payload(
         request["session_id"] = session_id
 
     if normalized_action == "capture":
+        return request
+
+    if normalized_action == "uia_snapshot":
+        if payload.get("max_depth") is not None:
+            request["max_depth"] = coerce_int(payload.get("max_depth"), name="max_depth")
+        if payload.get("max_nodes") is not None:
+            request["max_nodes"] = coerce_int(payload.get("max_nodes"), name="max_nodes")
+        return request
+
+    if normalized_action == "uia_action":
+        target = payload.get("target")
+        normalized_target: dict[str, Any] = {}
+        if isinstance(target, dict):
+            normalized_target.update(target)
+        if payload.get("selector") is not None:
+            normalized_target["selector"] = str(payload.get("selector") or "").strip()
+        if normalized_target:
+            request["target"] = normalized_target
+        if payload.get("path") is not None:
+            request["path"] = payload.get("path")
+        operation = payload.get("operation", payload.get("uia_action", payload.get("name")))
+        if operation is not None:
+            request["operation"] = str(operation or "").strip()
+        if payload.get("value") is not None:
+            request["value"] = payload.get("value")
+        if payload.get("text") is not None:
+            request["text"] = str(payload.get("text") or "")
+        if coerce_bool(payload.get("submit")):
+            request["submit"] = True
         return request
 
     if normalized_action == "move":

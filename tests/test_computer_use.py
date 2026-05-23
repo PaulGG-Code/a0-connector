@@ -978,6 +978,20 @@ async def test_move_click_scroll_key_type_normalize_payloads(
         {"target": {"role": "AXButton", "title": "Save"}, "operation": "press"},
         context_id="ctx-1",
     )
+    uia_snapshot = manager._normalize_action_payload(
+        "uia_snapshot",
+        {"max_depth": 4, "max_nodes": 80},
+        context_id="ctx-1",
+    )
+    uia_action = manager._normalize_action_payload(
+        "uia_action",
+        {
+            "target": {"role": "Button", "title": "Save"},
+            "selector": "role:Button && name:Save",
+            "operation": "invoke",
+        },
+        context_id="ctx-1",
+    )
     submitted = manager._normalize_action_payload(
         "type",
         {"text": "hello", "submit": True},
@@ -996,6 +1010,11 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     assert ax_snapshot["max_nodes"] == 50
     assert ax_action["target"]["title"] == "Save"
     assert ax_action["operation"] == "press"
+    assert uia_snapshot["max_depth"] == 4
+    assert uia_snapshot["max_nodes"] == 80
+    assert uia_action["target"]["title"] == "Save"
+    assert uia_action["target"]["selector"] == "role:Button && name:Save"
+    assert uia_action["operation"] == "invoke"
     assert submitted["submit"] is True
 
 
