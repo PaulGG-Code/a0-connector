@@ -61,6 +61,9 @@ def test_windows_installer_pins_managed_python() -> None:
     assert '$installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")' in installer
     assert '"--constraints", $runtimeConstraints' in installer
     assert '"--build-constraints", $buildConstraints' in installer
+    assert "Ensure-UvToolInstallBuildConstraints" in installer
+    assert "Test-UvToolInstallOption" in installer
+    assert "does not support --build-constraints" in installer
     assert 'if ($LASTEXITCODE -ne 0)' in installer
 
 

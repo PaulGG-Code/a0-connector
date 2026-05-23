@@ -354,6 +354,7 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert '"--upgrade-package"' in script_text
         assert '"--constraints"' in script_text
         assert '"--build-constraints"' in script_text
+        assert "_uv_tool_install_supports" in script_text
         assert '"--upgrade"' not in script_text
         assert "package_spec" in script_text
         assert "Update complete. Run a0." in script_text
@@ -366,18 +367,24 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
     namespace = _load_updater_namespace()
     kill_results = iter([None, None, ProcessLookupError()])
     sleep_calls: list[float] = []
-    run_calls: list[tuple[list[str], bool]] = []
-
-    monkeypatch.setattr(namespace["os"], "name", "posix")
+    run_calls: list[tuple[list[str], bool, bool, bool]] = []
 
     def fake_kill(pid: int, sig: int) -> None:
         result = next(kill_results)
         if isinstance(result, BaseException):
             raise result
 
-    def fake_run(argv: list[str], *, check: bool) -> SimpleNamespace:
-        run_calls.append((argv, check))
-        return SimpleNamespace(returncode=0)
+    def fake_run(
+        argv: list[str],
+        *,
+        check: bool,
+        capture_output: bool = False,
+        text: bool = False,
+    ) -> SimpleNamespace:
+        run_calls.append((argv, check, capture_output, text))
+        if argv == ["uv", "tool", "install", "--help"]:
+            return SimpleNamespace(returncode=0, stdout="--build-constraints", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
 
     monkeypatch.setattr(namespace["os"], "kill", fake_kill)
     monkeypatch.setattr(namespace["time"], "sleep", lambda seconds: sleep_calls.append(seconds))
@@ -391,6 +398,7 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
         build_constraints.write_text("hatchling==1.29.0\n", encoding="utf-8")
 
         package_spec = self_update.package_spec_for_release_tag("v9.8")
+        monkeypatch.setattr(namespace["os"], "name", "posix")
         exit_code = namespace["main"](
             [
                 "123",
@@ -405,6 +413,12 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
     assert exit_code == 0
     assert sleep_calls == [0.1, 0.1]
     assert run_calls == [
+        (
+            ["uv", "tool", "install", "--help"],
+            False,
+            True,
+            True,
+        ),
         (
             [
                 "uv",
@@ -422,9 +436,60 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
                 package_spec,
             ],
             False,
+            False,
+            False,
         )
     ]
     assert captured.out.strip().endswith("Update complete. Run a0.")
+
+
+def test_generated_updater_script_skips_build_constraint_for_old_uv(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    namespace = _load_updater_namespace()
+    run_calls: list[list[str]] = []
+
+    monkeypatch.setattr(namespace["shutil"], "which", lambda name: "uv")
+
+    def fake_run(
+        argv: list[str],
+        *,
+        check: bool,
+        capture_output: bool = False,
+        text: bool = False,
+    ) -> SimpleNamespace:
+        del check, capture_output, text
+        run_calls.append(argv)
+        if argv == ["uv", "tool", "install", "--help"]:
+            return SimpleNamespace(returncode=0, stdout="--constraints", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(namespace["subprocess"], "run", fake_run)
+
+    with _workspace_temp_dir() as temp_dir:
+        runtime_constraints = temp_dir / "runtime.txt"
+        build_constraints = temp_dir / "build.txt"
+        runtime_constraints.write_text("textual==8.2.7\n", encoding="utf-8")
+        build_constraints.write_text("hatchling==1.29.0\n", encoding="utf-8")
+
+        package_spec = self_update.package_spec_for_release_tag("v9.8")
+        exit_code = namespace["main"](
+            [
+                "0",
+                package_spec,
+                "3.11",
+                str(runtime_constraints),
+                str(build_constraints),
+            ]
+        )
+
+    captured = capsys.readouterr()
+    install_command = run_calls[-1]
+    assert exit_code == 0
+    assert "--constraints" in install_command
+    assert "--build-constraints" not in install_command
+    assert "does not support --build-constraints" in captured.out
 
 
 def test_generated_updater_script_propagates_uv_exit_code_and_ignores_cleanup_failure(
@@ -435,11 +500,19 @@ def test_generated_updater_script_propagates_uv_exit_code_and_ignores_cleanup_fa
     monkeypatch.setattr(os, "name", "posix")
     monkeypatch.setattr(os, "kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
     monkeypatch.setattr(shutil, "which", lambda name: "uv")
-    monkeypatch.setattr(
-        subprocess,
-        "run",
-        lambda argv, *, check: SimpleNamespace(returncode=7),
-    )
+    def fake_run(
+        argv: list[str],
+        *,
+        check: bool,
+        capture_output: bool = False,
+        text: bool = False,
+    ) -> SimpleNamespace:
+        del check, capture_output, text
+        if argv == ["uv", "tool", "install", "--help"]:
+            return SimpleNamespace(returncode=0, stdout="--build-constraints", stderr="")
+        return SimpleNamespace(returncode=7, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(Path, "unlink", lambda self: (_ for _ in ()).throw(OSError("locked")))
     monkeypatch.setattr(
         sys,

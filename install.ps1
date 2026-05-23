@@ -94,24 +94,57 @@ function Resolve-ConstraintFile([string]$Spec, [string]$Name, [string]$TempDir) 
     return $path
 }
 
-function Ensure-Uv {
-    if (Get-Command uv -ErrorAction SilentlyContinue) {
-        return
-    }
-
-    irm $UvInstallUrl | iex
-
+function Add-LocalUvToPath {
     $localBin = Join-Path $HOME ".local\bin"
     if (Test-Path $localBin) {
         $env:PATH = "$localBin;$env:PATH"
     }
+}
+
+function Install-Uv {
+    irm $UvInstallUrl | iex
+    Add-LocalUvToPath
 
     if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
         throw "uv was installed but is not on PATH in this shell yet. Open a new terminal, then rerun this installer."
     }
 }
 
+function Ensure-Uv {
+    if (Get-Command uv -ErrorAction SilentlyContinue) {
+        return
+    }
+
+    Install-Uv
+}
+
+function Test-UvToolInstallOption([string]$Option) {
+    try {
+        $helpText = (& uv tool install --help 2>&1) -join "`n"
+    } catch {
+        return $false
+    }
+
+    return $helpText.Contains($Option)
+}
+
+function Ensure-UvToolInstallBuildConstraints {
+    if (Test-UvToolInstallOption "--build-constraints") {
+        return $true
+    }
+
+    Write-Host "Updating uv to support locked build dependencies..."
+    try {
+        Install-Uv
+    } catch {
+        Write-Warning "Could not update uv automatically: $($_.Exception.Message)"
+    }
+
+    return (Test-UvToolInstallOption "--build-constraints")
+}
+
 Ensure-Uv
+$supportsBuildConstraints = Ensure-UvToolInstallBuildConstraints
 $Target = Resolve-PackageSpec
 
 $toolBin = (& uv tool dir --bin).Trim()
@@ -136,7 +169,11 @@ try {
         $installArgs += @("--constraints", $runtimeConstraints)
     }
     if ($buildConstraints) {
-        $installArgs += @("--build-constraints", $buildConstraints)
+        if ($supportsBuildConstraints) {
+            $installArgs += @("--build-constraints", $buildConstraints)
+        } else {
+            Write-Warning "This uv version does not support --build-constraints; continuing with runtime constraints. Run 'uv self update' to apply build constraints on future installs."
+        }
     }
     if (-not $runtimeConstraints -or -not $buildConstraints) {
         Write-Warning "Installing a0 without dependency locks."

@@ -376,6 +376,19 @@ def _build_updater_script() -> str:
             return str(path)
 
 
+        def _uv_tool_install_supports(uv_executable, option):
+            try:
+                result = subprocess.run(
+                    [uv_executable, "tool", "install", "--help"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except OSError:
+                return False
+            return option in f"{result.stdout}\\n{result.stderr}"
+
+
         def main(argv):
             if len(argv) != 5:
                 print("Invalid updater invocation.", file=sys.stderr)
@@ -397,6 +410,10 @@ def _build_updater_script() -> str:
             if uv_executable is None:
                 print("uv is required for `a0 update`. Install uv or rerun the existing installer.")
                 return 1
+            supports_build_constraints = _uv_tool_install_supports(
+                uv_executable,
+                "--build-constraints",
+            )
 
             with tempfile.TemporaryDirectory(prefix="a0-update-locks-") as temp_dir:
                 try:
@@ -427,7 +444,13 @@ def _build_updater_script() -> str:
                 if runtime_lock:
                     command.extend(["--constraints", runtime_lock])
                 if build_lock:
-                    command.extend(["--build-constraints", build_lock])
+                    if supports_build_constraints:
+                        command.extend(["--build-constraints", build_lock])
+                    else:
+                        print(
+                            "Warning: this uv version does not support "
+                            "--build-constraints; continuing with runtime constraints."
+                        )
                 if not runtime_lock or not build_lock:
                     print("Warning: running a0 update without dependency locks.")
                 command.append(package_spec)
