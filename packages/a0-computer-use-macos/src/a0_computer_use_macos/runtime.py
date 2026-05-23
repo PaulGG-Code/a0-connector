@@ -44,6 +44,11 @@ from a0_computer_use_macos.shared import (
 
 _DEBUG_ENV = "A0_COMPUTER_USE_DEBUG"
 _DEBUG_LOG_ENV = "A0_COMPUTER_USE_DEBUG_LOG"
+_AX_DEFAULT_MAX_DEPTH = 4
+_AX_DEFAULT_MAX_NODES = 200
+_AX_HARD_MAX_DEPTH = 8
+_AX_HARD_MAX_NODES = 500
+_AX_TEXT_LIMIT = 240
 
 _MODIFIER_KEY_SPECS = {
     "cmd": (55, "command", "kCGEventFlagMaskCommand"),
@@ -399,6 +404,130 @@ def _png_dimensions(png_bytes: bytes) -> tuple[int, int]:
         )
     width, height = struct.unpack(">II", png_bytes[16:24])
     return int(width), int(height)
+
+
+def _bounded_text(value: Any, *, limit: int = _AX_TEXT_LIMIT) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 3)] + "..."
+
+
+def _ax_constant(accessibility: Any, name: str, fallback: str) -> Any:
+    return getattr(accessibility, name, fallback)
+
+
+def _ax_result_value(result: Any) -> tuple[int, Any]:
+    if isinstance(result, tuple):
+        if not result:
+            return 1, None
+        try:
+            error_code = int(result[0])
+        except Exception:
+            return 0, result
+        value = result[1] if len(result) > 1 else None
+        return error_code, value
+    return 0, result
+
+
+def _ax_copy_attribute(accessibility: Any, element: Any, name: str, fallback: str) -> Any:
+    copy_attribute = getattr(accessibility, "AXUIElementCopyAttributeValue")
+    attribute = _ax_constant(accessibility, name, fallback)
+    try:
+        result = copy_attribute(element, attribute, None)
+    except TypeError:
+        result = copy_attribute(element, attribute)
+    except Exception:
+        return None
+    error_code, value = _ax_result_value(result)
+    if error_code != 0:
+        return None
+    return value
+
+
+def _ax_copy_actions(accessibility: Any, element: Any) -> list[str]:
+    copy_actions = getattr(accessibility, "AXUIElementCopyActionNames", None)
+    if copy_actions is None:
+        return []
+    try:
+        result = copy_actions(element, None)
+    except TypeError:
+        result = copy_actions(element)
+    except Exception:
+        return []
+    error_code, value = _ax_result_value(result)
+    if error_code != 0:
+        return []
+    return [_bounded_text(item, limit=80) for item in _ax_iterable(value) if str(item or "").strip()]
+
+
+def _ax_iterable(value: Any) -> list[Any]:
+    if value is None or isinstance(value, (str, bytes, dict)):
+        return []
+    try:
+        return list(value)
+    except TypeError:
+        return []
+
+
+def _ax_point(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    x = getattr(value, "x", None)
+    y = getattr(value, "y", None)
+    if x is not None and y is not None:
+        return float(x), float(y)
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _ax_size(value: Any) -> tuple[float, float] | None:
+    if value is None:
+        return None
+    width = getattr(value, "width", None)
+    height = getattr(value, "height", None)
+    if width is not None and height is not None:
+        return float(width), float(height)
+    if isinstance(value, (list, tuple)) and len(value) >= 2:
+        try:
+            return float(value[0]), float(value[1])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _ax_scalar(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return _bounded_text(value)
+    if isinstance(value, bytes):
+        return _bounded_text(value.decode("utf-8", errors="replace"))
+    return _bounded_text(value)
+
+
+def _normalize_ax_path(value: Any) -> list[int]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                loaded = json.loads(text)
+            except json.JSONDecodeError:
+                loaded = []
+            return _normalize_ax_path(loaded)
+        parts = [part for part in text.replace(".", "/").split("/") if part.strip()]
+        return [int(part) for part in parts]
+    if isinstance(value, (list, tuple)):
+        return [int(part) for part in value]
+    raise ValueError("AX path must be a list of integers or a slash-delimited string.")
 
 
 @dataclass(frozen=True)
@@ -880,6 +1009,8 @@ class MacOSComputerUseRuntime:
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "ax_snapshot": self.ax_snapshot,
+            "ax_action": self.ax_action,
             "move": self.move,
             "click": self.click,
             "scroll": self.scroll,
@@ -895,7 +1026,7 @@ class MacOSComputerUseRuntime:
             )
         normalized_method = str(method or "").strip().lower()
         normalized_params = dict(params)
-        if normalized_method in {"capture", "move", "click", "scroll", "key", "type"}:
+        if normalized_method in {"capture", "ax_snapshot", "ax_action", "move", "click", "scroll", "key", "type"}:
             normalized_params = normalize_action_payload(
                 normalized_method,
                 normalized_params,
@@ -1039,6 +1170,96 @@ class MacOSComputerUseRuntime:
             result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         return result
 
+    def ax_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        max_depth = min(
+            _AX_HARD_MAX_DEPTH,
+            max(0, coerce_int(params.get("max_depth"), name="max_depth", default=_AX_DEFAULT_MAX_DEPTH)),
+        )
+        max_nodes = min(
+            _AX_HARD_MAX_NODES,
+            max(1, coerce_int(params.get("max_nodes"), name="max_nodes", default=_AX_DEFAULT_MAX_NODES)),
+        )
+        accessibility = _load_accessibility_module()
+        app_info, root = self._frontmost_ax_root(accessibility)
+        budget = {"count": 0, "truncated": False}
+        tree = self._serialize_ax_element(
+            accessibility,
+            root,
+            path=[],
+            depth=0,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            budget=budget,
+            screen_size=(session.session.width, session.session.height),
+        )
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "app": app_info,
+            "tree": tree or {},
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def ax_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        accessibility = _load_accessibility_module()
+        operation = str(
+            params.get("operation")
+            or params.get("ax_action")
+            or params.get("name")
+            or "press"
+        ).strip().lower()
+        if operation in {"click", "activate"}:
+            operation = "press"
+        if operation not in {"press", "focus", "set_value"}:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_BAD_AX_ACTION",
+                "ax_action operation must be one of: press, focus, set_value.",
+            )
+
+        element, target = self._resolve_ax_target(accessibility, params)
+        if operation == "press":
+            action_name = _ax_constant(accessibility, "kAXPressAction", "AXPress")
+            error_code = self._perform_ax_action(accessibility, element, action_name)
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX press failed with error {error_code}.",
+                )
+        elif operation == "focus":
+            focused_attr = _ax_constant(accessibility, "kAXFocusedAttribute", "AXFocused")
+            error_code = self._set_ax_attribute(accessibility, element, focused_attr, True)
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX focus failed with error {error_code}.",
+                )
+        else:
+            value = params.get("value", params.get("text"))
+            if value is None:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_VALUE_REQUIRED",
+                    "ax_action set_value requires value or text.",
+                )
+            value_attr = _ax_constant(accessibility, "kAXValueAttribute", "AXValue")
+            error_code = self._set_ax_attribute(accessibility, element, value_attr, str(value))
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX set_value failed with error {error_code}.",
+                )
+
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "operation": operation,
+            "target": target,
+        }
+
     def move(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
         x = float(params.get("x"))
@@ -1130,6 +1351,310 @@ class MacOSComputerUseRuntime:
                 self._store.put(session.session)
             self._session = None
         return {"active": False, "status": "stopped", "session_id": ""}
+
+    def _frontmost_ax_root(self, accessibility: Any) -> tuple[dict[str, Any], Any]:
+        try:
+            appkit = _load_appkit_module()
+            application = appkit.NSWorkspace.sharedWorkspace().frontmostApplication()
+        except Exception as exc:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_UNAVAILABLE",
+                "Unable to inspect the frontmost macOS application.",
+            ) from exc
+
+        app_info: dict[str, Any] = {}
+        pid = None
+        if application is not None:
+            for key, method_name in (
+                ("name", "localizedName"),
+                ("bundle_id", "bundleIdentifier"),
+                ("pid", "processIdentifier"),
+            ):
+                method = getattr(application, method_name, None)
+                if callable(method):
+                    with contextlib.suppress(Exception):
+                        value = method()
+                        if value is not None:
+                            app_info[key] = _ax_scalar(value)
+            pid = app_info.get("pid")
+
+        create_application = getattr(accessibility, "AXUIElementCreateApplication", None)
+        if create_application is None or pid is None:
+            create_system = getattr(accessibility, "AXUIElementCreateSystemWide", None)
+            if create_system is None:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_UNAVAILABLE",
+                    "macOS Accessibility root element is unavailable.",
+                )
+            return app_info, create_system()
+
+        try:
+            return app_info, create_application(int(pid))
+        except Exception as exc:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_UNAVAILABLE",
+                "Unable to create a macOS Accessibility application element.",
+            ) from exc
+
+    def _serialize_ax_element(
+        self,
+        accessibility: Any,
+        element: Any,
+        *,
+        path: list[int],
+        depth: int,
+        max_depth: int,
+        max_nodes: int,
+        budget: dict[str, Any],
+        screen_size: tuple[int, int],
+    ) -> dict[str, Any] | None:
+        if int(budget.get("count") or 0) >= max_nodes:
+            budget["truncated"] = True
+            return None
+        budget["count"] = int(budget.get("count") or 0) + 1
+
+        node: dict[str, Any] = {"path": list(path)}
+        for output_key, attr_name, fallback in (
+            ("role", "kAXRoleAttribute", "AXRole"),
+            ("subrole", "kAXSubroleAttribute", "AXSubrole"),
+            ("title", "kAXTitleAttribute", "AXTitle"),
+            ("description", "kAXDescriptionAttribute", "AXDescription"),
+            ("value", "kAXValueAttribute", "AXValue"),
+            ("identifier", "kAXIdentifierAttribute", "AXIdentifier"),
+            ("enabled", "kAXEnabledAttribute", "AXEnabled"),
+            ("focused", "kAXFocusedAttribute", "AXFocused"),
+        ):
+            value = _ax_copy_attribute(accessibility, element, attr_name, fallback)
+            if value is None or value == "":
+                continue
+            node[output_key] = _ax_scalar(value)
+
+        frame = self._ax_frame(accessibility, element, screen_size=screen_size)
+        if frame:
+            node["frame"] = frame
+        actions = _ax_copy_actions(accessibility, element)
+        if actions:
+            node["actions"] = actions
+
+        if depth >= max_depth:
+            return node
+
+        children: list[dict[str, Any]] = []
+        for index, child in enumerate(self._ax_children(accessibility, element, root=not path)):
+            child_node = self._serialize_ax_element(
+                accessibility,
+                child,
+                path=[*path, index],
+                depth=depth + 1,
+                max_depth=max_depth,
+                max_nodes=max_nodes,
+                budget=budget,
+                screen_size=screen_size,
+            )
+            if child_node is not None:
+                children.append(child_node)
+            if bool(budget.get("truncated")):
+                break
+        if children:
+            node["children"] = children
+        return node
+
+    def _ax_children(self, accessibility: Any, element: Any, *, root: bool = False) -> list[Any]:
+        candidates: list[Any] = []
+        if root:
+            windows = _ax_copy_attribute(accessibility, element, "kAXWindowsAttribute", "AXWindows")
+            candidates = _ax_iterable(windows)
+        if not candidates:
+            children = _ax_copy_attribute(accessibility, element, "kAXChildrenAttribute", "AXChildren")
+            candidates = _ax_iterable(children)
+        return candidates
+
+    def _ax_frame(
+        self,
+        accessibility: Any,
+        element: Any,
+        *,
+        screen_size: tuple[int, int],
+    ) -> dict[str, Any] | None:
+        position = _ax_point(
+            _ax_copy_attribute(accessibility, element, "kAXPositionAttribute", "AXPosition")
+        )
+        size = _ax_size(_ax_copy_attribute(accessibility, element, "kAXSizeAttribute", "AXSize"))
+        if position is None or size is None:
+            return None
+        x, y = position
+        width, height = size
+        frame: dict[str, Any] = {
+            "x": round(x, 2),
+            "y": round(y, 2),
+            "width": round(width, 2),
+            "height": round(height, 2),
+        }
+        screen_width, screen_height = screen_size
+        if screen_width > 0 and screen_height > 0:
+            frame["normalized"] = {
+                "x": round(x / screen_width, 6),
+                "y": round(y / screen_height, 6),
+                "width": round(width / screen_width, 6),
+                "height": round(height / screen_height, 6),
+            }
+        return frame
+
+    def _resolve_ax_target(self, accessibility: Any, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        target_value = params.get("target")
+        target = dict(target_value) if isinstance(target_value, dict) else {}
+        path = _normalize_ax_path(params.get("path", target.get("path")))
+        _app_info, root = self._frontmost_ax_root(accessibility)
+        screen_size = (0, 0)
+        if self._session is not None:
+            screen_size = (self._session.session.width, self._session.session.height)
+
+        if path:
+            element = self._ax_element_for_path(accessibility, root, path)
+            if element is not None:
+                summary = self._ax_target_summary(accessibility, element, path=path, screen_size=screen_size)
+                if self._ax_summary_matches(summary, target, allow_empty=True):
+                    return element, summary
+
+        matches = self._find_ax_matches(accessibility, root, target=target, screen_size=screen_size)
+        if not matches:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_TARGET_NOT_FOUND",
+                "No matching macOS Accessibility element was found.",
+            )
+        best_score = matches[0][0]
+        best = [item for item in matches if item[0] == best_score]
+        if len(best) > 1:
+            previews = [item[2] for item in best[:5]]
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_TARGET_AMBIGUOUS",
+                f"AX target matched {len(best)} elements. Narrow the target. Matches: {previews}",
+            )
+        _score, element, summary = best[0]
+        return element, summary
+
+    def _ax_element_for_path(self, accessibility: Any, root: Any, path: list[int]) -> Any | None:
+        element = root
+        for depth, index in enumerate(path):
+            children = self._ax_children(accessibility, element, root=depth == 0)
+            if index < 0 or index >= len(children):
+                return None
+            element = children[index]
+        return element
+
+    def _find_ax_matches(
+        self,
+        accessibility: Any,
+        root: Any,
+        *,
+        target: dict[str, Any],
+        screen_size: tuple[int, int],
+    ) -> list[tuple[int, Any, dict[str, Any]]]:
+        if not any(str(target.get(key) or "").strip() for key in ("role", "title", "description", "value", "identifier", "subrole")):
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_TARGET_REQUIRED",
+                "ax_action requires path or a semantic target.",
+            )
+        matches: list[tuple[int, Any, dict[str, Any]]] = []
+        queue: list[tuple[Any, list[int], int]] = [(root, [], 0)]
+        visited = 0
+        while queue and visited < _AX_HARD_MAX_NODES:
+            element, path, depth = queue.pop(0)
+            visited += 1
+            summary = self._ax_target_summary(accessibility, element, path=path, screen_size=screen_size)
+            score = self._ax_match_score(summary, target)
+            if score > 0:
+                matches.append((score, element, summary))
+            if depth >= _AX_HARD_MAX_DEPTH:
+                continue
+            for index, child in enumerate(self._ax_children(accessibility, element, root=not path)):
+                queue.append((child, [*path, index], depth + 1))
+        return sorted(matches, key=lambda item: item[0], reverse=True)
+
+    def _ax_target_summary(
+        self,
+        accessibility: Any,
+        element: Any,
+        *,
+        path: list[int],
+        screen_size: tuple[int, int],
+    ) -> dict[str, Any]:
+        summary: dict[str, Any] = {"path": list(path)}
+        for output_key, attr_name, fallback in (
+            ("role", "kAXRoleAttribute", "AXRole"),
+            ("subrole", "kAXSubroleAttribute", "AXSubrole"),
+            ("title", "kAXTitleAttribute", "AXTitle"),
+            ("description", "kAXDescriptionAttribute", "AXDescription"),
+            ("value", "kAXValueAttribute", "AXValue"),
+            ("identifier", "kAXIdentifierAttribute", "AXIdentifier"),
+        ):
+            value = _ax_copy_attribute(accessibility, element, attr_name, fallback)
+            if value is not None and value != "":
+                summary[output_key] = _ax_scalar(value)
+        frame = self._ax_frame(accessibility, element, screen_size=screen_size)
+        if frame:
+            summary["frame"] = frame
+        actions = _ax_copy_actions(accessibility, element)
+        if actions:
+            summary["actions"] = actions
+        return summary
+
+    def _ax_summary_matches(
+        self,
+        summary: dict[str, Any],
+        target: dict[str, Any],
+        *,
+        allow_empty: bool = False,
+    ) -> bool:
+        if allow_empty and not target:
+            return True
+        return self._ax_match_score(summary, target) > 0
+
+    def _ax_match_score(self, summary: dict[str, Any], target: dict[str, Any]) -> int:
+        score = 0
+        used = 0
+        for key, weight in (
+            ("identifier", 80),
+            ("role", 20),
+            ("subrole", 15),
+            ("title", 50),
+            ("description", 35),
+            ("value", 25),
+        ):
+            expected = str(target.get(key) or "").strip().lower()
+            if not expected:
+                continue
+            used += 1
+            actual = str(summary.get(key) or "").strip().lower()
+            if not actual:
+                return 0
+            if actual == expected:
+                score += weight
+            elif key in {"title", "description", "value"} and expected in actual:
+                score += max(1, weight // 2)
+            else:
+                return 0
+        return score if used else 0
+
+    def _perform_ax_action(self, accessibility: Any, element: Any, action_name: Any) -> int:
+        perform_action = getattr(accessibility, "AXUIElementPerformAction")
+        try:
+            result = perform_action(element, action_name)
+        except Exception:
+            return 1
+        error_code, _value = _ax_result_value(result)
+        return error_code
+
+    def _set_ax_attribute(self, accessibility: Any, element: Any, attribute: Any, value: Any) -> int:
+        set_attribute = getattr(accessibility, "AXUIElementSetAttributeValue", None)
+        if set_attribute is None:
+            return 1
+        try:
+            result = set_attribute(element, attribute, value)
+        except Exception:
+            return 1
+        error_code, _value = _ax_result_value(result)
+        return error_code
 
     def _ensure_accessibility_permission(
         self,
@@ -1314,7 +1839,19 @@ def serve_stdio(runtime: MacOSComputerUseRuntime | None = None) -> int:
 
             try:
                 with contextlib.redirect_stdout(sys.stderr):
-                    if action in {"start_session", "status", "capture", "move", "click", "scroll", "key", "type", "stop_session"}:
+                    if action in {
+                        "start_session",
+                        "status",
+                        "capture",
+                        "ax_snapshot",
+                        "ax_action",
+                        "move",
+                        "click",
+                        "scroll",
+                        "key",
+                        "type",
+                        "stop_session",
+                    }:
                         if action not in {"start_session", "status", "stop_session"}:
                             request = normalize_action_payload(
                                 action,

@@ -20,6 +20,8 @@ MACOS_BACKEND_FEATURES = (
     "pointer-injection",
     "keyboard-injection",
     "keyboard-targets-frontmost-app",
+    "accessibility-tree-snapshot",
+    "accessibility-structural-targeting",
     "accessibility-element-click",
     "semantic-click-before-quartz-fallback",
     "no-cursor-steal-accessibility-click",
@@ -142,6 +144,28 @@ def normalize_action_payload(
         request["session_id"] = session_id
 
     if normalized_action == "capture":
+        return request
+
+    if normalized_action == "ax_snapshot":
+        if payload.get("max_depth") is not None:
+            request["max_depth"] = coerce_int(payload.get("max_depth"), name="max_depth")
+        if payload.get("max_nodes") is not None:
+            request["max_nodes"] = coerce_int(payload.get("max_nodes"), name="max_nodes")
+        return request
+
+    if normalized_action == "ax_action":
+        target = payload.get("target")
+        if isinstance(target, dict):
+            request["target"] = dict(target)
+        if payload.get("path") is not None:
+            request["path"] = payload.get("path")
+        operation = payload.get("operation", payload.get("ax_action", payload.get("name")))
+        if operation is not None:
+            request["operation"] = str(operation or "").strip()
+        if payload.get("value") is not None:
+            request["value"] = payload.get("value")
+        if payload.get("text") is not None:
+            request["text"] = str(payload.get("text") or "")
         return request
 
     if normalized_action == "move":

@@ -968,6 +968,16 @@ async def test_move_click_scroll_key_type_normalize_payloads(
         {"fresh": True, "fresh_after": 123.5, "fresh_timeout_seconds": 0.25},
         context_id="ctx-1",
     )
+    ax_snapshot = manager._normalize_action_payload(
+        "ax_snapshot",
+        {"max_depth": 3, "max_nodes": 50},
+        context_id="ctx-1",
+    )
+    ax_action = manager._normalize_action_payload(
+        "ax_action",
+        {"target": {"role": "AXButton", "title": "Save"}, "operation": "press"},
+        context_id="ctx-1",
+    )
     submitted = manager._normalize_action_payload(
         "type",
         {"text": "hello", "submit": True},
@@ -982,6 +992,10 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     assert capture["fresh"] is True
     assert capture["fresh_after"] == 123.5
     assert capture["fresh_timeout_seconds"] == 0.25
+    assert ax_snapshot["max_depth"] == 3
+    assert ax_snapshot["max_nodes"] == 50
+    assert ax_action["target"]["title"] == "Save"
+    assert ax_action["operation"] == "press"
     assert submitted["submit"] is True
 
 

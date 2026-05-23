@@ -55,6 +55,147 @@ class _FakeDriver:
         self.calls.append(("type_text", (text,), {"submit": submit}))
 
 
+class _FakeAXElement:
+    def __init__(
+        self,
+        attrs: dict[str, object],
+        *,
+        children: list["_FakeAXElement"] | None = None,
+        windows: list["_FakeAXElement"] | None = None,
+        actions: list[str] | None = None,
+    ) -> None:
+        self.attrs = dict(attrs)
+        self.children = children or []
+        self.windows = windows or []
+        self.actions = actions or []
+
+
+def _install_fake_ax_tree(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[type, _FakeAXElement, _FakeAXElement, _FakeAXElement]:
+    button = _FakeAXElement(
+        {
+            "AXRole": "AXButton",
+            "AXTitle": "Save",
+            "AXDescription": "Save changes",
+            "AXEnabled": True,
+            "AXPosition": (100, 200),
+            "AXSize": (80, 30),
+        },
+        actions=["AXPress"],
+    )
+    text_field = _FakeAXElement(
+        {
+            "AXRole": "AXTextField",
+            "AXTitle": "Name",
+            "AXValue": "draft",
+            "AXEnabled": True,
+            "AXPosition": (20, 80),
+            "AXSize": (300, 28),
+        }
+    )
+    window = _FakeAXElement(
+        {
+            "AXRole": "AXWindow",
+            "AXTitle": "Document",
+            "AXPosition": (10, 20),
+            "AXSize": (640, 480),
+        },
+        children=[button, text_field],
+    )
+    app_root = _FakeAXElement(
+        {
+            "AXRole": "AXApplication",
+            "AXTitle": "Fake App",
+        },
+        windows=[window],
+    )
+
+    class FakeApplication:
+        def localizedName(self) -> str:
+            return "Fake App"
+
+        def bundleIdentifier(self) -> str:
+            return "com.example.fake"
+
+        def processIdentifier(self) -> int:
+            return 123
+
+    class FakeWorkspace:
+        def frontmostApplication(self) -> FakeApplication:
+            return FakeApplication()
+
+    class FakeNSWorkspace:
+        @staticmethod
+        def sharedWorkspace() -> FakeWorkspace:
+            return FakeWorkspace()
+
+    class FakeAccessibility:
+        kAXChildrenAttribute = "AXChildren"
+        kAXDescriptionAttribute = "AXDescription"
+        kAXEnabledAttribute = "AXEnabled"
+        kAXFocusedAttribute = "AXFocused"
+        kAXIdentifierAttribute = "AXIdentifier"
+        kAXPositionAttribute = "AXPosition"
+        kAXPressAction = "AXPress"
+        kAXRoleAttribute = "AXRole"
+        kAXSizeAttribute = "AXSize"
+        kAXSubroleAttribute = "AXSubrole"
+        kAXTitleAttribute = "AXTitle"
+        kAXValueAttribute = "AXValue"
+        kAXWindowsAttribute = "AXWindows"
+        performed: list[tuple[_FakeAXElement, str]] = []
+        set_values: list[tuple[_FakeAXElement, str, object]] = []
+
+        @staticmethod
+        def AXUIElementCreateApplication(pid: int) -> _FakeAXElement:
+            assert pid == 123
+            return app_root
+
+        @staticmethod
+        def AXUIElementCopyAttributeValue(
+            element: _FakeAXElement,
+            attribute: str,
+            stop: object = None,
+        ) -> tuple[int, object]:
+            del stop
+            if attribute == "AXChildren":
+                return 0, element.children
+            if attribute == "AXWindows":
+                return 0, element.windows
+            if attribute in element.attrs:
+                return 0, element.attrs[attribute]
+            return 1, None
+
+        @staticmethod
+        def AXUIElementCopyActionNames(
+            element: _FakeAXElement,
+            stop: object = None,
+        ) -> tuple[int, list[str]]:
+            del stop
+            return 0, element.actions
+
+        @staticmethod
+        def AXUIElementPerformAction(element: _FakeAXElement, action: str) -> int:
+            FakeAccessibility.performed.append((element, action))
+            return 0
+
+        @staticmethod
+        def AXUIElementSetAttributeValue(
+            element: _FakeAXElement,
+            attribute: str,
+            value: object,
+        ) -> int:
+            FakeAccessibility.set_values.append((element, attribute, value))
+            element.attrs[attribute] = value
+            return 0
+
+    fake_appkit = type("FakeAppKit", (), {"NSWorkspace": FakeNSWorkspace})
+    monkeypatch.setattr(macos_runtime_mod, "_load_appkit_module", lambda: fake_appkit)
+    monkeypatch.setattr(macos_runtime_mod, "_load_accessibility_module", lambda: FakeAccessibility)
+    return FakeAccessibility, window, button, text_field
+
+
 def _runtime(tmp_path: Path) -> MacOSComputerUseRuntime:
     runtime = MacOSComputerUseRuntime(driver=_FakeDriver(), state_dir=tmp_path / "state")
     runtime._ensure_accessibility_permission = lambda **kwargs: None  # type: ignore[method-assign]
@@ -79,6 +220,8 @@ def test_macos_backend_spec_exports_expected_metadata() -> None:
     assert "accessibility-trust" in spec.features
     assert "global-pixel-actions" in spec.features
     assert "keyboard-targets-frontmost-app" in spec.features
+    assert "accessibility-tree-snapshot" in spec.features
+    assert "accessibility-structural-targeting" in spec.features
     assert "accessibility-element-click" in spec.features
     assert "semantic-click-before-quartz-fallback" in spec.features
     assert "no-cursor-steal-accessibility-click" in spec.features
@@ -105,12 +248,25 @@ def test_macos_action_normalization_matches_shared_surface() -> None:
     scroll = normalize_action_payload("scroll", {"dx": 1, "dy": -2}, context_id="ctx-1")
     keys = normalize_action_payload("key", {"key": "cmd+shift+t"}, context_id="ctx-1")
     typed = normalize_action_payload("type", {"text": "hello", "submit": True}, context_id="ctx-1")
+    ax_snapshot = normalize_action_payload(
+        "ax_snapshot",
+        {"max_depth": 3, "max_nodes": 50},
+        context_id="ctx-1",
+    )
+    ax_action = normalize_action_payload(
+        "ax_action",
+        {"target": {"role": "AXButton", "title": "Save"}, "operation": "press"},
+        context_id="ctx-1",
+    )
 
     assert move["x"] == 0.25 and move["y"] == 0.75
     assert click["button"] == "right" and click["count"] == 2
     assert scroll["dx"] == 1 and scroll["dy"] == -2
     assert keys["keys"] == ["cmd", "shift", "t"]
     assert typed["text"] == "hello" and typed["submit"] is True
+    assert ax_snapshot["max_depth"] == 3 and ax_snapshot["max_nodes"] == 50
+    assert ax_action["target"]["title"] == "Save"
+    assert ax_action["operation"] == "press"
 
 
 def test_macos_runtime_rejects_allow_without_restore_token(tmp_path: Path) -> None:
@@ -207,6 +363,118 @@ def test_macos_runtime_capture_writes_requested_path_without_inline_payload(tmp_
     assert capture["capture_path"] == str(capture_path)
     assert "png_base64" not in capture
     assert capture_path.exists()
+
+
+def test_macos_runtime_ax_snapshot_returns_bounded_structural_tree(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    _fake_accessibility, _window, _button, _text_field = _install_fake_ax_tree(monkeypatch)
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    snapshot = runtime.ax_snapshot({"context_id": "ctx-1", "max_depth": 3, "max_nodes": 10})
+
+    assert snapshot["app"]["name"] == "Fake App"
+    assert snapshot["app"]["bundle_id"] == "com.example.fake"
+    assert snapshot["node_count"] == 4
+    assert snapshot["truncated"] is False
+    tree = snapshot["tree"]
+    assert tree["role"] == "AXApplication"
+    window = tree["children"][0]
+    assert window["path"] == [0]
+    assert window["role"] == "AXWindow"
+    assert window["title"] == "Document"
+    button = window["children"][0]
+    assert button["path"] == [0, 0]
+    assert button["role"] == "AXButton"
+    assert button["title"] == "Save"
+    assert button["actions"] == ["AXPress"]
+    assert button["frame"]["normalized"]["x"] == round(100 / 1280, 6)
+
+
+def test_macos_runtime_ax_action_presses_semantic_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    fake_accessibility, _window, button, _text_field = _install_fake_ax_tree(monkeypatch)
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    result = runtime.ax_action(
+        {
+            "context_id": "ctx-1",
+            "target": {"role": "AXButton", "title": "Save"},
+            "operation": "press",
+        }
+    )
+
+    assert result["operation"] == "press"
+    assert result["target"]["path"] == [0, 0]
+    assert result["target"]["title"] == "Save"
+    assert fake_accessibility.performed == [(button, "AXPress")]
+
+
+def test_macos_runtime_ax_action_sets_value_by_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    fake_accessibility, _window, _button, text_field = _install_fake_ax_tree(monkeypatch)
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    result = runtime.ax_action(
+        {
+            "context_id": "ctx-1",
+            "path": [0, 1],
+            "operation": "set_value",
+            "value": "final",
+        }
+    )
+
+    assert result["operation"] == "set_value"
+    assert result["target"]["role"] == "AXTextField"
+    assert fake_accessibility.set_values == [(text_field, "AXValue", "final")]
+    assert text_field.attrs["AXValue"] == "final"
+
+
+def test_macos_runtime_ax_action_rejects_ambiguous_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    _fake_accessibility, window, _button, _text_field = _install_fake_ax_tree(monkeypatch)
+    window.children.append(_FakeAXElement({"AXRole": "AXButton", "AXTitle": "Cancel"}))
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    with pytest.raises(MacOSComputerUseError) as exc_info:
+        runtime.ax_action({"context_id": "ctx-1", "target": {"role": "AXButton"}})
+
+    assert exc_info.value.code == "COMPUTER_USE_AX_TARGET_AMBIGUOUS"
 
 
 def test_macos_driver_capture_prefers_coregraphics_without_screencapture(

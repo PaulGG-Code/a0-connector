@@ -2286,6 +2286,129 @@ def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
     assert agent.history_messages == []
 
 
+def test_computer_use_remote_ax_snapshot_formats_structural_tree() -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        assert payload["action"] == "ax_snapshot"
+        assert payload["max_depth"] == 3
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "app": {"name": "Fake App"},
+                "node_count": 3,
+                "truncated": False,
+                "tree": {
+                    "path": [],
+                    "role": "AXApplication",
+                    "title": "Fake App",
+                },
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(
+            tool_mod,
+            agent,
+            action="ax_snapshot",
+            max_depth=3,
+        ).execute()
+    )
+
+    assert response.message == (
+        "AX snapshot for Fake App: 3 node(s). Root AXApplication 'Fake App'. "
+        "Use path or semantic target fields with ax_action."
+    )
+    assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["ax_snapshot"]
+
+
+def test_computer_use_remote_ax_action_auto_refreshes_screen(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    image_path = _write_png_fixture(tmp_path)
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        if payload["action"] == "ax_action":
+            return {
+                "op_id": payload["op_id"],
+                "ok": True,
+                "result": {
+                    "status": "active",
+                    "session_id": "sess-1",
+                    "operation": "press",
+                    "target": {"path": [0, 1], "role": "AXButton", "title": "Save"},
+                },
+            }
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "session_id": "sess-1",
+                "host_path": str(image_path),
+                "fresh": bool(payload.get("fresh")),
+                "fresh_after_satisfied": True,
+                "width": 1,
+                "height": 1,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    monkeypatch.setattr(tool_mod.asyncio, "sleep", _no_sleep)
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(
+            tool_mod,
+            agent,
+            action="ax_action",
+            target={"role": "AXButton", "title": "Save"},
+            operation="press",
+        ).execute()
+    )
+
+    assert response.message == (
+        "Performed AX press on AXButton 'Save' path=[0, 1]. "
+        f"Latest screen attached: {_expected_capture_summary(fresh=True)} "
+        f"{_capture_verification_note(tool_mod)}"
+    )
+    assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["ax_action", "capture"]
+    assert shared_ws_manager.calls[0]["payload"]["target"] == {"role": "AXButton", "title": "Save"}
+    assert shared_ws_manager.calls[0]["payload"]["operation"] == "press"
+    _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
+
+
 def test_computer_use_remote_click_auto_refreshes_screen(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

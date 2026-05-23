@@ -41,6 +41,8 @@ _SUPPORTED_ACTIONS = {
     "start_session",
     "status",
     "capture",
+    "ax_snapshot",
+    "ax_action",
     "move",
     "click",
     "scroll",
@@ -49,7 +51,7 @@ _SUPPORTED_ACTIONS = {
     "stop_session",
 }
 _SUPPORTED_TRUST_MODES = {"interactive", "persistent", "allow"}
-_MUTATING_ACTIONS = {"move", "click", "scroll", "key", "type"}
+_MUTATING_ACTIONS = {"move", "click", "scroll", "key", "type", "ax_action"}
 _DEFAULT_FRESH_CAPTURE_TIMEOUT_SECONDS = 0.45
 _CAPTURE_COORDINATE_SPACE = "normalized_global_screen"
 _DISABLED_ERROR = "COMPUTER_USE_DISABLED"
@@ -681,6 +683,28 @@ class ComputerUseManager:
                     0.0,
                     _coerce_float(payload.get("fresh_timeout_seconds"), name="fresh_timeout_seconds"),
                 )
+            return request
+
+        if action == "ax_snapshot":
+            if payload.get("max_depth") is not None:
+                request["max_depth"] = _coerce_int(payload.get("max_depth"), name="max_depth")
+            if payload.get("max_nodes") is not None:
+                request["max_nodes"] = _coerce_int(payload.get("max_nodes"), name="max_nodes")
+            return request
+
+        if action == "ax_action":
+            target = payload.get("target")
+            if isinstance(target, dict):
+                request["target"] = dict(target)
+            if payload.get("path") is not None:
+                request["path"] = payload.get("path")
+            operation = payload.get("operation", payload.get("ax_action", payload.get("name")))
+            if operation is not None:
+                request["operation"] = str(operation or "").strip()
+            if payload.get("value") is not None:
+                request["value"] = payload.get("value")
+            if payload.get("text") is not None:
+                request["text"] = str(payload.get("text") or "")
             return request
 
         if action == "move":
