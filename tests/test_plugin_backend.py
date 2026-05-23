@@ -111,17 +111,34 @@ def _install_fake_helpers(
             self.mimetype = mimetype
 
     class ToolResponse:
-        def __init__(self, message: str = "", break_loop: bool = False) -> None:
+        def __init__(
+            self,
+            message: str = "",
+            break_loop: bool = False,
+            additional: dict[str, object] | None = None,
+        ) -> None:
             self.message = message
             self.break_loop = break_loop
+            self.additional = additional
 
     class PrintStyle:
+        def __init__(self, *args, **kwargs) -> None:
+            del args, kwargs
+
         @staticmethod
         def error(*args, **kwargs) -> None:
             return None
 
         @staticmethod
         def debug(*args, **kwargs) -> None:
+            return None
+
+        def print(self, *args, **kwargs) -> None:
+            del args, kwargs
+            return None
+
+        def stream(self, *args, **kwargs) -> None:
+            del args, kwargs
             return None
 
     class Tool:
@@ -601,6 +618,25 @@ def _expected_capture_summary(
 
 def _capture_verification_note(tool_mod) -> str:
     return tool_mod.CAPTURE_VERIFICATION_NOTE
+
+
+def _assert_capture_response_content(
+    response: object,
+    *,
+    message: str,
+    preview: str,
+    image_url: str,
+) -> None:
+    additional = getattr(response, "additional", None)
+    assert isinstance(additional, dict)
+    assert additional.get("preview") == preview
+    assert additional.get("_tokens") == 1500
+    raw_content = additional.get("raw_content")
+    assert isinstance(raw_content, list)
+    assert raw_content[0]["type"] == "text"
+    assert raw_content[0]["text"] == message
+    assert raw_content[1]["type"] == "image_url"
+    assert raw_content[1]["image_url"]["url"] == image_url
 
 
 def test_capabilities_advertise_current_ws_contract() -> None:
@@ -1822,12 +1858,19 @@ def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path:
         f"Current screen attached: {_expected_capture_summary()} {_capture_verification_note(tool_mod)}"
     )
     assert shared_ws_manager.calls[0]["payload"]["action"] == "capture"
-    assert len(agent.history_messages) == 1
-    raw_message = agent.history_messages[0]["content"]
-    assert raw_message["preview"] == _expected_capture_summary()
-    assert raw_message["raw_content"][0]["text"] == _expected_capture_summary()
-    assert raw_message["raw_content"][1]["type"] == "image_url"
-    assert raw_message["raw_content"][1]["image_url"]["url"] == str(image_path)
+    assert agent.history_messages == []
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=_expected_capture_summary(),
+        image_url=str(image_path),
+    )
+
+    tool = _create_computer_use_remote(tool_mod, agent, action="capture", session_id="sess-1")
+    tool.name = "computer_use_remote"
+    asyncio.run(tool.after_execution(response))
+    assert agent.tool_results[0]["raw_content"][0]["text"] == response.message
+    assert agent.tool_results[0]["raw_content"][1]["image_url"]["url"] == str(image_path)
 
 
 def test_computer_use_remote_capture_uses_shared_png_path(
@@ -1872,9 +1915,13 @@ def test_computer_use_remote_capture_uses_shared_png_path(
         f"Current screen attached: {_expected_capture_summary()} {_capture_verification_note(tool_mod)}"
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["capture"]
-    assert len(agent.history_messages) == 1
-    raw_message = agent.history_messages[0]["content"]
-    assert raw_message["raw_content"][1]["image_url"]["url"] == str(image_path)
+    assert agent.history_messages == []
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=_expected_capture_summary(),
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
@@ -1927,9 +1974,11 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
     assert response.message == (
         f"Current screen attached: {expected_summary} {_capture_verification_note(tool_mod)}"
     )
-    assert len(agent.history_messages) == 1
-    raw_message = agent.history_messages[0]["content"]
-    image_url = raw_message["raw_content"][1]["image_url"]["url"]
+    assert agent.history_messages == []
+    additional = response.additional
+    assert isinstance(additional, dict)
+    raw_content = additional["raw_content"]
+    image_url = raw_content[1]["image_url"]["url"]
     assert image_url == f"data:image/png;base64,{base64.b64encode(capture_bytes).decode('ascii')}"
     assert list(tmp_path.rglob("*.png")) == [image_path]
 
@@ -2034,7 +2083,13 @@ def test_computer_use_remote_start_session_auto_refreshes_screen(
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["start_session", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
-    assert len(agent.history_messages) == 1
+    assert agent.history_messages == []
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=_expected_capture_summary(fresh=True),
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
@@ -2153,7 +2208,13 @@ def test_computer_use_remote_click_auto_refreshes_screen(
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["click", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
-    assert len(agent.history_messages) == 1
+    assert agent.history_messages == []
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=_expected_capture_summary(fresh=True),
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_screen(
@@ -2222,7 +2283,13 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
     assert shared_ws_manager.calls[0]["payload"]["submit"] is True
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["type", "capture"]
     _assert_fresh_auto_capture(tool_mod, shared_ws_manager.calls[1]["payload"])
-    assert len(agent.history_messages) == 1
+    assert agent.history_messages == []
+    _assert_capture_response_content(
+        response,
+        message=response.message,
+        preview=_expected_capture_summary(fresh=True),
+        image_url=str(image_path),
+    )
 
 
 def test_computer_use_remote_invalid_numeric_args_return_message() -> None:
