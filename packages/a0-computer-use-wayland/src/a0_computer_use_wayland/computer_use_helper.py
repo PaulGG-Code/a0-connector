@@ -176,6 +176,35 @@ _EVDEV_FUNCTION_KEYCODES = {
     "f12": 88,
     **{f"f{number}": 170 + number for number in range(13, 25)},
 }
+_AX_DEFAULT_MAX_DEPTH = 5
+_AX_HARD_MAX_DEPTH = 12
+_AX_DEFAULT_MAX_NODES = 120
+_AX_HARD_MAX_NODES = 500
+_AX_TARGET_SEARCH_MAX_NODES = 800
+_AX_TEXT_MAX_CHARS = 240
+_AX_SENTINEL_COORDINATE = -2147483648
+_AT_SPI_STATE_NAMES = (
+    ("ACTIVE", "active"),
+    ("CHECKED", "checked"),
+    ("EDITABLE", "editable"),
+    ("ENABLED", "enabled"),
+    ("EXPANDED", "expanded"),
+    ("FOCUSED", "focused"),
+    ("FOCUSABLE", "focusable"),
+    ("PRESSED", "pressed"),
+    ("SELECTED", "selected"),
+    ("SHOWING", "showing"),
+    ("VISIBLE", "visible"),
+)
+_AT_SPI_PRESS_ACTION_NAMES = (
+    "press",
+    "click",
+    "activate",
+    "default",
+    "toggle",
+    "open",
+    "invoke",
+)
 
 _DBUS_NATIVE_TYPES = (
     dbus.Boolean,
@@ -276,6 +305,432 @@ def _float_param(value: object, *, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _int_param(value: object, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, minimum), maximum)
+
+
+def _load_atspi_module() -> Any:
+    try:
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi
+    except Exception as exc:
+        raise PortalError(
+            "COMPUTER_USE_AX_UNAVAILABLE",
+            f"AT-SPI accessibility is unavailable: {exc}",
+        ) from exc
+    return Atspi
+
+
+def _safe_call(obj: object, method_name: str, *args: object) -> Any:
+    method = getattr(obj, method_name, None)
+    if not callable(method):
+        return None
+    try:
+        return method(*args)
+    except Exception:
+        return None
+
+
+def _safe_int(value: object, *, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _clean_text(value: object, *, limit: int = _AX_TEXT_MAX_CHARS) -> str:
+    text = str(value or "").replace("\x00", "").strip()
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _frame_value(extents: object, field: str, index: int) -> int:
+    if hasattr(extents, field):
+        return _safe_int(getattr(extents, field), default=_AX_SENTINEL_COORDINATE)
+    if isinstance(extents, (list, tuple)) and len(extents) > index:
+        return _safe_int(extents[index], default=_AX_SENTINEL_COORDINATE)
+    return _AX_SENTINEL_COORDINATE
+
+
+def _parse_ax_path(value: object) -> list[int] | None:
+    if value is None:
+        return None
+    raw: object = value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return None
+        try:
+            raw = json.loads(text)
+        except json.JSONDecodeError:
+            raw = [part for part in text.replace("/", ".").split(".") if part.strip()]
+    if not isinstance(raw, (list, tuple)):
+        return None
+    path: list[int] = []
+    for item in raw:
+        try:
+            index = int(item)
+        except (TypeError, ValueError):
+            return None
+        if index < 0:
+            return None
+        path.append(index)
+    return path
+
+
+def _normalized_match_text(value: object) -> str:
+    return _clean_text(value, limit=1000).casefold()
+
+
+def _list_contains_action(actions: object, candidates: tuple[str, ...]) -> bool:
+    if not isinstance(actions, list):
+        return False
+    names = {str(item.get("name") or "").strip().casefold() for item in actions if isinstance(item, dict)}
+    return any(candidate in names for candidate in candidates)
+
+
+def _atspi_desktop(Atspi: Any) -> object:
+    desktop = _safe_call(Atspi, "get_desktop", 0)
+    if desktop is None:
+        raise PortalError("COMPUTER_USE_AX_UNAVAILABLE", "AT-SPI did not return a desktop root.")
+    return desktop
+
+
+def _atspi_child_count(element: object) -> int:
+    count = _safe_call(element, "get_child_count")
+    return max(0, _safe_int(count, default=0))
+
+
+def _atspi_child_at(element: object, index: int) -> object | None:
+    return _safe_call(element, "get_child_at_index", index)
+
+
+def _atspi_role(element: object) -> str:
+    role = _clean_text(_safe_call(element, "get_role_name"), limit=80)
+    if role:
+        return role
+    role_obj = _safe_call(element, "get_role")
+    return _clean_text(role_obj, limit=80) or "element"
+
+
+def _atspi_name(element: object) -> str:
+    return _clean_text(_safe_call(element, "get_name"), limit=160)
+
+
+def _atspi_description(element: object) -> str:
+    return _clean_text(_safe_call(element, "get_description"), limit=240)
+
+
+def _atspi_pid(element: object) -> int | None:
+    pid = _safe_call(element, "get_process_id")
+    if pid is None:
+        return None
+    return _safe_int(pid, default=0) or None
+
+
+def _atspi_frame(Atspi: Any, element: object, session: PortalSession) -> dict[str, Any] | None:
+    coord_type = getattr(getattr(Atspi, "CoordType", object()), "SCREEN", None)
+    extents = _safe_call(element, "get_extents", coord_type)
+    if extents is None:
+        return None
+    x = _frame_value(extents, "x", 0)
+    y = _frame_value(extents, "y", 1)
+    width = _frame_value(extents, "width", 2)
+    height = _frame_value(extents, "height", 3)
+    if x <= _AX_SENTINEL_COORDINATE or y <= _AX_SENTINEL_COORDINATE or width <= 0 or height <= 0:
+        return None
+    frame: dict[str, Any] = {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+    }
+    if session.width > 0 and session.height > 0:
+        frame.update(
+            {
+                "normalized_x": x / session.width,
+                "normalized_y": y / session.height,
+                "normalized_width": width / session.width,
+                "normalized_height": height / session.height,
+            }
+        )
+    return frame
+
+
+def _atspi_states(Atspi: Any, element: object) -> list[str]:
+    state_set = _safe_call(element, "get_state_set")
+    contains = getattr(state_set, "contains", None)
+    state_type = getattr(Atspi, "StateType", None)
+    if not callable(contains) or state_type is None:
+        return []
+    states: list[str] = []
+    for attr_name, display_name in _AT_SPI_STATE_NAMES:
+        value = getattr(state_type, attr_name, None)
+        if value is None:
+            continue
+        try:
+            if contains(value):
+                states.append(display_name)
+        except Exception:
+            continue
+    return states
+
+
+def _atspi_actions(element: object) -> list[dict[str, str]]:
+    count = max(0, _safe_int(_safe_call(element, "get_n_actions"), default=0))
+    actions: list[dict[str, str]] = []
+    for index in range(min(count, 16)):
+        name = _clean_text(_safe_call(element, "get_action_name", index), limit=80)
+        if not name:
+            continue
+        action: dict[str, str] = {"name": name}
+        description = _clean_text(_safe_call(element, "get_action_description", index), limit=160)
+        key_binding = _clean_text(_safe_call(element, "get_key_binding", index), limit=80)
+        if description:
+            action["description"] = description
+        if key_binding:
+            action["key_binding"] = key_binding
+        actions.append(action)
+    return actions
+
+
+def _atspi_text(element: object) -> str:
+    character_count = _safe_call(element, "get_character_count")
+    count = _safe_int(character_count, default=0)
+    if count <= 0:
+        return ""
+    text = _safe_call(element, "get_text", 0, min(count, _AX_TEXT_MAX_CHARS + 1))
+    return _clean_text(text)
+
+
+def _atspi_value(element: object) -> object | None:
+    value = _safe_call(element, "get_current_value")
+    if value is None:
+        return None
+    if isinstance(value, float):
+        return round(value, 4)
+    return value
+
+
+def _atspi_node_metadata(
+    Atspi: Any,
+    element: object,
+    *,
+    path: list[int],
+    session: PortalSession,
+) -> dict[str, Any]:
+    node: dict[str, Any] = {
+        "path": list(path),
+        "role": _atspi_role(element),
+    }
+    name = _atspi_name(element)
+    if name:
+        node["title"] = name
+        node["name"] = name
+    description = _atspi_description(element)
+    if description:
+        node["description"] = description
+    pid = _atspi_pid(element)
+    if pid is not None:
+        node["pid"] = pid
+    frame = _atspi_frame(Atspi, element, session)
+    if frame is not None:
+        node["frame"] = frame
+    states = _atspi_states(Atspi, element)
+    if states:
+        node["states"] = states
+    actions = _atspi_actions(element)
+    if actions:
+        node["actions"] = actions
+    text = _atspi_text(element)
+    if text and text != name:
+        node["text"] = text
+    value = _atspi_value(element)
+    if value is not None:
+        node["value"] = value
+    return node
+
+
+def _serialize_atspi_element(
+    Atspi: Any,
+    element: object,
+    *,
+    path: list[int],
+    session: PortalSession,
+    depth: int,
+    max_depth: int,
+    budget: dict[str, Any],
+) -> dict[str, Any] | None:
+    if int(budget["count"]) >= int(budget["max_nodes"]):
+        budget["truncated"] = True
+        return None
+    budget["count"] = int(budget["count"]) + 1
+    node = _atspi_node_metadata(Atspi, element, path=path, session=session)
+    if depth >= max_depth:
+        child_count = _atspi_child_count(element)
+        if child_count > 0:
+            budget["truncated"] = True
+        return node
+    children: list[dict[str, Any]] = []
+    for index in range(_atspi_child_count(element)):
+        if int(budget["count"]) >= int(budget["max_nodes"]):
+            budget["truncated"] = True
+            break
+        child = _atspi_child_at(element, index)
+        if child is None:
+            continue
+        child_node = _serialize_atspi_element(
+            Atspi,
+            child,
+            path=[*path, index],
+            session=session,
+            depth=depth + 1,
+            max_depth=max_depth,
+            budget=budget,
+        )
+        if child_node is not None:
+            children.append(child_node)
+    if children:
+        node["children"] = children
+    return node
+
+
+def _atspi_element_for_path(desktop: object, path: list[int]) -> object | None:
+    element = desktop
+    for index in path:
+        if index >= _atspi_child_count(element):
+            return None
+        element = _atspi_child_at(element, index)
+        if element is None:
+            return None
+    return element
+
+
+def _node_text_fields(node: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
+    values: list[str] = []
+    for key in keys:
+        value = node.get(key)
+        if isinstance(value, str) and value.strip():
+            values.append(value)
+    return values
+
+
+def _atspi_node_matches_target(node: dict[str, Any], target: dict[str, Any]) -> bool:
+    comparable = {
+        "role": ("role",),
+        "title": ("title", "name", "text", "description"),
+        "name": ("name", "title", "text", "description"),
+        "description": ("description",),
+        "text": ("text", "title", "name", "description"),
+        "value": ("value",),
+    }
+    for target_key, node_keys in comparable.items():
+        if target.get(target_key) is None:
+            continue
+        wanted = _normalized_match_text(target.get(target_key))
+        if not wanted:
+            continue
+        haystacks = [_normalized_match_text(value) for value in _node_text_fields(node, node_keys)]
+        if target_key == "value" and node.get("value") is not None:
+            haystacks.append(_normalized_match_text(node.get("value")))
+        if target_key == "role":
+            if not any(wanted == haystack or wanted in haystack for haystack in haystacks):
+                return False
+            continue
+        if not any(wanted == haystack or wanted in haystack for haystack in haystacks):
+            return False
+    target_actions = target.get("actions")
+    if isinstance(target_actions, str):
+        wanted_actions = {target_actions.strip().casefold()}
+    elif isinstance(target_actions, (list, tuple, set)):
+        wanted_actions = {str(item).strip().casefold() for item in target_actions if str(item).strip()}
+    else:
+        wanted_actions = set()
+    if wanted_actions:
+        node_actions = {
+            str(item.get("name") or "").strip().casefold()
+            for item in node.get("actions", [])
+            if isinstance(item, dict)
+        }
+        if not wanted_actions & node_actions:
+            return False
+    target_states = target.get("states")
+    if isinstance(target_states, str):
+        wanted_states = {target_states.strip().casefold()}
+    elif isinstance(target_states, (list, tuple, set)):
+        wanted_states = {str(item).strip().casefold() for item in target_states if str(item).strip()}
+    else:
+        wanted_states = set()
+    if wanted_states:
+        node_states = {str(item).strip().casefold() for item in node.get("states", [])}
+        if not wanted_states <= node_states:
+            return False
+    return True
+
+
+def _atspi_match_score(node: dict[str, Any], operation: str) -> int:
+    score = 0
+    states = {str(item).casefold() for item in node.get("states", [])}
+    if "showing" in states:
+        score += 4
+    if "visible" in states:
+        score += 2
+    if "enabled" in states:
+        score += 2
+    if operation == "press" and _list_contains_action(node.get("actions"), _AT_SPI_PRESS_ACTION_NAMES):
+        score += 8
+    if operation == "focus" and ("focusable" in states or "focused" in states):
+        score += 4
+    if operation == "set_value" and ("editable" in states or "text" in str(node.get("role", "")).casefold()):
+        score += 6
+    if node.get("frame"):
+        score += 1
+    return score
+
+
+def _find_atspi_matches(
+    Atspi: Any,
+    desktop: object,
+    *,
+    session: PortalSession,
+    target: dict[str, Any],
+    operation: str,
+) -> list[tuple[int, object, dict[str, Any]]]:
+    matches: list[tuple[int, object, dict[str, Any]]] = []
+    queue: list[tuple[object, list[int]]] = [(desktop, [])]
+    visited = 0
+    while queue and visited < _AX_TARGET_SEARCH_MAX_NODES:
+        element, path = queue.pop(0)
+        visited += 1
+        node = _atspi_node_metadata(Atspi, element, path=path, session=session)
+        if _atspi_node_matches_target(node, target):
+            matches.append((_atspi_match_score(node, operation), element, node))
+        for index in range(_atspi_child_count(element)):
+            child = _atspi_child_at(element, index)
+            if child is not None:
+                queue.append((child, [*path, index]))
+    return matches
+
+
+def _target_summary(targets: list[dict[str, Any]]) -> str:
+    summaries: list[str] = []
+    for node in targets[:5]:
+        role = str(node.get("role") or "element")
+        title = str(node.get("title") or node.get("name") or node.get("text") or "").strip()
+        path = node.get("path", [])
+        if title:
+            summaries.append(f"{role} {title!r} path={path}")
+        else:
+            summaries.append(f"{role} path={path}")
+    return "; ".join(summaries)
 
 
 class CaptureStream:
@@ -414,6 +869,8 @@ class PortalComputerUseHelper:
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "ax_snapshot": self.ax_snapshot,
+            "ax_action": self.ax_action,
             "move": self.move,
             "click": self.click,
             "scroll": self.scroll,
@@ -507,6 +964,128 @@ class PortalComputerUseHelper:
         result["stream_id"] = session.stream_id
         result["session_id"] = session.session_id
         return result
+
+    def ax_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        Atspi = _load_atspi_module()
+        desktop = _atspi_desktop(Atspi)
+        max_depth = _int_param(
+            params.get("max_depth"),
+            default=_AX_DEFAULT_MAX_DEPTH,
+            minimum=0,
+            maximum=_AX_HARD_MAX_DEPTH,
+        )
+        max_nodes = _int_param(
+            params.get("max_nodes"),
+            default=_AX_DEFAULT_MAX_NODES,
+            minimum=1,
+            maximum=_AX_HARD_MAX_NODES,
+        )
+        budget: dict[str, Any] = {
+            "count": 0,
+            "max_nodes": max_nodes,
+            "truncated": False,
+        }
+        tree = {
+            "path": [],
+            "role": "Desktop",
+            "title": "Linux desktop",
+            "name": "Linux desktop",
+            "frame": {
+                "x": 0,
+                "y": 0,
+                "width": session.width,
+                "height": session.height,
+                "normalized_x": 0.0,
+                "normalized_y": 0.0,
+                "normalized_width": 1.0,
+                "normalized_height": 1.0,
+            },
+            "children": [],
+        }
+        budget["count"] = 1
+        if max_depth > 0:
+            children: list[dict[str, Any]] = []
+            for index in range(_atspi_child_count(desktop)):
+                if int(budget["count"]) >= int(budget["max_nodes"]):
+                    budget["truncated"] = True
+                    break
+                child = _atspi_child_at(desktop, index)
+                if child is None:
+                    continue
+                child_node = _serialize_atspi_element(
+                    Atspi,
+                    child,
+                    path=[index],
+                    session=session,
+                    depth=1,
+                    max_depth=max_depth,
+                    budget=budget,
+                )
+                if child_node is not None:
+                    children.append(child_node)
+            tree["children"] = children
+        elif _atspi_child_count(desktop) > 0:
+            budget["truncated"] = True
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "app": {"name": "Linux desktop", "backend": "at-spi"},
+            "tree": tree,
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def ax_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        Atspi = _load_atspi_module()
+        operation = str(params.get("operation") or params.get("name") or "press").strip().lower()
+        operation_aliases = {
+            "activate": "press",
+            "click": "press",
+            "invoke": "press",
+            "type": "set_value",
+            "type_text": "set_value",
+        }
+        operation = operation_aliases.get(operation, operation)
+        if operation not in {"press", "focus", "set_value"}:
+            raise PortalError(
+                "COMPUTER_USE_BAD_AX_ACTION",
+                "ax_action operation must be press, focus, or set_value.",
+            )
+
+        desktop = _atspi_desktop(Atspi)
+        element, target = self._resolve_atspi_target(
+            Atspi,
+            desktop,
+            session=session,
+            params=params,
+            operation=operation,
+        )
+        if operation == "press":
+            self._press_atspi_element(element, target=target, requested=params)
+        elif operation == "focus":
+            if _safe_call(element, "grab_focus") is False:
+                raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI focus action failed.")
+        else:
+            value = params.get("value", params.get("text"))
+            if value is None:
+                raise PortalError("COMPUTER_USE_TEXT_REQUIRED", "set_value requires value or text.")
+            self._set_atspi_value(element, value)
+
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "operation": operation,
+            "target": _atspi_node_metadata(
+                Atspi,
+                element,
+                path=list(target.get("path", [])),
+                session=session,
+            ),
+        }
 
     def move(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
@@ -860,6 +1439,111 @@ class PortalComputerUseHelper:
             dbus.Int32(code),
             dbus.UInt32(state),
         )
+
+    def _resolve_atspi_target(
+        self,
+        Atspi: Any,
+        desktop: object,
+        *,
+        session: PortalSession,
+        params: dict[str, Any],
+        operation: str,
+    ) -> tuple[object, dict[str, Any]]:
+        target = params.get("target") if isinstance(params.get("target"), dict) else {}
+        assert isinstance(target, dict)
+        path = _parse_ax_path(params.get("path"))
+        if path is None:
+            path = _parse_ax_path(target.get("path"))
+        if path is not None:
+            element = _atspi_element_for_path(desktop, path)
+            if element is None:
+                raise PortalError(
+                    "COMPUTER_USE_AX_TARGET_NOT_FOUND",
+                    f"No AT-SPI element exists at path={path}. Take a fresh ax_snapshot.",
+                )
+            return element, _atspi_node_metadata(Atspi, element, path=path, session=session)
+
+        semantic_target = {str(key): value for key, value in target.items() if key != "path"}
+        if not semantic_target:
+            raise PortalError(
+                "COMPUTER_USE_AX_TARGET_REQUIRED",
+                "ax_action requires path or semantic target fields.",
+            )
+        matches = _find_atspi_matches(
+            Atspi,
+            desktop,
+            session=session,
+            target=semantic_target,
+            operation=operation,
+        )
+        if not matches:
+            raise PortalError(
+                "COMPUTER_USE_AX_TARGET_NOT_FOUND",
+                "No AT-SPI element matched the requested target. Take a fresh ax_snapshot.",
+            )
+        matches.sort(key=lambda item: item[0], reverse=True)
+        top_score = matches[0][0]
+        top_matches = [item for item in matches if item[0] == top_score]
+        if len(top_matches) > 1:
+            raise PortalError(
+                "COMPUTER_USE_AX_TARGET_AMBIGUOUS",
+                "Multiple AT-SPI elements matched: "
+                f"{_target_summary([item[2] for item in top_matches])}. "
+                "Narrow the target or use a path from a fresh ax_snapshot.",
+            )
+        _, element, node = matches[0]
+        return element, node
+
+    def _press_atspi_element(
+        self,
+        element: object,
+        *,
+        target: dict[str, Any],
+        requested: dict[str, Any],
+    ) -> None:
+        action_name = ""
+        target_action = target.get("action")
+        if isinstance(target_action, str):
+            action_name = target_action
+        requested_action = requested.get("action_name") or requested.get("ax_action_name")
+        if isinstance(requested_action, str) and requested_action.strip():
+            action_name = requested_action
+        action_count = max(0, _safe_int(_safe_call(element, "get_n_actions"), default=0))
+        if action_count <= 0:
+            raise PortalError("COMPUTER_USE_AX_ACTION_UNAVAILABLE", "The target exposes no AT-SPI actions.")
+
+        action_names = [
+            _clean_text(_safe_call(element, "get_action_name", index), limit=80).casefold()
+            for index in range(action_count)
+        ]
+        preferred_names: list[str] = []
+        if action_name.strip():
+            preferred_names.append(action_name.strip().casefold())
+        preferred_names.extend(_AT_SPI_PRESS_ACTION_NAMES)
+        chosen_index = None
+        for preferred in preferred_names:
+            if preferred in action_names:
+                chosen_index = action_names.index(preferred)
+                break
+        if chosen_index is None:
+            chosen_index = 0
+        if _safe_call(element, "do_action", chosen_index) is False:
+            raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI press action failed.")
+
+    def _set_atspi_value(self, element: object, value: object) -> None:
+        text = str(value)
+        set_text_result = _safe_call(element, "set_text_contents", text)
+        if set_text_result is not None and set_text_result is not False:
+            return
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError):
+            numeric_value = None
+        if numeric_value is not None:
+            set_value_result = _safe_call(element, "set_current_value", numeric_value)
+            if set_value_result is not None and set_value_result is not False:
+                return
+        raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI set_value action failed.")
 
     def _request_path(self, token: str) -> str:
         sender = self._bus_name.lstrip(":").replace(".", "_")

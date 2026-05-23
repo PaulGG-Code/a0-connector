@@ -1228,6 +1228,9 @@ class ComputerUseManager:
         previous_status = session.status
 
         if ok:
+            if action_name in {"start_session", "ax_snapshot", "ax_action", "uia_snapshot", "uia_action"}:
+                for key, value in self._backend_metadata.items():
+                    result_dict.setdefault(key, value)
             session.session_id = str(result_dict.get("session_id", session.session_id or "")).strip()
             if "active" in result_dict:
                 session.active = bool(result_dict.get("active"))

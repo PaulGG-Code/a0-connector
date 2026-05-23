@@ -1737,6 +1737,53 @@ def test_computer_use_remote_rejects_when_no_enabled_cli_is_subscribed() -> None
     assert "no connected CLI currently advertises enabled local computer use" in response.message
 
 
+def test_computer_use_remote_status_prefers_linux_atspi_skill_hint() -> None:
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "status": "active",
+                "trust_mode": "allow",
+                "backend_id": "wayland",
+                "backend_family": "linux",
+                "features": [
+                    "portal-remote-desktop",
+                    "accessibility-tree-snapshot",
+                    "atspi-tree-snapshot",
+                    "atspi-structural-targeting",
+                ],
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_computer_use_remote_tool(
+        computer_use_handler=handler
+    )
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_computer_use_metadata(
+        "sid-cli",
+        {
+            "supported": True,
+            "enabled": True,
+            "trust_mode": "allow",
+            "status": "active",
+            "last_error": "",
+            "restore_token_present": True,
+            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        },
+    )
+
+    response = asyncio.run(
+        _create_computer_use_remote(tool_mod, agent, action="status").execute()
+    )
+
+    assert "Load skill `host-computer-use-linux`" in response.message
+    assert "host-computer-use-macos" not in response.message
+    assert "backend=wayland/linux" in response.message
+
+
 def test_computer_use_remote_rearm_metadata_tells_agent_to_stop_without_dispatch() -> None:
     calls: list[dict[str, object]] = []
 
@@ -2334,7 +2381,9 @@ def test_computer_use_remote_ax_snapshot_formats_structural_tree() -> None:
 
     assert response.message == (
         "AX snapshot for Fake App: 3 node(s). Root AXApplication 'Fake App'. "
-        "Use path or semantic target fields with ax_action."
+        "Use path or semantic target fields with ax_action.\n\n"
+        "Nodes:\n"
+        "- path=[] role=AXApplication title='Fake App'"
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["ax_snapshot"]
 
@@ -2458,7 +2507,9 @@ def test_computer_use_remote_uia_snapshot_formats_structural_tree() -> None:
     assert response.message == (
         "Windows UIA snapshot for Windows desktop: 3 node(s). Root Desktop 'Windows desktop'. "
         "Prefer node actions with uia_action; use focus_window/minimize/restore/maximize "
-        "for windows, and reserve click for a last resort."
+        "for windows, and reserve click for a last resort.\n\n"
+        "Nodes:\n"
+        "- path=[] role=Desktop title='Windows desktop'"
     )
     assert [call["payload"]["action"] for call in shared_ws_manager.calls] == ["uia_snapshot"]
 

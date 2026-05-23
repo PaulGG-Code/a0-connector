@@ -120,7 +120,146 @@ class _FakeRemoteDesktop:
         self.calls.append(("keysym", str(session_handle), int(keysym), int(state)))
 
 
+class _FakeAtspiExtents:
+    def __init__(self, x: int, y: int, width: int, height: int) -> None:
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+
+class _FakeAtspiStateSet:
+    def __init__(self, states: set[str]) -> None:
+        self._states = states
+
+    def contains(self, state: str) -> bool:
+        return state in self._states
+
+
+class _FakeAtspiAccessible:
+    def __init__(
+        self,
+        *,
+        role: str,
+        name: str = "",
+        description: str = "",
+        children: list["_FakeAtspiAccessible"] | None = None,
+        actions: list[str] | None = None,
+        states: set[str] | None = None,
+        frame: tuple[int, int, int, int] | None = None,
+        text: str = "",
+        value: float | None = None,
+        pid: int = 123,
+    ) -> None:
+        self.role = role
+        self.name = name
+        self.description = description
+        self.children = children or []
+        self.actions = actions or []
+        self.states = states or {"VISIBLE", "SHOWING", "ENABLED"}
+        self.frame = frame
+        self.text = text
+        self.value = value
+        self.pid = pid
+        self.performed_actions: list[int] = []
+        self.focused = False
+        self.set_text_values: list[str] = []
+        self.set_numeric_values: list[float] = []
+
+    def get_name(self) -> str:
+        return self.name
+
+    def get_role_name(self) -> str:
+        return self.role
+
+    def get_description(self) -> str:
+        return self.description
+
+    def get_process_id(self) -> int:
+        return self.pid
+
+    def get_child_count(self) -> int:
+        return len(self.children)
+
+    def get_child_at_index(self, index: int) -> "_FakeAtspiAccessible":
+        return self.children[index]
+
+    def get_extents(self, coord_type: object) -> _FakeAtspiExtents | None:
+        del coord_type
+        if self.frame is None:
+            return None
+        return _FakeAtspiExtents(*self.frame)
+
+    def get_state_set(self) -> _FakeAtspiStateSet:
+        return _FakeAtspiStateSet(self.states)
+
+    def get_n_actions(self) -> int:
+        return len(self.actions)
+
+    def get_action_name(self, index: int) -> str:
+        return self.actions[index]
+
+    def get_action_description(self, index: int) -> str:
+        return f"{self.actions[index]} action"
+
+    def get_key_binding(self, index: int) -> str:
+        del index
+        return ""
+
+    def do_action(self, index: int) -> bool:
+        self.performed_actions.append(index)
+        return True
+
+    def grab_focus(self) -> bool:
+        self.focused = True
+        return True
+
+    def get_character_count(self) -> int:
+        return len(self.text)
+
+    def get_text(self, start: int, end: int) -> str:
+        return self.text[start:end]
+
+    def set_text_contents(self, value: str) -> bool:
+        self.set_text_values.append(value)
+        self.text = value
+        return True
+
+    def get_current_value(self) -> float | None:
+        return self.value
+
+    def set_current_value(self, value: float) -> bool:
+        self.set_numeric_values.append(value)
+        self.value = value
+        return True
+
+
+class _FakeAtspi:
+    CoordType = types.SimpleNamespace(SCREEN="screen")
+    StateType = types.SimpleNamespace(
+        ACTIVE="ACTIVE",
+        CHECKED="CHECKED",
+        EDITABLE="EDITABLE",
+        ENABLED="ENABLED",
+        EXPANDED="EXPANDED",
+        FOCUSED="FOCUSED",
+        FOCUSABLE="FOCUSABLE",
+        PRESSED="PRESSED",
+        SELECTED="SELECTED",
+        SHOWING="SHOWING",
+        VISIBLE="VISIBLE",
+    )
+    desktop: _FakeAtspiAccessible | None = None
+
+    @classmethod
+    def get_desktop(cls, index: int) -> _FakeAtspiAccessible:
+        assert index == 0
+        assert cls.desktop is not None
+        return cls.desktop
+
+
 def _install_wayland_helper_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _FakeAtspi.desktop = None
     dbus_mod = types.ModuleType("dbus")
     for name in (
         "Boolean",
@@ -153,6 +292,7 @@ def _install_wayland_helper_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     gi_repository_mod.Gdk = _FakeGdk
     gi_repository_mod.GLib = types.SimpleNamespace(MainLoop=object)
     gi_repository_mod.Gst = types.SimpleNamespace(init=lambda *args, **kwargs: None)
+    gi_repository_mod.Atspi = _FakeAtspi
 
     monkeypatch.setitem(sys.modules, "dbus", dbus_mod)
     monkeypatch.setitem(sys.modules, "dbus.mainloop", dbus_mainloop_mod)
@@ -210,6 +350,8 @@ def test_wayland_backend_spec_exposes_expected_metadata() -> None:
     assert "inline-png-capture" in spec.features
     assert "fresh-frame-capture" in spec.features
     assert "global-pixel-actions" in spec.features
+    assert "atspi-tree-snapshot" in spec.features
+    assert "atspi-structural-targeting" in spec.features
     assert "real-cursor-may-move" in spec.features
 
 
@@ -297,3 +439,102 @@ def test_wayland_text_dispatch_still_uses_keysyms(
         ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 1),
         ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 0),
     ]
+
+
+def test_wayland_ax_snapshot_returns_linux_atspi_tree(
+    wayland_helper_module,
+) -> None:
+    button = _FakeAtspiAccessible(
+        role="push button",
+        name="Open",
+        actions=["press"],
+        frame=(100, 200, 80, 30),
+    )
+    text_field = _FakeAtspiAccessible(
+        role="text",
+        name="Search",
+        states={"VISIBLE", "SHOWING", "ENABLED", "FOCUSABLE", "EDITABLE"},
+        frame=(20, 40, 300, 36),
+        text="",
+    )
+    app = _FakeAtspiAccessible(
+        role="application",
+        name="Fake App",
+        children=[button, text_field],
+        frame=(0, 0, 800, 600),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(role="desktop", children=[app])
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    result = helper.ax_snapshot({"session_id": "sess-1", "max_depth": 3, "max_nodes": 20})
+
+    assert result["app"] == {"name": "Linux desktop", "backend": "at-spi"}
+    assert result["node_count"] == 4
+    assert result["truncated"] is False
+    root = result["tree"]
+    assert root["role"] == "Desktop"
+    assert root["children"][0]["path"] == [0]
+    assert root["children"][0]["title"] == "Fake App"
+    assert root["children"][0]["children"][0]["path"] == [0, 0]
+    assert root["children"][0]["children"][0]["actions"][0]["name"] == "press"
+    assert root["children"][0]["children"][1]["states"] == [
+        "editable",
+        "enabled",
+        "focusable",
+        "showing",
+        "visible",
+    ]
+
+
+def test_wayland_ax_action_presses_element_by_path(
+    wayland_helper_module,
+) -> None:
+    button = _FakeAtspiAccessible(
+        role="push button",
+        name="Open",
+        actions=["press"],
+        frame=(100, 200, 80, 30),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[button])],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    result = helper.ax_action({"session_id": "sess-1", "path": [0, 0], "operation": "press"})
+
+    assert button.performed_actions == [0]
+    assert result["operation"] == "press"
+    assert result["target"]["path"] == [0, 0]
+    assert result["target"]["role"] == "push button"
+    assert result["target"]["title"] == "Open"
+
+
+def test_wayland_ax_action_sets_text_by_semantic_target(
+    wayland_helper_module,
+) -> None:
+    text_field = _FakeAtspiAccessible(
+        role="text",
+        name="Search",
+        states={"VISIBLE", "SHOWING", "ENABLED", "FOCUSABLE", "EDITABLE"},
+        frame=(20, 40, 300, 36),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[text_field])],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    result = helper.ax_action(
+        {
+            "session_id": "sess-1",
+            "target": {"role": "text", "title": "Search"},
+            "operation": "set_value",
+            "value": "hello",
+        }
+    )
+
+    assert text_field.set_text_values == ["hello"]
+    assert result["operation"] == "set_value"
+    assert result["target"]["path"] == [0, 0]
+    assert result["target"]["text"] == "hello"
