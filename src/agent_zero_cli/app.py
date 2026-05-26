@@ -1400,19 +1400,30 @@ class AgentZeroCLI(App):
         token, _, remainder = body.partition(" ")
         return token.strip(), remainder.strip()
 
+    def _trailing_palette_token(self, text: str, *, bare_markers: set[str]) -> str | None:
+        raw = str(text or "")
+        if not raw:
+            return None
+
+        stripped = raw.rstrip()
+        if not stripped:
+            return None
+
+        token_start = len(stripped)
+        while token_start > 0 and not stripped[token_start - 1].isspace():
+            token_start -= 1
+
+        token = stripped[token_start:]
+        if len(stripped) != len(raw) and token not in bare_markers:
+            return None
+        return token
+
     def _skill_query(self, text: str) -> str | None:
-        if not text:
-            return None
-        parts = text.split(maxsplit=1)
-        if not parts:
-            return None
-        token = parts[0]
-        if not token.startswith("$"):
+        token = self._trailing_palette_token(text, bare_markers={"$"})
+        if token is None or not token.startswith("$"):
             return None
         if token == "$":
-            return "$" if text.strip() == "$" else None
-        if len(text) != len(token):
-            return None
+            return "$"
         if not is_raw_skill_command(token):
             return None
         return token.lower()
@@ -1540,17 +1551,8 @@ class AgentZeroCLI(App):
         return True
 
     def _slash_query(self, text: str) -> str | None:
-        if not text:
-            return None
-        parts = text.split(maxsplit=1)
-        if not parts:
-            return None
-        token = parts[0]
-        if not token.startswith("/"):
-            return None
-        if token == "/":
-            return "/" if text.strip() == "/" else None
-        if len(text) != len(token):
+        token = self._trailing_palette_token(text, bare_markers={"/"})
+        if token is None or not token.startswith("/"):
             return None
         return token.lower()
 
@@ -1807,8 +1809,21 @@ class AgentZeroCLI(App):
             input_widget = self.query_one("#message-input", ChatInput)
         except Exception:
             return
-        if input_widget.value.strip().lower() == query:
+
+        value = str(input_widget.value or "")
+        if value.strip().lower() == query:
             input_widget.value = ""
+            return
+
+        stripped = value.rstrip()
+        if not stripped.lower().endswith(query):
+            return
+
+        token_start = len(stripped) - len(query)
+        if token_start > 0 and not stripped[token_start - 1].isspace():
+            return
+
+        input_widget.value = value[:token_start]
 
     async def on_model_switcher_bar_preset_changed(self, event: ModelSwitcherBar.PresetChanged) -> None:
         await self._set_model_preset(event.value or None, bar=event.bar)

@@ -1809,6 +1809,25 @@ def test_attach_command_token_does_not_auto_open_slash_palette(
     assert opened == []
 
 
+def test_mid_input_attach_command_token_does_not_auto_open_slash_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append(initial_query),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    dummy_app.on_chat_input_value_changed(
+        ChatInput.ValueChanged(value="please add example /attach", input=input_widget)
+    )
+
+    assert opened == []
+
+
 def test_pause_and_nudge_tokens_auto_open_slash_palette(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -1829,6 +1848,61 @@ def test_pause_and_nudge_tokens_auto_open_slash_palette(
     )
 
     assert opened == [("/pause", True), ("/nudge", True)]
+
+
+def test_mid_input_slash_tokens_auto_open_slash_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append((initial_query, from_slash)),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    for value in (
+        "example /",
+        "example / ",
+        "example /pause",
+        "line one\n/pause",
+    ):
+        dummy_app.on_chat_input_value_changed(
+            ChatInput.ValueChanged(value=value, input=input_widget)
+        )
+
+    assert opened == [
+        ("/", True),
+        ("/", True),
+        ("/pause", True),
+        ("/pause", True),
+    ]
+
+
+def test_mid_input_slash_tokens_require_token_boundary(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    opened: list[str] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False: opened.append(initial_query),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    for value in (
+        "example/",
+        "https://example.test/",
+        "example /pause ",
+        "example /pause later",
+    ):
+        dummy_app.on_chat_input_value_changed(
+            ChatInput.ValueChanged(value=value, input=input_widget)
+        )
+
+    assert opened == []
 
 
 def test_computer_use_token_auto_opens_main_slash_palette_but_aliases_stay_hidden(
@@ -1909,6 +1983,85 @@ def test_bare_dollar_auto_opens_skill_palette(
     )
 
     assert opened == [("$", False, True), ("$a0-live", False, True)]
+
+
+def test_mid_input_dollar_tokens_auto_open_skill_palette(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"skills_list", "skills_activate"}
+    opened: list[tuple[str, bool, bool]] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False, from_skill=False: opened.append(
+            (initial_query, from_slash, from_skill)
+        ),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    for value in (
+        "example $",
+        "example $ ",
+        "example $a0-live",
+        "line one\n$a0-live",
+    ):
+        dummy_app.on_chat_input_value_changed(
+            ChatInput.ValueChanged(value=value, input=input_widget)
+        )
+
+    assert opened == [
+        ("$", False, True),
+        ("$", False, True),
+        ("$a0-live", False, True),
+        ("$a0-live", False, True),
+    ]
+
+
+def test_mid_input_dollar_tokens_require_token_boundary_and_skill_shape(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"skills_list", "skills_activate"}
+    opened: list[str] = []
+    monkeypatch.setattr(
+        dummy_app,
+        "_open_command_palette",
+        lambda *, initial_query="", from_slash=False, from_skill=False: opened.append(initial_query),
+    )
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    for value in (
+        "example$",
+        "price is $100",
+        "example $a0-live ",
+        "example $a0-live now",
+    ):
+        dummy_app.on_chat_input_value_changed(
+            ChatInput.ValueChanged(value=value, input=input_widget)
+        )
+
+    assert opened == []
+
+
+def test_command_palette_close_removes_mid_input_trigger_token(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+
+    input_widget.value = "example /pause"
+    dummy_app._slash_palette_query = "/pause"
+    dummy_app.on_command_palette_closed(SimpleNamespace())
+    assert input_widget.value == "example "
+
+    input_widget.value = "example $a0-live  "
+    dummy_app._slash_palette_query = "$a0-live"
+    dummy_app.on_command_palette_closed(SimpleNamespace())
+    assert input_widget.value == "example "
 
 
 async def test_skill_command_activates_exact_skill(
