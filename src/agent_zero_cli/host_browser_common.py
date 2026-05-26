@@ -21,6 +21,7 @@ from urllib.parse import urlsplit, urlunsplit
 # owned by Agent Zero's Browser plugin and is delivered over the connector protocol.
 CONTENT_HELPER_PATH = Path(__file__).resolve().parent / "assets" / "browser-page-content.js"
 CONTENT_HELPER_PAYLOAD_KEY = "content_helper"
+DOM_HELPER_PAYLOAD_KEY = "dom_helper"
 DEFAULT_VIEWPORT = {"width": 1280, "height": 800}
 CHROME_SINGLETON_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
 HOST_BROWSER_ARTIFACT_ROOT_ENV = "A0_HOST_BROWSER_ARTIFACT_ROOT"
@@ -79,6 +80,7 @@ _VALID_MODIFIERS = {"Control", "Shift", "Alt", "Meta"}
 BROWSER_REEXPORTS = [
     "CONTENT_HELPER_PATH",
     "CONTENT_HELPER_PAYLOAD_KEY",
+    "DOM_HELPER_PAYLOAD_KEY",
     "DEFAULT_VIEWPORT",
     "CHROME_SINGLETON_FILES",
     "HOST_BROWSER_ARTIFACT_ROOT_ENV",
@@ -134,6 +136,7 @@ BROWSER_REEXPORTS = [
     "playwright_python_install_command",
     "playwright_python_install_commands",
     "content_helper_sha256",
+    "parse_dom_helper_payload",
     "parse_content_helper_payload",
     "format_profile_rows",
 ]
@@ -177,6 +180,42 @@ def parse_content_helper_payload(payload: dict[str, Any]) -> tuple[str, str] | N
     if expected_hash and expected_hash != actual_hash:
         raise ValueError(
             "Host browser content helper checksum mismatch: "
+            f"expected {expected_hash}, got {actual_hash}."
+        )
+    return source, actual_hash
+
+
+def parse_dom_helper_payload(payload: dict[str, Any]) -> tuple[str, str] | None:
+    helper = payload.get(DOM_HELPER_PAYLOAD_KEY)
+    source = ""
+    expected_hash = ""
+    required_apis: tuple[str, ...] = ()
+    if isinstance(helper, dict):
+        source = str(helper.get("source") or "")
+        expected_hash = str(helper.get("sha256") or "").strip().lower()
+        value = helper.get("required_apis")
+        if isinstance(value, (list, tuple)):
+            required_apis = tuple(str(item).strip() for item in value if str(item).strip())
+    elif isinstance(payload.get("dom_helper_source"), str):
+        source = str(payload.get("dom_helper_source") or "")
+        expected_hash = str(payload.get("dom_helper_sha256") or "").strip().lower()
+
+    if not source:
+        return None
+
+    if "__spaceBrowserDomHelper__" not in source:
+        raise ValueError("Host browser DOM helper is missing the expected global API.")
+    missing = [name for name in required_apis if name not in source]
+    if missing:
+        raise ValueError(
+            "Host browser DOM helper is missing required API(s): "
+            + ", ".join(missing)
+        )
+
+    actual_hash = content_helper_sha256(source)
+    if expected_hash and expected_hash != actual_hash:
+        raise ValueError(
+            "Host browser DOM helper checksum mismatch: "
             f"expected {expected_hash}, got {actual_hash}."
         )
     return source, actual_hash

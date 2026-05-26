@@ -26,6 +26,7 @@ from agent_zero_cli.host_browser import (
     normalize_url,
     normalize_remote_debugging_endpoint,
     parse_content_helper_payload,
+    parse_dom_helper_payload,
     profile_lock_state,
     remote_debugging_restriction_reason,
 )
@@ -47,6 +48,21 @@ MINIMAL_CONTENT_HELPER_SOURCE = """
     select() {},
     setChecked() {},
     requiredApis: [],
+  };
+})();
+"""
+
+MINIMAL_DOM_HELPER_SOURCE = """
+(() => {
+  globalThis.__spaceBrowserDomHelper__ = {
+    captureDocument() {},
+    clickNode() {},
+    detailNode() {},
+    scrollNode() {},
+    submitNode() {},
+    typeNode() {},
+    typeSubmitNode() {},
+    version: "test",
   };
 })();
 """
@@ -295,6 +311,34 @@ def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
     assert "ready()" in agent_zero_source
     for api_name in required_apis:
         assert api_name in agent_zero_source
+
+    dom_helper_asset = agent_zero_asset.with_name("browser-dom-helper.js")
+    assert dom_helper_asset.exists()
+    dom_helper_source = dom_helper_asset.read_text(encoding="utf-8")
+    dom_helper_hash = content_helper_sha256(dom_helper_source)
+    dom_required_apis = [
+        "captureDocument",
+        "clickNode",
+        "detailNode",
+        "scrollNode",
+        "submitNode",
+        "typeNode",
+        "typeSubmitNode",
+    ]
+    assert parse_dom_helper_payload(
+        {
+            "dom_helper": {
+                "required_apis": dom_required_apis,
+                "source": dom_helper_source,
+                "sha256": dom_helper_hash,
+            }
+        }
+    ) == (dom_helper_source, dom_helper_hash)
+    assert "__spaceBrowserDomHelper__" in dom_helper_source
+    assert "requestChildFrameOperation" in dom_helper_source
+    assert "data-space-browser-frame-chain" in dom_helper_source
+    for api_name in dom_required_apis:
+        assert api_name in dom_helper_source
 
 
 def test_host_browser_accepts_only_agent_zero_normalized_urls() -> None:
@@ -738,6 +782,7 @@ async def test_host_browser_manager_uses_agent_zero_supplied_content_helper(tmp_
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(playwright),
     )
+    dom_helper_hash = content_helper_sha256(MINIMAL_DOM_HELPER_SOURCE)
     helper_hash = content_helper_sha256(MINIMAL_CONTENT_HELPER_SOURCE)
 
     opened = await manager.handle_op(
@@ -746,6 +791,10 @@ async def test_host_browser_manager_uses_agent_zero_supplied_content_helper(tmp_
             "context_id": "ctx-helper",
             "action": "open",
             "url": "https://example.com/",
+            "dom_helper": {
+                "source": MINIMAL_DOM_HELPER_SOURCE,
+                "sha256": dom_helper_hash,
+            },
             "content_helper": {
                 "source": MINIMAL_CONTENT_HELPER_SOURCE,
                 "sha256": helper_hash,
@@ -754,8 +803,15 @@ async def test_host_browser_manager_uses_agent_zero_supplied_content_helper(tmp_
     )
 
     assert opened["ok"] is True
+    assert manager.metadata()["dom_helper_sha256"] == dom_helper_hash
     assert manager.metadata()["content_helper_sha256"] == helper_hash
+    assert MINIMAL_DOM_HELPER_SOURCE in playwright.chromium.context.init_scripts
     assert MINIMAL_CONTENT_HELPER_SOURCE in playwright.chromium.context.init_scripts
+    dom_helper_index = playwright.chromium.context.init_scripts.index(MINIMAL_DOM_HELPER_SOURCE)
+    content_helper_index = playwright.chromium.context.init_scripts.index(
+        MINIMAL_CONTENT_HELPER_SOURCE
+    )
+    assert dom_helper_index < content_helper_index
 
 
 async def test_relaunch_session_is_adopted_by_first_browser_context(

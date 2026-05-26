@@ -27,6 +27,7 @@ from agent_zero_cli.host_browser_common import (
     is_remote_debugging_family,
     normalize_action,
     parse_content_helper_payload,
+    parse_dom_helper_payload,
     playwright_python_install_command,
     playwright_python_install_commands,
     profile_lock_state_for_profile,
@@ -81,6 +82,8 @@ class HostBrowserManager:
         self._playwright_starter = playwright_starter
         self._playwright_installer = playwright_installer or _run_install_command
         self._sessions: dict[str, HostBrowserSession] = {}
+        self._dom_helper_source: str | None = None
+        self._dom_helper_sha256 = ""
         self._content_helper_source: str | None = None
         self._content_helper_sha256 = ""
         self.last_error = ""
@@ -101,6 +104,7 @@ class HostBrowserManager:
             "profile_label": profile.profile_label if profile else "",
             "profile_path": profile.profile_path_display if profile else "",
             "cdp_endpoint": profile.cdp_endpoint if profile else "",
+            "dom_helper_sha256": self._dom_helper_sha256,
             "content_helper_sha256": self._content_helper_sha256,
             "features": [
                 "existing_profile",
@@ -110,6 +114,7 @@ class HostBrowserManager:
                 "artifacts",
                 "background_tabs",
                 "content_helper_rpc",
+                "dom_helper_rpc",
                 "local_upload_paths",
                 *sorted(_SUPPORTED_ACTIONS),
             ],
@@ -443,7 +448,7 @@ class HostBrowserManager:
         if action not in _SUPPORTED_ACTIONS:
             return self._error(op_id, "UNKNOWN_ACTION", f"Unknown host browser action: {action!r}")
         try:
-            self._apply_content_helper_payload(payload)
+            self._apply_helper_payloads(payload)
         except ValueError as exc:
             self.last_error = str(exc)
             return self._error(op_id, "HOST_BROWSER_CONTENT_HELPER_INVALID", str(exc))
@@ -538,6 +543,11 @@ class HostBrowserManager:
                 playwright_starter=self._playwright_starter,
             )
             self._sessions[context_id] = session
+        if self._dom_helper_source is not None:
+            await session.set_dom_helper_source(
+                self._dom_helper_source,
+                self._dom_helper_sha256,
+            )
         if self._content_helper_source is not None:
             await session.set_content_helper_source(
                 self._content_helper_source,
@@ -545,7 +555,13 @@ class HostBrowserManager:
             )
         return session
 
-    def _apply_content_helper_payload(self, payload: dict[str, Any]) -> None:
+    def _apply_helper_payloads(self, payload: dict[str, Any]) -> None:
+        parsed_dom = parse_dom_helper_payload(payload)
+        if parsed_dom is not None:
+            source, source_hash = parsed_dom
+            self._dom_helper_source = source
+            self._dom_helper_sha256 = source_hash
+
         parsed = parse_content_helper_payload(payload)
         if parsed is None:
             return

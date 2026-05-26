@@ -149,6 +149,8 @@ class HostBrowserSession:
     pages: dict[int, HostBrowserPage] = field(default_factory=dict)
     next_browser_id: int = 1
     last_interacted_browser_id: int | None = None
+    _dom_helper_source: str | None = None
+    _dom_helper_sha256: str = ""
     _content_helper_source: str | None = None
     _content_helper_sha256: str = ""
     _start_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
@@ -160,6 +162,22 @@ class HostBrowserSession:
         if self.profile.is_remote_debugging:
             return _CDPRuntimeAdapter()
         return _PlaywrightRuntimeAdapter()
+
+    async def set_dom_helper_source(self, source: str, source_hash: str = "") -> None:
+        normalized_source = str(source or "")
+        if not normalized_source:
+            return
+        normalized_hash = str(source_hash or "").strip().lower() or content_helper_sha256(normalized_source)
+        if (
+            self._dom_helper_source == normalized_source
+            and self._dom_helper_sha256 == normalized_hash
+        ):
+            return
+        self._dom_helper_source = normalized_source
+        self._dom_helper_sha256 = normalized_hash
+        if self.context is not None:
+            with contextlib.suppress(Exception):
+                await self.context.add_init_script(script=normalized_source)
 
     async def set_content_helper_source(self, source: str, source_hash: str = "") -> None:
         normalized_source = str(source or "")
@@ -394,6 +412,9 @@ class HostBrowserSession:
         self.context.set_default_navigation_timeout(30000)
         self.context.on("close", self._on_context_closed)
         self.context.on("page", self._on_new_page_sync)
+        if self._dom_helper_source:
+            with contextlib.suppress(Exception):
+                await self.context.add_init_script(script=self._dom_helper_source)
         if self._content_helper_source:
             with contextlib.suppress(Exception):
                 await self.context.add_init_script(script=self._content_helper_source)
@@ -1159,6 +1180,7 @@ class HostBrowserSession:
         return self.pages[int(browser_id)].page
 
     async def _ensure_content_helper(self, page: Any) -> None:
+        await self._ensure_dom_helper(page)
         has_helper = await page.evaluate(
             "() => Boolean(globalThis.__spaceBrowserPageContent__?.ready?.())"
         )
@@ -1169,6 +1191,30 @@ class HostBrowserSession:
                 "Host browser content helper source was not provided by Agent Zero Browser plugin."
             )
         await page.evaluate(self._content_helper_source)
+
+    async def _ensure_dom_helper(self, page: Any) -> None:
+        if self._dom_helper_source is None:
+            return
+        await self._ensure_helper_source(
+            page,
+            self._dom_helper_source,
+            "() => Boolean(globalThis.__spaceBrowserDomHelper__?.captureDocument)",
+        )
+
+    async def _ensure_helper_source(self, page: Any, source: str, ready_script: str) -> None:
+        targets = [page]
+        frames = getattr(page, "frames", None)
+        if isinstance(frames, list) and frames:
+            targets = frames
+        for target in targets:
+            try:
+                has_helper = await target.evaluate(ready_script)
+            except Exception:
+                continue
+            if has_helper:
+                continue
+            with contextlib.suppress(Exception):
+                await target.evaluate(source)
 
 class ProfileLockedError(RuntimeError):
     def __init__(self, message: str, *, lock_state: ProfileLockState):
