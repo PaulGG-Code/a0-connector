@@ -28,6 +28,7 @@ from agent_zero_cli.config import (
     save_computer_use_trust_mode,
     save_env,
     save_last_context,
+    save_remember_host,
 )
 
 
@@ -240,6 +241,28 @@ def test_load_config_reads_default_chat_and_remote_exec_from_dotenv(
     assert config.remote_exec_enabled is True
 
 
+def test_load_config_reads_remember_host_from_dotenv_and_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_dir = tmp_path / ".agent-zero"
+    env_dir.mkdir()
+    env_file = env_dir / ".env"
+    env_file.write_text("AGENT_ZERO_REMEMBER_HOST=1\n", encoding="utf-8")
+
+    import agent_zero_cli.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
+    monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
+
+    dotenv_config = load_config()
+    assert dotenv_config.remember_host is True
+
+    monkeypatch.setenv("AGENT_ZERO_REMEMBER_HOST", "0")
+    env_config = load_config()
+    assert env_config.remember_host is False
+
+
 def test_save_env_updates_existing_key(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -342,6 +365,26 @@ def test_save_computer_use_settings_persist_to_dotenv(
     assert not any(line.startswith("AGENT_ZERO_COMPUTER_USE_RESTORE_TOKEN=") for line in contents)
 
 
+def test_save_remember_host_persists_flag_to_dotenv(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_dir = tmp_path / ".agent-zero"
+    env_dir.mkdir()
+    env_file = env_dir / ".env"
+
+    import agent_zero_cli.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
+    monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
+
+    save_remember_host(True)
+    assert env_file.read_text(encoding="utf-8") == "AGENT_ZERO_REMEMBER_HOST=1\n"
+
+    save_remember_host(False)
+    assert env_file.read_text(encoding="utf-8") == ""
+
+
 def test_normalize_computer_use_trust_mode_defaults_unknown_labels_to_allow() -> None:
     assert normalize_computer_use_trust_mode("unknown") == "allow"
     assert normalize_computer_use_trust_mode("") == "allow"
@@ -416,6 +459,35 @@ async def test_connect_websocket_forwards_session_cookie_and_handler_auth() -> N
             },
         )
     ]
+
+
+def test_persisted_session_round_trip_restores_cookie_header(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    env_dir = tmp_path / ".agent-zero"
+    env_dir.mkdir()
+    env_file = env_dir / ".env"
+    session_file = env_dir / "session_cookies.json"
+
+    import agent_zero_cli.config as config_mod
+
+    monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
+    monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
+    monkeypatch.setattr(config_mod, "_SESSION_FILE", session_file)
+
+    source = A0Client("http://127.0.0.1:50001")
+    source.http.cookies = httpx.Cookies()
+    source.http.cookies.set("session_test", "cookie-value", domain="127.0.0.1", path="/")
+    source.persist_session("http://127.0.0.1:50001")
+
+    restored = A0Client("http://127.0.0.1:50001")
+    assert restored.restore_session("http://127.0.0.1:50001") is True
+    assert restored._cookie_header("http://127.0.0.1:50001/socket.io") == "session_test=cookie-value"
+
+    restored.clear_persisted_session("http://127.0.0.1:50001")
+    assert restored.restore_session("http://127.0.0.1:50001") is False
+    assert not session_file.exists()
 
 
 async def test_set_model_override_posts_complete_model_payload() -> None:

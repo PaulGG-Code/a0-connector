@@ -221,6 +221,7 @@ class AgentZeroCLI(App):
         self._splash_state = SplashState(
             stage="host",
             host=self.config.instance_url or DEFAULT_HOST,
+            remember_host=self.config.remember_host,
             local_workspace=self._local_workspace,
             remote_workspace=self._remote_workspace,
         )

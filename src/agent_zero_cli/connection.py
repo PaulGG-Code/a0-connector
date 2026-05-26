@@ -10,7 +10,7 @@ from agent_zero_cli.client import (
     WS_HANDLER,
     WS_NAMESPACE,
 )
-from agent_zero_cli.config import delete_env, save_env
+from agent_zero_cli.config import delete_env, save_env, save_remember_host
 from agent_zero_cli.widgets import ChatInput
 from agent_zero_cli.widgets.chat_log import ChatLog
 
@@ -140,6 +140,8 @@ async def begin_connection(
     app._last_remote_tree_hash = ""
     app._last_remote_tree_published_at = 0.0
     normalized_host = app._normalize_host(host)
+    remembered_host_before_connect = app.config.instance_url.strip().rstrip("/")
+    remember_flag_before_connect = app.config.remember_host
     app.config.instance_url = normalized_host
     app.client.base_url = normalized_host.rstrip("/")
     await _silently_disconnect_websocket(app)
@@ -191,6 +193,8 @@ async def begin_connection(
     app.connector_features = set(capabilities.get("features") or [])
     auth_required = bool(capabilities.get("auth_required"))
     if auth_required:
+        if remember_host_flag:
+            app.client.restore_session(normalized_host)
         try:
             session_ok = await app.client.verify_session()
         except Exception as exc:
@@ -205,6 +209,11 @@ async def begin_connection(
                 remember_host=remember_host_flag,
             )
             return
+
+        if not session_ok:
+            app.client.clear_session()
+            if remember_host_flag:
+                app.client.clear_persisted_session(normalized_host)
 
         if not session_ok and username and password:
             app._set_splash_stage(
@@ -324,7 +333,19 @@ async def begin_connection(
     app._start_remote_tree_publisher()
     if remember_host_flag:
         save_env("AGENT_ZERO_HOST", normalized_host)
+        save_remember_host(True)
         delete_env("AGENT_ZERO_API_KEY")
+        if auth_required:
+            app.client.persist_session(normalized_host)
+        app.config.remember_host = True
+    else:
+        app.client.clear_persisted_session(normalized_host)
+        if remembered_host_before_connect == normalized_host:
+            delete_env("AGENT_ZERO_HOST")
+            save_remember_host(False)
+            app.config.remember_host = False
+        else:
+            app.config.remember_host = remember_flag_before_connect
     app._set_splash_stage(
         "ready",
         message="Ready when you are.",
@@ -419,6 +440,7 @@ async def disconnect_to_login(app: AgentZeroCLI) -> None:
         await app.client.logout()
     except Exception:
         pass
+    app.client.clear_persisted_session(current_host)
     app.client.clear_session()
 
     _reset_disconnected_state(app)

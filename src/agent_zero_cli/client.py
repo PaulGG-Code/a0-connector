@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from http.cookiejar import Cookie
+import time
 import uuid
 from typing import Any, Callable, Mapping
 from urllib.parse import urlparse
@@ -163,6 +165,95 @@ class A0Client:
             "Origin": self.base_url,
             "Referer": f"{self.base_url}/",
         }
+
+    def _session_cookie_records(self) -> list[dict[str, Any]]:
+        now = time.time()
+        records: list[dict[str, Any]] = []
+        for cookie in self.http.cookies.jar:
+            domain = str(cookie.domain or "").strip()
+            if not domain:
+                continue
+            if cookie.expires is not None and cookie.expires <= now:
+                continue
+            records.append(
+                {
+                    "name": cookie.name,
+                    "value": cookie.value,
+                    "domain": domain,
+                    "path": str(cookie.path or "/") or "/",
+                    "secure": bool(cookie.secure),
+                    "expires": int(cookie.expires) if cookie.expires is not None else None,
+                }
+            )
+        return records
+
+    def _load_session_cookie_records(self, records: list[dict[str, Any]]) -> bool:
+        cookies: list[Cookie] = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            name = str(record.get("name") or "").strip()
+            domain = str(record.get("domain") or "").strip()
+            if not name or not domain:
+                continue
+
+            expires_raw = record.get("expires")
+            expires: int | None
+            if expires_raw is None or expires_raw == "":
+                expires = None
+            else:
+                try:
+                    expires = int(expires_raw)
+                except (TypeError, ValueError):
+                    continue
+
+            cookies.append(
+                Cookie(
+                    version=0,
+                    name=name,
+                    value=str(record.get("value") or ""),
+                    port=None,
+                    port_specified=False,
+                    domain=domain,
+                    domain_specified=True,
+                    domain_initial_dot=domain.startswith("."),
+                    path=str(record.get("path") or "/") or "/",
+                    path_specified=True,
+                    secure=bool(record.get("secure")),
+                    expires=expires,
+                    discard=expires is None,
+                    comment=None,
+                    comment_url=None,
+                    rest={},
+                    rfc2109=False,
+                )
+            )
+
+        if not cookies:
+            return False
+
+        self.clear_session()
+        for cookie in cookies:
+            self.http.cookies.jar.set_cookie(cookie)
+        return True
+
+    def persist_session(self, host: str) -> None:
+        from agent_zero_cli.config import save_persisted_session
+
+        save_persisted_session(host, self._session_cookie_records())
+
+    def restore_session(self, host: str) -> bool:
+        from agent_zero_cli.config import load_persisted_session
+
+        records = load_persisted_session(host)
+        if not records:
+            return False
+        return self._load_session_cookie_records(records)
+
+    def clear_persisted_session(self, host: str) -> None:
+        from agent_zero_cli.config import delete_persisted_session
+
+        delete_persisted_session(host)
 
     def _unwrap_envelope(self, payload: dict[str, Any] | None) -> dict[str, Any]:
         if not isinstance(payload, dict):

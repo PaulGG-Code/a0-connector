@@ -832,6 +832,9 @@ async def test_begin_connection_to_protected_instance_advances_to_login(
             self.verify_session_calls += 1
             return False
 
+        def clear_session(self) -> None:
+            return None
+
     async def async_noop(*args, **kwargs) -> None:
         del args, kwargs
 
@@ -871,6 +874,109 @@ async def test_begin_connection_to_protected_instance_advances_to_login(
     assert splash.state.login_error == ""
     assert status.status == "disconnected"
     assert input_widget.disabled is True
+
+
+async def test_begin_connection_to_protected_instance_reuses_remembered_session(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RememberedSessionClient:
+        def __init__(self) -> None:
+            self.base_url = ""
+            self.disconnect_calls = 0
+            self.verify_session_calls = 0
+            self.restore_session_calls: list[str] = []
+            self.persist_session_calls: list[str] = []
+            self.subscribed_contexts: list[str] = []
+
+        async def disconnect(self, *, close_http: bool = False, notify: bool = False) -> None:
+            del close_http, notify
+            self.disconnect_calls += 1
+
+        def restore_session(self, host: str) -> bool:
+            self.restore_session_calls.append(host)
+            return True
+
+        def clear_session(self) -> None:
+            return None
+
+        def clear_persisted_session(self, host: str) -> None:
+            del host
+
+        def persist_session(self, host: str) -> None:
+            self.persist_session_calls.append(host)
+
+        async def verify_session(self) -> bool:
+            self.verify_session_calls += 1
+            return True
+
+        async def connect_websocket(self) -> None:
+            return None
+
+        async def send_hello(self, **kwargs) -> dict[str, object]:
+            del kwargs
+            return {}
+
+        async def create_chat(self) -> str:
+            return "ctx-remembered"
+
+        async def subscribe_context(self, context_id: str) -> dict[str, object]:
+            self.subscribed_contexts.append(context_id)
+            return {}
+
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    capabilities = {
+        "protocol": "a0-connector.v1",
+        "websocket_namespace": "/ws",
+        "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+        "auth": ["session"],
+        "auth_required": True,
+        "features": [],
+    }
+    client = RememberedSessionClient()
+    dummy_app.client = client  # type: ignore[assignment]
+
+    async def fetch_capabilities() -> tuple[dict[str, object], bool, str]:
+        return capabilities, False, ""
+
+    monkeypatch.setattr(dummy_app, "_fetch_capabilities", fetch_capabilities)
+    monkeypatch.setattr(dummy_app, "_stop_remote_tree_publisher", lambda: None)
+    monkeypatch.setattr(dummy_app, "_stop_token_refresh", lambda: None)
+    monkeypatch.setattr(dummy_app, "_stop_state_sync", lambda: None)
+    monkeypatch.setattr(dummy_app, "_clear_token_usage", lambda: None)
+    monkeypatch.setattr(dummy_app, "_hide_project_menu", async_noop)
+    monkeypatch.setattr(dummy_app, "_hide_profile_menu", async_noop)
+    monkeypatch.setattr(dummy_app, "_clear_project_state", lambda: None)
+    monkeypatch.setattr(dummy_app, "_refresh_remote_tool_metadata", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_model_switcher", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_settings_snapshot", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_projects", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+    monkeypatch.setattr(dummy_app, "_start_state_sync", lambda: None)
+    monkeypatch.setattr(dummy_app, "_start_token_refresh", lambda: None)
+    monkeypatch.setattr(dummy_app, "_start_remote_tree_publisher", lambda: None)
+    monkeypatch.setattr(dummy_app, "_sync_body_mode", lambda: None)
+    monkeypatch.setattr(dummy_app, "_focus_message_input", lambda: None)
+    monkeypatch.setattr(dummy_app, "_welcome_actions", lambda: ())
+
+    await connection.begin_connection(
+        dummy_app,
+        "http://localhost:5080",
+        remember_host_flag=True,
+    )
+
+    splash = dummy_app._test_widgets["#splash-view"]  # type: ignore[index]
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert client.restore_session_calls == ["http://localhost:5080"]
+    assert client.verify_session_calls == 1
+    assert client.persist_session_calls == ["http://localhost:5080"]
+    assert client.subscribed_contexts == ["ctx-remembered"]
+    assert splash.state.stage == "ready"
+    assert status.status == "connected"
+    assert input_widget.disabled is False
 
 
 def test_context_event_status_updates_activity_lane_without_rendering_message(
