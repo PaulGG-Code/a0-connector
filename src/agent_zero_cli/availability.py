@@ -95,6 +95,10 @@ def attachments_availability(app: AgentZeroCLI) -> CommandAvailability:
     return CommandAvailability(True)
 
 
+def installed_plugins_availability(app: AgentZeroCLI) -> CommandAvailability:
+    return app._require_features("installed_plugins")
+
+
 def project_availability(app: AgentZeroCLI) -> CommandAvailability:
     base = app._require_features("projects")
     if not base.available:

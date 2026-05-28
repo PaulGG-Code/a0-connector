@@ -58,6 +58,7 @@ All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
 | `skills_list` | Session | Optional installed-skill list |
 | `skills_activate` | Session | Optional context-scoped skill activation |
 | `skills_delete` | Session | Optional installed-skill delete |
+| `installed_plugins` | Session | Optional installed-only plugin list and enable/disable toggle; no marketplace install/delete path |
 | `model_presets` | Session | Optional model preset surface |
 | `model_switcher` | Session | Optional per-chat model override surface |
 | `compact_chat` | Session | Optional chat compaction surface |

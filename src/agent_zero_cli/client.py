@@ -972,6 +972,38 @@ class A0Client:
         skills = data.get("data", data.get("skills", []))
         return skills if isinstance(skills, list) else []
 
+    async def list_installed_plugins(self) -> list[dict[str, Any]]:
+        response = await self._post("installed_plugins", {"action": "list"})
+        response.raise_for_status()
+        data = self._json(response)
+        plugins = data.get("plugins", data.get("data", []))
+        return plugins if isinstance(plugins, list) else []
+
+    async def set_installed_plugin_enabled(
+        self,
+        plugin_name: str,
+        enabled: bool,
+    ) -> dict[str, Any]:
+        response = await self._post(
+            "installed_plugins",
+            {
+                "action": "set_enabled",
+                "plugin_name": plugin_name,
+                "enabled": enabled,
+            },
+        )
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "message": self._response_message(response),
+                "status_code": response.status_code,
+            }
+
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
+
     async def activate_skill(
         self,
         context_id: str,

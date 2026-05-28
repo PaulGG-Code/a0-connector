@@ -596,6 +596,73 @@ async def test_activate_skill_posts_context_scoped_payload() -> None:
     }
 
 
+async def test_list_installed_plugins_posts_installed_only_endpoint() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(
+            json_data={
+                "ok": True,
+                "plugins": [
+                    {
+                        "name": "_browser",
+                        "display_name": "Browser",
+                        "enabled": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    result = await client.list_installed_plugins()
+
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_a0_connector/v1/installed_plugins",
+        json={"action": "list"},
+    )
+    assert result == [
+        {
+            "name": "_browser",
+            "display_name": "Browser",
+            "enabled": True,
+        }
+    ]
+
+
+async def test_set_installed_plugin_enabled_posts_connector_toggle_payload() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(return_value=FakeResponse(json_data={"ok": True}))
+
+    result = await client.set_installed_plugin_enabled("_browser", False)
+
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_a0_connector/v1/installed_plugins",
+        json={
+            "action": "set_enabled",
+            "plugin_name": "_browser",
+            "enabled": False,
+        },
+    )
+    assert result == {"ok": True}
+
+
+async def test_set_installed_plugin_enabled_returns_structured_error() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(status_code=400, text="Plugin cannot be toggled")
+    )
+
+    result = await client.set_installed_plugin_enabled("_a0_connector", False)
+
+    assert result == {
+        "ok": False,
+        "message": "Plugin cannot be toggled",
+        "status_code": 400,
+    }
+
+
 async def test_connect_websocket_resets_existing_socket_without_disconnect_callback() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.http = Mock()

@@ -18,6 +18,7 @@ from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
 from agent_zero_cli.rendering import extract_detail, render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
+from agent_zero_cli.screens.installed_plugins import InstalledPluginsScreen
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
 from agent_zero_cli.widgets.command_palette import is_raw_skill_command, is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
@@ -2984,6 +2985,68 @@ def test_system_commands_include_computer_use_without_experimental_menu(
     assert "Computer Use: Interactive" not in titles
     assert "Computer Use: Persistent" not in titles
     assert "Computer Use: Allow" not in titles
+
+
+def test_system_commands_include_plugins_when_feature_available(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.connector_features = {"installed_plugins"}
+
+    commands = list(dummy_app.get_system_commands(None))
+    titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
+
+    assert "/plugins" in titles
+
+
+async def test_plugins_command_opens_installed_plugins_screen(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PluginClient:
+        async def list_installed_plugins(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "name": "_browser",
+                    "display_name": "Browser",
+                    "enabled": True,
+                    "toggleable": True,
+                }
+            ]
+
+    captured: list[object] = []
+    dummy_app.connected = True
+    dummy_app.connector_features = {"installed_plugins"}
+    dummy_app.client = PluginClient()  # type: ignore[assignment]
+
+    async def fake_push_screen_wait(screen: object) -> None:
+        captured.append(screen)
+        return None
+
+    monkeypatch.setattr(dummy_app, "push_screen_wait", fake_push_screen_wait)
+
+    await dummy_app._dispatch_command("/plugins")
+
+    assert len(captured) == 1
+    assert isinstance(captured[0], InstalledPluginsScreen)
+
+
+async def test_plugins_command_requires_connector_feature(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    dummy_app.connected = True
+    dummy_app.connector_features = set()
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app._dispatch_command("/plugins")
+
+    assert notices == [("This connector build does not advertise: installed_plugins.", True)]
 
 
 def test_welcome_actions_keep_run_controls_out_of_splash(

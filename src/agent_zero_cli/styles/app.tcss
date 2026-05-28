@@ -573,6 +573,141 @@ ChatListScreen {
     color: #9ecfff;
 }
 
+InstalledPluginsScreen {
+    align: center middle;
+    background: transparent;
+}
+
+#installed-plugins-box {
+    width: 90%;
+    max-width: 116;
+    height: 22;
+    max-height: 34;
+    border: round #0f6db8;
+    background: #101820;
+    padding: 0 2;
+}
+
+#installed-plugins-title {
+    text-style: bold;
+}
+
+#installed-plugins-summary,
+#installed-plugins-tabs,
+#installed-plugins-status,
+#installed-plugins-help {
+    color: #9aa7b4;
+}
+
+#installed-plugins-tabs {
+    color: #38c5d8;
+    text-style: bold;
+}
+
+#installed-plugins-search {
+    margin-top: 1;
+    border: round #2a3a4a;
+    background: #17181a;
+    color: #d9e2ec;
+}
+
+#installed-plugins-search:focus {
+    border: round #00b4ff;
+}
+
+#installed-plugins-list {
+    height: 1fr;
+    margin-top: 1;
+    border: round #2a3a4a;
+    background: #111820;
+    padding: 0 1;
+}
+
+#installed-plugins-list > ListItem {
+    margin: 0;
+    padding: 0;
+    border-bottom: solid #1d2a36;
+}
+
+#installed-plugins-list > ListItem.-highlight,
+#installed-plugins-list > ListItem.-hovered {
+    background: #172533;
+}
+
+.installed-plugin-row-line {
+    width: 100%;
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+.installed-plugin-marker {
+    width: 4;
+    color: #38c5d8;
+    text-style: bold;
+}
+
+.installed-plugin-name {
+    width: 3fr;
+    min-width: 16;
+    color: #d9e2ec;
+    text-style: bold;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.installed-plugin-state {
+    width: 10;
+    color: #38c5d8;
+    text-style: bold;
+}
+
+.installed-plugin-meta {
+    width: 2fr;
+    min-width: 14;
+    color: #9aa7b4;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.installed-plugin-action {
+    width: 18;
+    color: #9ecfff;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.installed-plugin-description {
+    width: 100%;
+    padding: 0 1 1 5;
+    color: #7f8c98;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+#installed-plugins-list > ListItem.-highlight .installed-plugin-name {
+    color: #f5f7fa;
+}
+
+#installed-plugins-list > ListItem.-highlight .installed-plugin-description,
+#installed-plugins-list > ListItem.-highlight .installed-plugin-meta {
+    color: #9ecfff;
+}
+
+#installed-plugins-empty {
+    color: #7f8c98;
+    height: 3;
+    content-align: center middle;
+}
+
+#installed-plugins-status {
+    min-height: 1;
+}
+
+#installed-plugins-help {
+    color: #7f8c98;
+}
+
 #project-menu-popover {
     layer: status;
     overlay: screen;

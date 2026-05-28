@@ -89,6 +89,7 @@ def _install_fake_helpers(
     plugins_mod = types.ModuleType("helpers.plugins")
     print_style_mod = types.ModuleType("helpers.print_style")
     history_mod = types.ModuleType("helpers.history")
+    media_artifacts_mod = types.ModuleType("helpers.media_artifacts")
     message_queue_mod = types.ModuleType("helpers.message_queue")
     persist_chat_mod = types.ModuleType("helpers.persist_chat")
     state_monitor_mod = types.ModuleType("helpers.state_monitor_integration")
@@ -187,6 +188,24 @@ def _install_fake_helpers(
 
     def raw_message(*, raw_content, preview=None):
         return {"raw_content": raw_content, "preview": preview}
+
+    def _safe_filename(
+        value: str,
+        *,
+        default: str = "artifact.bin",
+        default_extension: str = ".bin",
+    ) -> str:
+        source = str(value or "").strip() or default
+        cleaned = "".join(
+            char if char.isalnum() or char in {"-", "_", "."} else "_"
+            for char in source
+        ).strip("._")
+        if not cleaned:
+            cleaned = default
+        if "." not in cleaned:
+            extension = default_extension if default_extension.startswith(".") else f".{default_extension}"
+            cleaned = f"{cleaned}{extension}"
+        return cleaned
 
     def _ctx_get_data(context: object, key: str, default: object = None) -> object:
         getter = getattr(context, "get_data", None)
@@ -296,6 +315,8 @@ def _install_fake_helpers(
     api_mod.Request = Request
     api_mod.Response = Response
     history_mod.RawMessage = raw_message
+    media_artifacts_mod.estimated_base64_decoded_size = lambda data: (len(str(data or "")) * 3) // 4
+    media_artifacts_mod.safe_filename = _safe_filename
     message_queue_mod.get_queue = _queue_get
     message_queue_mod.add = _queue_add
     message_queue_mod.remove = _queue_remove
@@ -323,6 +344,7 @@ def _install_fake_helpers(
 
     sys.modules["helpers.api"] = api_mod
     sys.modules["helpers.history"] = history_mod
+    sys.modules["helpers.media_artifacts"] = media_artifacts_mod
     sys.modules["helpers.message_queue"] = message_queue_mod
     sys.modules["helpers.persist_chat"] = persist_chat_mod
     sys.modules["helpers.state_monitor_integration"] = state_monitor_mod
@@ -367,6 +389,7 @@ def _install_fake_helpers(
     helpers_pkg.api = api_mod
     helpers_pkg.files = files_mod
     helpers_pkg.history = history_mod
+    helpers_pkg.media_artifacts = media_artifacts_mod
     helpers_pkg.message_queue = message_queue_mod
     helpers_pkg.persist_chat = persist_chat_mod
     helpers_pkg.state_monitor_integration = state_monitor_mod
@@ -695,10 +718,161 @@ def test_capabilities_advertise_current_ws_contract() -> None:
         "skills_list",
         "skills_activate",
         "skills_delete",
+        "installed_plugins",
         "model_switcher",
         "browser_runtime_config",
         "compact_chat",
     } <= set(payload["features"])
+
+
+class _FakePluginItem:
+    def __init__(self, **data: object) -> None:
+        self._data = data
+
+    def model_dump(self, mode: str = "json") -> dict[str, object]:
+        del mode
+        return dict(self._data)
+
+
+def test_installed_plugins_endpoint_lists_installed_only_metadata() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+    plugins_mod.get_enhanced_plugins_list = lambda custom=True, builtin=True: [
+        _FakePluginItem(
+            name="_documents",
+            display_name="Documents",
+            description="Create documents",
+            version="1.0",
+            is_custom=False,
+            toggle_state="enabled",
+        ),
+        _FakePluginItem(
+            name="todo_list",
+            display_name="Todo List",
+            description="Manage todos",
+            version="0.2",
+            is_custom=True,
+            toggle_state="disabled",
+        ),
+    ]
+
+    _reload("plugins._a0_connector.api.v1.base")
+    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+
+    payload = asyncio.run(installed_mod.InstalledPlugins(None, None).process({"action": "list"}, object()))
+
+    assert payload["ok"] is True
+    assert payload["installed_count"] == 2
+    assert payload["enabled_count"] == 1
+    assert payload["plugins"][0]["name"] == "_documents"
+    assert payload["plugins"][0]["source"] == "builtin"
+    assert payload["plugins"][0]["toggleable"] is True
+    assert payload["plugins"][1]["source"] == "custom"
+
+
+def test_installed_plugins_endpoint_toggles_installed_plugin() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+    enabled_state = {"_browser": False}
+    calls: list[tuple[str, bool, str, str, bool]] = []
+
+    def fake_plugins_list(custom=True, builtin=True):
+        del custom, builtin
+        return [
+            _FakePluginItem(
+                name="_browser",
+                display_name="Browser",
+                toggle_state="enabled" if enabled_state["_browser"] else "disabled",
+            )
+        ]
+
+    def fake_toggle_plugin(
+        plugin_name: str,
+        enabled: bool,
+        project_name: str = "",
+        agent_profile: str = "",
+        clear_overrides: bool = False,
+    ) -> None:
+        calls.append((plugin_name, enabled, project_name, agent_profile, clear_overrides))
+        enabled_state[plugin_name] = enabled
+
+    plugins_mod.get_enhanced_plugins_list = fake_plugins_list
+    plugins_mod.toggle_plugin = fake_toggle_plugin
+
+    _reload("plugins._a0_connector.api.v1.base")
+    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+
+    payload = asyncio.run(
+        installed_mod.InstalledPlugins(None, None).process(
+            {"action": "set_enabled", "plugin_name": "_browser", "enabled": True},
+            object(),
+        )
+    )
+
+    assert payload["ok"] is True
+    assert payload["plugin"]["enabled"] is True
+    assert calls == [("_browser", True, "", "", False)]
+
+
+def test_installed_plugins_endpoint_rejects_unknown_plugin() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+    plugins_mod.get_enhanced_plugins_list = lambda custom=True, builtin=True: []
+
+    _reload("plugins._a0_connector.api.v1.base")
+    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+
+    response = asyncio.run(
+        installed_mod.InstalledPlugins(None, None).process(
+            {"action": "set_enabled", "plugin_name": "missing", "enabled": True},
+            object(),
+        )
+    )
+
+    assert response.status == 404
+    assert response.response == "Plugin not found"
+
+
+def test_installed_plugins_endpoint_rejects_protected_plugins() -> None:
+    _install_fake_helpers()
+    plugins_mod = sys.modules["helpers.plugins"]
+    calls: list[tuple[str, bool]] = []
+    plugins_mod.get_enhanced_plugins_list = lambda custom=True, builtin=True: [
+        _FakePluginItem(
+            name="_a0_connector",
+            display_name="A0 Connector",
+            toggle_state="enabled",
+        ),
+        _FakePluginItem(
+            name="_plugin_installer",
+            display_name="Plugin Installer",
+            always_enabled=True,
+            toggle_state="enabled",
+        ),
+    ]
+    plugins_mod.toggle_plugin = lambda plugin_name, enabled, **kwargs: calls.append((plugin_name, enabled))
+
+    _reload("plugins._a0_connector.api.v1.base")
+    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+
+    connector_response = asyncio.run(
+        installed_mod.InstalledPlugins(None, None).process(
+            {"action": "set_enabled", "plugin_name": "_a0_connector", "enabled": False},
+            object(),
+        )
+    )
+    installer_response = asyncio.run(
+        installed_mod.InstalledPlugins(None, None).process(
+            {"action": "set_enabled", "plugin_name": "_plugin_installer", "enabled": False},
+            object(),
+        )
+    )
+
+    assert connector_response.status == 400
+    assert "keeps this CLI session connected" in connector_response.response
+    assert installer_response.status == 400
+    assert "always enabled" in installer_response.response
+    assert calls == []
 
 
 def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:

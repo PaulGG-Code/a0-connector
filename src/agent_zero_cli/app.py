@@ -22,6 +22,7 @@ from agent_zero_cli import (
     compaction,
     connection,
     event_handlers,
+    plugin_commands,
     profile_commands,
     project_commands,
     self_update,
@@ -385,6 +386,13 @@ class AgentZeroCLI(App):
                 lambda app: profile_commands.cmd_profile(app),
             ),
             CommandSpec(
+                "/plugins",
+                (),
+                "Open the installed-only Agent Zero plugin toggle view.",
+                lambda app: availability.installed_plugins_availability(app),
+                lambda app: plugin_commands.cmd_plugins(app),
+            ),
+            CommandSpec(
                 "/compact",
                 (),
                 "Open the connector-backed compaction confirmation flow.",
@@ -534,7 +542,11 @@ class AgentZeroCLI(App):
             availability = spec.availability(self)
             if spec.canonical_name in _HIDDEN_SLASH_COMMANDS:
                 continue
-            if spec.canonical_name in {"/presets", "/models", "/profile", "/project", "/disconnect"} and not availability.available:
+            if (
+                spec.canonical_name
+                in {"/presets", "/models", "/profile", "/project", "/plugins", "/disconnect"}
+                and not availability.available
+            ):
                 continue
             rows.append((spec, availability))
         return tuple(rows)
