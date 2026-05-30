@@ -50,6 +50,8 @@ class MacOSComputerUseBackend:
             "backend_id": self.spec.backend_id,
             "backend_family": self.spec.backend_family,
             "features": list(self.spec.features),
+            "contract_version": self.spec.capabilities()["contract_version"],
+            "capabilities": self.spec.capabilities(),
             "support_reason": macos_backend_support_reason(),
         }
 

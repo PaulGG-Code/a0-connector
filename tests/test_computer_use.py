@@ -17,6 +17,7 @@ from agent_zero_cli.computer_use import (
     _HelperSession,
 )
 from agent_zero_cli.computer_use_backend import (
+    COMPUTER_USE_CONTRACT_VERSION,
     ComputerUseBackendSelection,
     ComputerUseBackendSpec,
 )
@@ -230,6 +231,40 @@ def test_allow_with_restore_token_starts_in_allow_status(
     assert manager.status_label == "allow"
     assert manager.hello_metadata()["status"] == "allow"
     assert manager.hello_metadata()["restore_token_present"] is True
+
+
+def test_manager_hello_metadata_includes_portable_contract(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        backend_selection=_selection(
+            features=(
+                "inline-png-capture",
+                "native-window-list",
+                "window-state",
+                "element-index-targeting",
+                "background-dispatch",
+                "foreground-dispatch-fallback",
+                "atspi-tree-snapshot",
+                "atspi-structural-targeting",
+                "atspi-element-action",
+            ),
+        ),
+    )
+
+    metadata = manager.hello_metadata()
+
+    assert metadata["contract_version"] == COMPUTER_USE_CONTRACT_VERSION
+    assert metadata["capabilities"]["identity"] == {
+        "pid": True,
+        "window_id": True,
+        "element_index": True,
+    }
+    assert metadata["capabilities"]["dispatch"]["default"] == "background"
+    assert metadata["capabilities"]["dispatch"]["background"] is True
+    assert metadata["capabilities"]["dispatch"]["foreground_fallback"] is True
+    assert metadata["capabilities"]["elements"]["tree_backends"] == ["at-spi"]
 
 
 def test_reset_enabled_for_shutdown_disables_next_run_without_erasing_restore_token(

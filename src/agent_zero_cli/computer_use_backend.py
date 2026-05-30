@@ -8,6 +8,56 @@ from typing import Any, Callable, Protocol
 
 _ENTRY_POINT_GROUP = "a0.computer_use_backends"
 _DISABLED_REMOTE_BACKEND_IDS = {"x11"}
+COMPUTER_USE_CONTRACT_VERSION = 1
+COMPUTER_USE_CONTRACT_ACTIONS = (
+    "start_session",
+    "status",
+    "capture",
+    "list_windows",
+    "get_window_state",
+    "element_action",
+    "move",
+    "click",
+    "scroll",
+    "key",
+    "type",
+    "stop_session",
+)
+_TREE_FEATURES = {
+    "accessibility-tree-snapshot",
+    "atspi-tree-snapshot",
+    "uia-tree-snapshot",
+}
+_STRUCTURAL_TARGETING_FEATURES = {
+    "accessibility-structural-targeting",
+    "atspi-structural-targeting",
+    "uia-structural-targeting",
+}
+_ELEMENT_ACTION_FEATURES = {
+    "accessibility-element-click",
+    "atspi-element-action",
+    "uia-element-action",
+}
+_SET_VALUE_FEATURES = {
+    "atspi-set-value",
+    "uia-element-action",
+}
+_POINTER_INPUT_FEATURES = {
+    "global-pixel-actions",
+    "mouse-injection",
+    "pointer-injection",
+}
+_KEYBOARD_INPUT_FEATURES = {
+    "keyboard-injection",
+    "quartz-input-events",
+}
+_SCREENSHOT_FEATURES = {
+    "inline-png-capture",
+    "dxcam-screen-capture",
+    "coregraphics-screen-capture",
+    "portal-screencast",
+    "screencapture-screen-capture",
+}
 
 
 @dataclass(frozen=True)
@@ -24,6 +74,13 @@ class ComputerUseBackendSpec:
 
     def supports_trust_mode(self, mode: str) -> bool:
         return str(mode or "").strip().lower() in self.trust_mode_support
+
+    def capabilities(self) -> dict[str, Any]:
+        return computer_use_capabilities_from_features(
+            backend_id=self.backend_id,
+            backend_family=self.backend_family,
+            features=self.features,
+        )
 
 
 @dataclass(frozen=True)
@@ -45,6 +102,94 @@ class ComputerUseBackend(Protocol):
 
 _BUILTIN_SPECS: dict[str, ComputerUseBackendSpec] = {}
 _EXTRA_SPECS: dict[str, ComputerUseBackendSpec] = {}
+
+
+def _feature_set(features: tuple[str, ...] | list[str] | set[str]) -> set[str]:
+    return {str(feature or "").strip().lower() for feature in features if str(feature or "").strip()}
+
+
+def computer_use_capabilities_from_features(
+    *,
+    backend_id: str,
+    backend_family: str,
+    features: tuple[str, ...] | list[str] | set[str],
+) -> dict[str, Any]:
+    feature_names = _feature_set(features)
+    tree_backends: list[str] = []
+    if "uia-tree-snapshot" in feature_names:
+        tree_backends.append("uia")
+    if "accessibility-tree-snapshot" in feature_names:
+        tree_backends.append("ax")
+    if "atspi-tree-snapshot" in feature_names:
+        tree_backends.append("at-spi")
+
+    has_background_dispatch = "background-dispatch" in feature_names
+    has_element_index = "element-index-targeting" in feature_names
+    has_window_state = "window-state" in feature_names
+    has_native_windows = "native-window-list" in feature_names
+    has_tree = bool(feature_names & _TREE_FEATURES)
+    has_structural_targeting = bool(feature_names & _STRUCTURAL_TARGETING_FEATURES)
+    has_element_action = bool(feature_names & _ELEMENT_ACTION_FEATURES)
+
+    dispatch_modes = ["foreground"]
+    if has_background_dispatch:
+        dispatch_modes.insert(0, "background")
+        dispatch_modes.insert(1, "auto")
+
+    return {
+        "contract_version": COMPUTER_USE_CONTRACT_VERSION,
+        "backend": {
+            "id": str(backend_id or "").strip(),
+            "family": str(backend_family or "").strip(),
+        },
+        "actions": list(COMPUTER_USE_CONTRACT_ACTIONS),
+        "identity": {
+            "pid": has_native_windows or has_window_state,
+            "window_id": has_native_windows or has_window_state,
+            "element_index": has_element_index,
+        },
+        "capture": {
+            "screenshot": bool(feature_names & _SCREENSHOT_FEATURES),
+            "inline_png": "inline-png-capture" in feature_names,
+            "fresh_frame": "fresh-frame-capture" in feature_names,
+            "background": bool(
+                feature_names
+                & {
+                    "background-screen-capture",
+                    "no-cursor-steal-capture",
+                    "portal-screencast",
+                    "dxcam-screen-capture",
+                }
+            ),
+            "coordinate_space": "normalized_global_screen",
+        },
+        "windows": {
+            "list": has_native_windows,
+            "state": has_window_state,
+        },
+        "elements": {
+            "tree": has_tree,
+            "tree_backends": tree_backends,
+            "structural_targeting": has_structural_targeting,
+            "element_index": has_element_index,
+            "action": has_element_action,
+            "set_value": bool(feature_names & _SET_VALUE_FEATURES),
+        },
+        "dispatch": {
+            "default": "background" if has_background_dispatch else "foreground",
+            "background": has_background_dispatch,
+            "foreground": True,
+            "foreground_fallback": "foreground-dispatch-fallback" in feature_names,
+            "modes": dispatch_modes,
+        },
+        "input": {
+            "global_coordinates": "global-pixel-actions" in feature_names,
+            "normalized_coordinates": "normalized-screen-coordinates" in feature_names,
+            "pointer": bool(feature_names & _POINTER_INPUT_FEATURES),
+            "keyboard": bool(feature_names & _KEYBOARD_INPUT_FEATURES),
+            "real_cursor_may_move": "real-cursor-may-move" in feature_names,
+        },
+    }
 
 
 def _remote_backend_enabled(spec: ComputerUseBackendSpec) -> bool:

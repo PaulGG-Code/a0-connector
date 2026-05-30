@@ -13,6 +13,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+if __package__ in {None, ""}:
+    package_dir = Path(__file__).resolve().parent
+    parent_dir = package_dir.parent
+    if str(parent_dir) not in sys.path:
+        sys.path.insert(0, str(parent_dir))
+
 import dbus
 from dbus.mainloop.glib import DBusGMainLoop
 import gi
@@ -21,6 +27,8 @@ from PIL import Image
 gi.require_version("Gst", "1.0")
 gi.require_version("Gdk", "3.0")
 from gi.repository import Gdk, GLib, Gst  # noqa: E402
+
+from a0_computer_use_wayland.backend import WAYLAND_BACKEND_SPEC
 
 PORTAL_SERVICE = "org.freedesktop.portal.Desktop"
 PORTAL_PATH = "/org/freedesktop/portal/desktop"
@@ -109,6 +117,18 @@ _EVDEV_KEY_ALIASES = {
     "win": 125,
     "windows": 125,
 }
+
+
+def _backend_contract_metadata() -> dict[str, Any]:
+    return {
+        "backend_id": WAYLAND_BACKEND_SPEC.backend_id,
+        "backend_family": WAYLAND_BACKEND_SPEC.backend_family,
+        "features": list(WAYLAND_BACKEND_SPEC.features),
+        "contract_version": WAYLAND_BACKEND_SPEC.capabilities()["contract_version"],
+        "capabilities": WAYLAND_BACKEND_SPEC.capabilities(),
+    }
+
+
 _EVDEV_CHAR_KEYCODES = {
     "1": 2,
     "2": 3,
@@ -1027,7 +1047,7 @@ class PortalComputerUseHelper:
     def status(self, params: dict[str, Any]) -> dict[str, Any]:
         del params
         if self._session is None:
-            return {"active": False}
+            return {"active": False, **_backend_contract_metadata()}
         payload = self._session_payload(self._session)
         payload["active"] = True
         return payload
@@ -2027,6 +2047,7 @@ class PortalComputerUseHelper:
             "height": session.height,
             "devices": session.devices,
             "restore_token": session.restore_token,
+            **_backend_contract_metadata(),
         }
 
 

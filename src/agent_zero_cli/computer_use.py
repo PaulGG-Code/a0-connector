@@ -15,7 +15,9 @@ from typing import Any, Callable
 
 from agent_zero_cli import computer_use_wayland as _builtin_computer_use_wayland  # noqa: F401
 from agent_zero_cli.computer_use_backend import (
+    COMPUTER_USE_CONTRACT_VERSION,
     ComputerUseBackendSelection,
+    computer_use_capabilities_from_features,
     resolve_backend_selection,
 )
 from agent_zero_cli.config import (
@@ -391,12 +393,20 @@ def _backend_metadata_from_selection(selection: ComputerUseBackendSelection) -> 
             "backend_id": "unsupported",
             "backend_family": "unknown",
             "features": [],
+            "contract_version": COMPUTER_USE_CONTRACT_VERSION,
+            "capabilities": computer_use_capabilities_from_features(
+                backend_id="unsupported",
+                backend_family="unknown",
+                features=(),
+            ),
             "support_reason": selection.support_reason,
         }
     return {
         "backend_id": spec.backend_id,
         "backend_family": spec.backend_family,
         "features": list(spec.features),
+        "contract_version": COMPUTER_USE_CONTRACT_VERSION,
+        "capabilities": spec.capabilities(),
         "support_reason": selection.support_reason,
     }
 

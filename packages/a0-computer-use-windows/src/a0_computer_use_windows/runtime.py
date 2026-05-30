@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from agent_zero_cli.computer_use_backend import (
+    COMPUTER_USE_CONTRACT_VERSION,
+    computer_use_capabilities_from_features,
+)
+
 if __package__ in {None, ""}:
     package_dir = Path(__file__).resolve().parent
     parent_dir = package_dir.parent
@@ -75,6 +80,17 @@ _SW_SHOW = 5
 _SW_MINIMIZE = 6
 _SW_RESTORE = 9
 _SW_MAXIMIZE = 3
+
+
+def _backend_contract_metadata() -> dict[str, Any]:
+    return {
+        "contract_version": COMPUTER_USE_CONTRACT_VERSION,
+        "capabilities": computer_use_capabilities_from_features(
+            backend_id=WINDOWS_BACKEND_ID,
+            backend_family=WINDOWS_BACKEND_FAMILY,
+            features=WINDOWS_BACKEND_FEATURES,
+        ),
+    }
 
 
 class WindowsComputerUseError(RuntimeError):
@@ -154,6 +170,7 @@ class WindowsSession:
             "supported": windows_backend_supported(),
             "support_reason": windows_backend_support_reason(),
         }
+        payload.update(_backend_contract_metadata())
         if self.restore_token:
             payload["restore_token"] = self.restore_token
         if reused:
@@ -882,6 +899,7 @@ class WindowsComputerUseRuntime:
             "backend_id": WINDOWS_BACKEND_ID,
             "backend_family": WINDOWS_BACKEND_FAMILY,
             "features": list(WINDOWS_BACKEND_FEATURES),
+            **_backend_contract_metadata(),
             "support_reason": windows_backend_support_reason(),
         }
 
@@ -962,6 +980,7 @@ class WindowsComputerUseRuntime:
             "backend_id": WINDOWS_BACKEND_ID,
             "backend_family": WINDOWS_BACKEND_FAMILY,
             "features": list(WINDOWS_BACKEND_FEATURES),
+            **_backend_contract_metadata(),
             "support_reason": windows_backend_support_reason(),
         }
 
