@@ -19,6 +19,11 @@ WINDOWS_BACKEND_FEATURES = (
     "uia-structural-targeting",
     "uia-element-action",
     "uia-window-management",
+    "native-window-list",
+    "window-state",
+    "element-index-targeting",
+    "background-dispatch",
+    "foreground-dispatch-fallback",
     "mouse-injection",
     "keyboard-injection",
     "real-cursor-may-move",
@@ -137,6 +142,56 @@ def normalize_action_payload(
         request["session_id"] = session_id
 
     if normalized_action == "capture":
+        return request
+
+    if normalized_action == "list_windows":
+        if payload.get("include_hidden") is not None:
+            request["include_hidden"] = coerce_bool(payload.get("include_hidden"))
+        if payload.get("include_offscreen") is not None:
+            request["include_offscreen"] = coerce_bool(payload.get("include_offscreen"))
+        if payload.get("max_windows") is not None:
+            request["max_windows"] = coerce_int(payload.get("max_windows"), name="max_windows")
+        return request
+
+    if normalized_action == "get_window_state":
+        if payload.get("pid") is not None:
+            request["pid"] = coerce_int(payload.get("pid"), name="pid")
+        for key in ("window_id", "mode"):
+            if payload.get(key) is not None:
+                request[key] = str(payload.get(key) or "").strip()
+        if payload.get("max_depth") is not None:
+            request["max_depth"] = coerce_int(payload.get("max_depth"), name="max_depth")
+        if payload.get("max_nodes") is not None:
+            request["max_nodes"] = coerce_int(payload.get("max_nodes"), name="max_nodes")
+        return request
+
+    if normalized_action == "element_action":
+        if payload.get("pid") is not None:
+            request["pid"] = coerce_int(payload.get("pid"), name="pid")
+        if payload.get("window_id") is not None:
+            request["window_id"] = str(payload.get("window_id") or "").strip()
+        if payload.get("element_index") is not None:
+            request["element_index"] = coerce_int(payload.get("element_index"), name="element_index")
+        target = payload.get("target")
+        normalized_target: dict[str, Any] = {}
+        if isinstance(target, dict):
+            normalized_target.update(target)
+        if payload.get("selector") is not None:
+            normalized_target["selector"] = str(payload.get("selector") or "").strip()
+        if normalized_target:
+            request["target"] = normalized_target
+        if payload.get("path") is not None:
+            request["path"] = payload.get("path")
+        operation = payload.get("operation", payload.get("name"))
+        if operation is not None:
+            request["operation"] = str(operation or "").strip()
+        request["dispatch"] = str(payload.get("dispatch") or "background").strip().lower()
+        if payload.get("value") is not None:
+            request["value"] = payload.get("value")
+        if payload.get("text") is not None:
+            request["text"] = str(payload.get("text") or "")
+        if coerce_bool(payload.get("submit")):
+            request["submit"] = True
         return request
 
     if normalized_action == "uia_snapshot":

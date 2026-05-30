@@ -189,6 +189,11 @@ def test_windows_backend_spec_exports_expected_metadata() -> None:
     assert "uia-structural-targeting" in spec.features
     assert "uia-element-action" in spec.features
     assert "uia-window-management" in spec.features
+    assert "native-window-list" in spec.features
+    assert "window-state" in spec.features
+    assert "element-index-targeting" in spec.features
+    assert "background-dispatch" in spec.features
+    assert "foreground-dispatch-fallback" in spec.features
     assert "global-pixel-actions" in spec.features
     assert "virtual-screen-coordinates" in spec.features
     assert "multi-monitor-virtual-screen" in spec.features
@@ -227,6 +232,21 @@ def test_windows_action_normalization_matches_shared_surface() -> None:
         },
         context_id="ctx-1",
     )
+    window_state = normalize_action_payload(
+        "get_window_state",
+        {"pid": "1234", "window_id": "uia-hwnd:5678", "max_depth": 2, "max_nodes": 25},
+        context_id="ctx-1",
+    )
+    element_action = normalize_action_payload(
+        "element_action",
+        {
+            "window_id": "uia-hwnd:5678",
+            "element_index": "3",
+            "operation": "invoke",
+            "dispatch": "background",
+        },
+        context_id="ctx-1",
+    )
 
     assert move["x"] == 0.25 and move["y"] == 0.75
     assert click["button"] == "right" and click["count"] == 2
@@ -237,6 +257,13 @@ def test_windows_action_normalization_matches_shared_surface() -> None:
     assert uia_action["target"]["title"] == "Save"
     assert uia_action["target"]["selector"] == "role:Button && name:Save"
     assert uia_action["operation"] == "invoke"
+    assert window_state["pid"] == 1234
+    assert window_state["window_id"] == "uia-hwnd:5678"
+    assert window_state["max_depth"] == 2
+    assert window_state["max_nodes"] == 25
+    assert element_action["window_id"] == "uia-hwnd:5678"
+    assert element_action["element_index"] == 3
+    assert element_action["dispatch"] == "background"
 
 
 def test_windows_runtime_rejects_allow_without_restore_token(tmp_path: Path) -> None:
@@ -436,6 +463,140 @@ def test_windows_runtime_uia_action_invokes_semantic_target(tmp_path: Path) -> N
     assert result["target"]["automation_id"] == "save-button"
     assert button.invoked is True
     assert button.clicked is False
+    assert window.window_actions == ["restore"]
+
+
+def test_windows_runtime_window_state_indexes_elements_for_background_actions(tmp_path: Path) -> None:
+    driver = _FakeDriver()
+    button = _FakeUIAElement(role="Button", title="Save", automation_id="save-button")
+    window = _FakeUIAElement(
+        role="Window",
+        title="Document",
+        class_name="FakeWindow",
+        handle=123456,
+        children=[button],
+    )
+    driver.uia_root_elements = [window]
+    runtime = WindowsComputerUseRuntime(driver=driver, state_dir=tmp_path / "state")
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    windows = runtime.list_windows({"context_id": "ctx-1"})
+    state = runtime.get_window_state(
+        {
+            "context_id": "ctx-1",
+            "window_id": windows["windows"][0]["window_id"],
+            "max_depth": 2,
+        }
+    )
+    button_index = state["tree"]["children"][0]["element_index"]
+    result = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "window_id": state["window_id"],
+            "element_index": button_index,
+            "operation": "invoke",
+            "dispatch": "background",
+        }
+    )
+
+    assert windows["windows"][0]["window_id"] == "uia-hwnd:123456"
+    assert state["tree"]["element_index"] == 0
+    assert button_index == 1
+    assert result["actual_dispatch"] == "background"
+    assert result["background_unavailable"] is False
+    assert button.invoked is True
+    assert window.window_actions == []
+
+
+def test_windows_runtime_list_windows_honors_visibility_filters(tmp_path: Path) -> None:
+    driver = _FakeDriver()
+    visible = _FakeUIAElement(role="Window", title="Visible", rect=_FakeRect(10, 10, 100, 100))
+    hidden = _FakeUIAElement(
+        role="Window",
+        title="Hidden",
+        rect=_FakeRect(20, 20, 100, 100),
+        visible=False,
+    )
+    offscreen = _FakeUIAElement(role="Window", title="Offscreen", rect=_FakeRect(2000, 20, 100, 100))
+    driver.uia_root_elements = [visible, hidden, offscreen]
+    runtime = WindowsComputerUseRuntime(driver=driver, state_dir=tmp_path / "state")
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    default_titles = [item["title"] for item in runtime.list_windows({"context_id": "ctx-1"})["windows"]]
+    hidden_titles = [
+        item["title"]
+        for item in runtime.list_windows({"context_id": "ctx-1", "include_hidden": True})["windows"]
+    ]
+    offscreen_titles = [
+        item["title"]
+        for item in runtime.list_windows({"context_id": "ctx-1", "include_offscreen": True})["windows"]
+    ]
+    all_titles = [
+        item["title"]
+        for item in runtime.list_windows(
+            {"context_id": "ctx-1", "include_hidden": True, "include_offscreen": True}
+        )["windows"]
+    ]
+
+    assert default_titles == ["Visible"]
+    assert hidden_titles == ["Visible", "Hidden"]
+    assert offscreen_titles == ["Visible", "Offscreen"]
+    assert all_titles == ["Visible", "Hidden", "Offscreen"]
+
+
+def test_windows_runtime_background_click_reports_unavailable_and_auto_falls_back(
+    tmp_path: Path,
+) -> None:
+    driver = _FakeDriver()
+    button = _FakeUIAElement(role="Button", title="Save", automation_id="save-button")
+    window = _FakeUIAElement(role="Window", title="Document", children=[button])
+    driver.uia_root_elements = [window]
+    runtime = WindowsComputerUseRuntime(driver=driver, state_dir=tmp_path / "state")
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+    state = runtime.get_window_state({"context_id": "ctx-1", "max_depth": 2})
+    button_index = state["tree"]["children"][0]["element_index"]
+
+    background_only = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "element_index": button_index,
+            "operation": "click",
+            "dispatch": "background",
+        }
+    )
+    assert background_only["background_unavailable"] is True
+    assert button.clicked is False
+
+    auto = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "element_index": button_index,
+            "operation": "click",
+            "dispatch": "auto",
+        }
+    )
+
+    assert button.clicked is True
+    assert auto["actual_dispatch"] == "foreground"
+    assert auto["foreground_fallback_used"] is True
     assert window.window_actions == ["restore"]
 
 

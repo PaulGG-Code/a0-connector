@@ -41,6 +41,9 @@ _SUPPORTED_ACTIONS = {
     "start_session",
     "status",
     "capture",
+    "list_windows",
+    "get_window_state",
+    "element_action",
     "ax_snapshot",
     "ax_action",
     "uia_snapshot",
@@ -53,7 +56,17 @@ _SUPPORTED_ACTIONS = {
     "stop_session",
 }
 _SUPPORTED_TRUST_MODES = {"interactive", "persistent", "allow"}
-_MUTATING_ACTIONS = {"move", "click", "scroll", "key", "type", "ax_action", "uia_action"}
+_MUTATING_ACTIONS = {
+    "move",
+    "click",
+    "scroll",
+    "key",
+    "type",
+    "element_action",
+    "ax_action",
+    "uia_action",
+}
+_SUPPORTED_DISPATCH_MODES = {"background", "foreground", "auto"}
 _DEFAULT_FRESH_CAPTURE_TIMEOUT_SECONDS = 0.45
 _CAPTURE_COORDINATE_SPACE = "normalized_global_screen"
 _DISABLED_ERROR = "COMPUTER_USE_DISABLED"
@@ -346,6 +359,15 @@ def _coerce_bool(value: object, *, default: bool = False) -> bool:
     if normalized in {"0", "false", "no", "off", ""}:
         return False
     return default
+
+
+def _normalize_dispatch(value: object, *, default: str = "background") -> str:
+    dispatch = str(value or default).strip().lower()
+    if not dispatch:
+        return default
+    if dispatch not in _SUPPORTED_DISPATCH_MODES:
+        raise ValueError("dispatch must be one of: background, foreground, auto")
+    return dispatch
 
 
 def _normalize_restore_token(value: object) -> str:
@@ -685,6 +707,65 @@ class ComputerUseManager:
                     0.0,
                     _coerce_float(payload.get("fresh_timeout_seconds"), name="fresh_timeout_seconds"),
                 )
+            return request
+
+        if action == "list_windows":
+            if payload.get("include_hidden") is not None:
+                request["include_hidden"] = _coerce_bool(payload.get("include_hidden"))
+            if payload.get("include_offscreen") is not None:
+                request["include_offscreen"] = _coerce_bool(payload.get("include_offscreen"))
+            if payload.get("max_windows") is not None:
+                max_windows = _coerce_int(payload.get("max_windows"), name="max_windows")
+                if max_windows < 1:
+                    raise ValueError("max_windows must be >= 1")
+                request["max_windows"] = max_windows
+            return request
+
+        if action == "get_window_state":
+            if payload.get("pid") is not None:
+                request["pid"] = _coerce_int(payload.get("pid"), name="pid")
+            for key in ("window_id", "mode"):
+                if payload.get(key) is not None:
+                    request[key] = str(payload.get(key) or "").strip()
+            if payload.get("max_depth") is not None:
+                request["max_depth"] = _coerce_int(payload.get("max_depth"), name="max_depth")
+            if payload.get("max_nodes") is not None:
+                request["max_nodes"] = _coerce_int(payload.get("max_nodes"), name="max_nodes")
+            return request
+
+        if action == "element_action":
+            if payload.get("pid") is not None:
+                request["pid"] = _coerce_int(payload.get("pid"), name="pid")
+            if payload.get("window_id") is not None:
+                request["window_id"] = str(payload.get("window_id") or "").strip()
+            if payload.get("element_index") is not None:
+                element_index = _coerce_int(payload.get("element_index"), name="element_index")
+                if element_index < 0:
+                    raise ValueError("element_index must be >= 0")
+                request["element_index"] = element_index
+            target = payload.get("target")
+            if isinstance(target, dict):
+                request["target"] = dict(target)
+            if payload.get("selector") is not None:
+                request.setdefault("target", {})["selector"] = str(payload.get("selector") or "").strip()
+            if payload.get("path") is not None:
+                request["path"] = payload.get("path")
+            operation = payload.get("operation", payload.get("name"))
+            if operation is not None:
+                request["operation"] = str(operation or "").strip()
+            request["dispatch"] = _normalize_dispatch(payload.get("dispatch"), default="background")
+            if payload.get("value") is not None:
+                request["value"] = payload.get("value")
+            if payload.get("text") is not None:
+                request["text"] = str(payload.get("text") or "")
+            if _coerce_bool(payload.get("submit")):
+                request["submit"] = True
+            if (
+                "element_index" not in request
+                and "path" not in request
+                and not isinstance(request.get("target"), dict)
+            ):
+                raise ValueError("element_action requires element_index, path, or target")
             return request
 
         if action == "ax_snapshot":
@@ -1228,7 +1309,16 @@ class ComputerUseManager:
         previous_status = session.status
 
         if ok:
-            if action_name in {"start_session", "ax_snapshot", "ax_action", "uia_snapshot", "uia_action"}:
+            if action_name in {
+                "start_session",
+                "list_windows",
+                "get_window_state",
+                "element_action",
+                "ax_snapshot",
+                "ax_action",
+                "uia_snapshot",
+                "uia_action",
+            }:
                 for key, value in self._backend_metadata.items():
                     result_dict.setdefault(key, value)
             session.session_id = str(result_dict.get("session_id", session.session_id or "")).strip()

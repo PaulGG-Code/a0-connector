@@ -992,6 +992,26 @@ async def test_move_click_scroll_key_type_normalize_payloads(
         },
         context_id="ctx-1",
     )
+    windows = manager._normalize_action_payload(
+        "list_windows",
+        {"include_hidden": True, "max_windows": 12},
+        context_id="ctx-1",
+    )
+    window_state = manager._normalize_action_payload(
+        "get_window_state",
+        {"pid": "1234", "window_id": "uia-hwnd:5678", "max_depth": 2, "max_nodes": 25},
+        context_id="ctx-1",
+    )
+    element_action = manager._normalize_action_payload(
+        "element_action",
+        {
+            "window_id": "uia-hwnd:5678",
+            "element_index": "3",
+            "operation": "invoke",
+            "dispatch": "background",
+        },
+        context_id="ctx-1",
+    )
     submitted = manager._normalize_action_payload(
         "type",
         {"text": "hello", "submit": True},
@@ -1015,6 +1035,16 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     assert uia_action["target"]["title"] == "Save"
     assert uia_action["target"]["selector"] == "role:Button && name:Save"
     assert uia_action["operation"] == "invoke"
+    assert windows["include_hidden"] is True
+    assert windows["max_windows"] == 12
+    assert window_state["pid"] == 1234
+    assert window_state["window_id"] == "uia-hwnd:5678"
+    assert window_state["max_depth"] == 2
+    assert window_state["max_nodes"] == 25
+    assert element_action["window_id"] == "uia-hwnd:5678"
+    assert element_action["element_index"] == 3
+    assert element_action["operation"] == "invoke"
+    assert element_action["dispatch"] == "background"
     assert submitted["submit"] is True
 
 

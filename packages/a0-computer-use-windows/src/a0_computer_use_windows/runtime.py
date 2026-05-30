@@ -870,6 +870,7 @@ class WindowsComputerUseRuntime:
             else _default_capture_debug_dir()
         )
         self._session: _RuntimeSession | None = None
+        self._element_index_cache: dict[int, dict[str, Any]] = {}
 
     @property
     def supported(self) -> bool:
@@ -969,6 +970,9 @@ class WindowsComputerUseRuntime:
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "list_windows": self.list_windows,
+            "get_window_state": self.get_window_state,
+            "element_action": self.element_action,
             "uia_snapshot": self.uia_snapshot,
             "uia_action": self.uia_action,
             "move": self.move,
@@ -1101,6 +1105,138 @@ class WindowsComputerUseRuntime:
         else:
             result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         return result
+
+    def list_windows(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        max_windows = max(1, coerce_int(params.get("max_windows"), name="max_windows", default=80))
+        include_hidden = coerce_bool(params.get("include_hidden"), default=False)
+        include_offscreen = coerce_bool(params.get("include_offscreen"), default=False)
+        roots = self._uia_roots()
+        geometry = ScreenGeometry(
+            origin_x=session.session.origin_x,
+            origin_y=session.session.origin_y,
+            width=session.session.width,
+            height=session.session.height,
+        )
+        windows: list[dict[str, Any]] = []
+        for index, root in enumerate(roots):
+            summary = self._uia_target_summary(root, path=[index], geometry=geometry)
+            if not include_hidden and summary.get("visible") is False:
+                continue
+            if not include_offscreen and self._uia_summary_is_offscreen(summary):
+                continue
+            window_id = self._window_id_for_summary(summary, path=[index])
+            windows.append(
+                {
+                    "window_id": window_id,
+                    "pid": summary.get("process_id"),
+                    "app_name": summary.get("class_name") or summary.get("framework_id"),
+                    "title": summary.get("title"),
+                    "role": summary.get("role", "Window"),
+                    "frame": summary.get("frame"),
+                    "visible": summary.get("visible"),
+                    "focused": summary.get("focused"),
+                    "path": [index],
+                }
+            )
+            if len(windows) >= max_windows:
+                break
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "backend": "uia",
+            "count": len(windows),
+            "windows": windows,
+        }
+
+    def get_window_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        max_depth = min(
+            _UIA_HARD_MAX_DEPTH,
+            max(0, coerce_int(params.get("max_depth"), name="max_depth", default=_UIA_DEFAULT_MAX_DEPTH)),
+        )
+        max_nodes = min(
+            _UIA_HARD_MAX_NODES,
+            max(1, coerce_int(params.get("max_nodes"), name="max_nodes", default=_UIA_DEFAULT_MAX_NODES)),
+        )
+        roots = self._uia_roots()
+        geometry = ScreenGeometry(
+            origin_x=session.session.origin_x,
+            origin_y=session.session.origin_y,
+            width=session.session.width,
+            height=session.session.height,
+        )
+        element, path, window_summary = self._resolve_window_root(params, roots=roots, geometry=geometry)
+        budget = {"count": 0, "truncated": False}
+        tree = self._serialize_uia_element(
+            element,
+            path=path,
+            depth=0,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            budget=budget,
+            geometry=geometry,
+        ) or {}
+        window_id = self._window_id_for_summary(window_summary, path=path)
+        self._cache_element_indices(tree, window_id=window_id)
+        window_summary["window_id"] = window_id
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "backend": "uia",
+            "mode": str(params.get("mode") or "uia").strip() or "uia",
+            "window_id": window_id,
+            "window": window_summary,
+            "app": {"name": "Windows desktop", "backend": "uia"},
+            "tree": tree,
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def element_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        dispatch = str(params.get("dispatch") or "background").strip().lower()
+        if dispatch not in {"background", "foreground", "auto"}:
+            raise WindowsComputerUseError(
+                "COMPUTER_USE_BAD_DISPATCH",
+                "element_action dispatch must be background, foreground, or auto.",
+            )
+        operation = str(params.get("operation") or params.get("name") or "invoke").strip().lower()
+        if operation in {"press", "activate"}:
+            operation = "invoke"
+        if operation in {"type", "type_text"}:
+            operation = "set_value"
+        operation = _WINDOW_OPERATION_ALIASES.get(operation, operation)
+        element, target = self._resolve_element_action_target(params)
+        target.setdefault("element_index", params.get("element_index"))
+
+        if dispatch in {"background", "auto"}:
+            background_result = self._try_background_uia_action(
+                element,
+                target=target,
+                operation=operation,
+                params=params,
+                session_id=session.session.session_id,
+                context_id=session.session.context_id,
+                requested_dispatch=dispatch,
+            )
+            if not background_result.get("background_unavailable"):
+                return background_result
+            if dispatch == "background":
+                return background_result
+
+        foreground_params = {
+            **params,
+            "operation": operation,
+            "path": target.get("path"),
+        }
+        foreground_result = self.uia_action(foreground_params)
+        foreground_result["requested_dispatch"] = dispatch
+        foreground_result["actual_dispatch"] = "foreground"
+        foreground_result["foreground_fallback_used"] = dispatch == "auto"
+        return foreground_result
 
     def uia_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
@@ -1394,6 +1530,252 @@ class WindowsComputerUseRuntime:
         if selector:
             summary["selector"] = selector
         return summary
+
+    def _window_id_for_summary(self, summary: dict[str, Any], *, path: list[int]) -> str:
+        handle = summary.get("handle")
+        if handle not in (None, ""):
+            return f"uia-hwnd:{handle}"
+        return "uia-path:" + ".".join(str(item) for item in path)
+
+    def _uia_summary_is_offscreen(self, summary: dict[str, Any]) -> bool:
+        frame = summary.get("frame")
+        if not isinstance(frame, dict):
+            return False
+        normalized = frame.get("normalized")
+        if not isinstance(normalized, dict):
+            return False
+        x = _float_or_none(normalized.get("x"))
+        y = _float_or_none(normalized.get("y"))
+        width = _float_or_none(normalized.get("width"))
+        height = _float_or_none(normalized.get("height"))
+        if x is None or y is None or width is None or height is None:
+            return False
+        return x + width <= 0 or y + height <= 0 or x >= 1 or y >= 1
+
+    def _parse_window_path(self, window_id: str) -> list[int] | None:
+        value = str(window_id or "").strip()
+        if not value:
+            return None
+        if value.startswith("uia-path:"):
+            value = value.removeprefix("uia-path:")
+        elif value.startswith("path:"):
+            value = value.removeprefix("path:")
+        else:
+            return None
+        if not value:
+            return []
+        path: list[int] = []
+        for part in value.replace("/", ".").split("."):
+            if not part:
+                continue
+            try:
+                path.append(int(part))
+            except ValueError:
+                return None
+        return path
+
+    def _resolve_window_root(
+        self,
+        params: dict[str, Any],
+        *,
+        roots: list[Any],
+        geometry: ScreenGeometry,
+    ) -> tuple[Any, list[int], dict[str, Any]]:
+        window_id = str(params.get("window_id") or "").strip()
+        pid = params.get("pid")
+        parsed_path = self._parse_window_path(window_id)
+        if parsed_path:
+            element = self._uia_element_for_path(roots, parsed_path)
+            if element is not None:
+                summary = self._uia_target_summary(element, path=parsed_path, geometry=geometry)
+                return element, parsed_path, summary
+        handle_text = window_id.removeprefix("uia-hwnd:") if window_id.startswith("uia-hwnd:") else window_id
+        for index, root in enumerate(roots):
+            path = [index]
+            summary = self._uia_target_summary(root, path=path, geometry=geometry)
+            if handle_text and str(summary.get("handle") or "") == handle_text:
+                return root, path, summary
+            if pid is not None and str(summary.get("process_id") or "") == str(pid):
+                return root, path, summary
+        if not window_id and pid is None and roots:
+            path = [0]
+            summary = self._uia_target_summary(roots[0], path=path, geometry=geometry)
+            return roots[0], path, summary
+        raise WindowsComputerUseError(
+            "COMPUTER_USE_WINDOW_NOT_FOUND",
+            "No matching Windows UIA top-level window was found.",
+        )
+
+    def _cache_element_indices(self, tree: dict[str, Any], *, window_id: str) -> None:
+        self._element_index_cache.clear()
+        next_index = 0
+
+        def visit(node: dict[str, Any]) -> None:
+            nonlocal next_index
+            index = next_index
+            next_index += 1
+            node["element_index"] = index
+            self._element_index_cache[index] = {
+                "window_id": window_id,
+                "path": list(node.get("path") or []),
+                "target": dict(node),
+            }
+            children = node.get("children")
+            if isinstance(children, list):
+                for child in children:
+                    if isinstance(child, dict):
+                        visit(child)
+
+        if tree:
+            visit(tree)
+
+    def _resolve_element_action_target(self, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        element_index = params.get("element_index")
+        if element_index is not None:
+            try:
+                index = int(element_index)
+            except (TypeError, ValueError) as exc:
+                raise WindowsComputerUseError(
+                    "COMPUTER_USE_BAD_ELEMENT_INDEX",
+                    "element_index must be an integer from the latest get_window_state.",
+                ) from exc
+            cached = self._element_index_cache.get(index)
+            if cached is None:
+                raise WindowsComputerUseError(
+                    "COMPUTER_USE_ELEMENT_INDEX_STALE",
+                    "element_index was not found. Call get_window_state and retry with a fresh index.",
+                )
+            requested_window_id = str(params.get("window_id") or "").strip()
+            cached_window_id = str(cached.get("window_id") or "").strip()
+            if requested_window_id and requested_window_id != cached_window_id:
+                raise WindowsComputerUseError(
+                    "COMPUTER_USE_ELEMENT_WINDOW_MISMATCH",
+                    "element_index belongs to a different cached window_id.",
+                )
+            params = {**params, "path": cached.get("path"), "target": cached.get("target")}
+        return self._resolve_uia_target(params)
+
+    def _background_unavailable(
+        self,
+        *,
+        session_id: str,
+        context_id: str,
+        target: dict[str, Any],
+        operation: str,
+        reason: str,
+        requested_dispatch: str = "background",
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "context_id": context_id,
+            "operation": operation,
+            "target": target,
+            "requested_dispatch": requested_dispatch,
+            "actual_dispatch": "none",
+            "background_unavailable": True,
+            "reason": reason,
+        }
+
+    def _try_background_uia_action(
+        self,
+        element: Any,
+        *,
+        target: dict[str, Any],
+        operation: str,
+        params: dict[str, Any],
+        session_id: str,
+        context_id: str,
+        requested_dispatch: str,
+    ) -> dict[str, Any]:
+        if operation in {"click", "focus", *_WINDOW_OPERATIONS}:
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason=f"operation {operation!r} requires foreground window activation on this backend.",
+                requested_dispatch=requested_dispatch,
+            )
+        try:
+            if operation == "invoke":
+                invoke = getattr(element, "invoke", None)
+                if not callable(invoke):
+                    raise _uia_operation_error("invoke")
+                invoke()
+            elif operation == "set_value":
+                value = params.get("value", params.get("text"))
+                if value is None:
+                    raise WindowsComputerUseError(
+                        "COMPUTER_USE_UIA_VALUE_REQUIRED",
+                        "element_action set_value requires value or text.",
+                    )
+                if coerce_bool(params.get("submit")):
+                    return self._background_unavailable(
+                        session_id=session_id,
+                        context_id=context_id,
+                        target=target,
+                        operation=operation,
+                        reason="submit requires keyboard input and cannot be guaranteed in background.",
+                        requested_dispatch=requested_dispatch,
+                    )
+                if not self._set_uia_element_value_background(element, str(value)):
+                    raise _uia_operation_error("set_value")
+            else:
+                return self._background_unavailable(
+                    session_id=session_id,
+                    context_id=context_id,
+                    target=target,
+                    operation=operation,
+                    reason=f"operation {operation!r} is not supported for background dispatch.",
+                    requested_dispatch=requested_dispatch,
+                )
+        except WindowsComputerUseError as exc:
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason=str(exc),
+                requested_dispatch=requested_dispatch,
+            )
+        except Exception as exc:
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason=str(exc),
+                requested_dispatch=requested_dispatch,
+            )
+        return {
+            "session_id": session_id,
+            "context_id": context_id,
+            "operation": operation,
+            "target": target,
+            "requested_dispatch": requested_dispatch,
+            "actual_dispatch": "background",
+            "background_unavailable": False,
+        }
+
+    def _set_uia_element_value_background(self, element: Any, value: str) -> bool:
+        set_edit_text = getattr(element, "set_edit_text", None)
+        if callable(set_edit_text):
+            try:
+                set_edit_text(value)
+                return True
+            except Exception:
+                pass
+        value_pattern = None
+        with contextlib.suppress(Exception):
+            value_pattern = getattr(element, "iface_value", None)
+        set_value = getattr(value_pattern, "SetValue", None) or getattr(value_pattern, "set_value", None)
+        if callable(set_value):
+            try:
+                set_value(value)
+                return True
+            except Exception:
+                pass
+        return False
 
     def _uia_available_actions(self, element: Any, summary: dict[str, Any]) -> list[str]:
         actions: list[str] = []
@@ -1832,6 +2214,9 @@ def serve_stdio(runtime: WindowsComputerUseRuntime | None = None) -> int:
                         "start_session",
                         "status",
                         "capture",
+                        "list_windows",
+                        "get_window_state",
+                        "element_action",
                         "uia_snapshot",
                         "uia_action",
                         "move",
