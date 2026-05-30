@@ -287,3 +287,32 @@ def test_remote_file_utility_blocks_writes_and_bounds_tree_snapshots(tmp_path: P
     assert snapshot.tree_hash
     assert "# 1 more file" in snapshot.tree
     assert "src/" in snapshot.tree
+
+
+def test_remote_tree_snapshot_skips_directories_that_cannot_be_scanned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    public = tmp_path / "public"
+    locked = tmp_path / "locked"
+    public.mkdir()
+    locked.mkdir()
+    (public / "visible.txt").write_text("hello\n", encoding="utf-8")
+    (locked / "secret.txt").write_text("hidden\n", encoding="utf-8")
+
+    real_scandir = remote_files_module.os.scandir
+
+    def guarded_scandir(path: str | os.PathLike[str]) -> os.ScandirIterator[str]:
+        if os.fspath(path) == str(locked):
+            raise PermissionError(13, "Access is denied", os.fspath(path))
+        return real_scandir(path)
+
+    monkeypatch.setattr(remote_files_module.os, "scandir", guarded_scandir)
+
+    utility = RemoteFileUtility(scan_root=str(tmp_path), max_depth=3)
+    snapshot = utility.build_tree_snapshot()
+
+    assert "public/" in snapshot.tree
+    assert "visible.txt" in snapshot.tree
+    assert "locked/" in snapshot.tree
+    assert "secret.txt" not in snapshot.tree

@@ -415,16 +415,19 @@ class RemoteFileUtility:
         try:
             with os.scandir(abs_dir) as iterator:
                 for entry in iterator:
-                    rel_path = f"{rel_dir}/{entry.name}".strip("/").replace("\\", "/")
-                    is_dir = entry.is_dir(follow_symlinks=False)
+                    try:
+                        rel_path = f"{rel_dir}/{entry.name}".strip("/").replace("\\", "/")
+                        is_dir = entry.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
                     if self._is_ignored(rel_path, is_dir, ignore_patterns):
                         continue
                     if is_dir:
                         dirs.append(entry)
                     else:
                         files.append(entry)
-        except FileNotFoundError:
-            return [], []
+        except OSError:
+            pass
 
         dirs.sort(key=lambda item: item.name.casefold())
         files.sort(key=lambda item: item.name.casefold())
