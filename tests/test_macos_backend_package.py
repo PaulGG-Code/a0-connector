@@ -33,6 +33,11 @@ def test_macos_backend_spec_exposes_expected_metadata() -> None:
     assert "global-pixel-actions" in spec.features
     assert "keyboard-targets-frontmost-app" in spec.features
     assert "accessibility-element-click" in spec.features
+    assert "native-window-list" in spec.features
+    assert "window-state" in spec.features
+    assert "element-index-targeting" in spec.features
+    assert "background-dispatch" in spec.features
+    assert "foreground-dispatch-fallback" in spec.features
     assert "semantic-click-before-quartz-fallback" in spec.features
     assert "no-cursor-steal-accessibility-click" in spec.features
     assert "real-cursor-may-move" in spec.features

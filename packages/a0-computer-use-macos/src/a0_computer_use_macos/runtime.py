@@ -38,6 +38,7 @@ from a0_computer_use_macos.shared import (
     coerce_int,
     normalize_action_payload,
     normalize_context_id,
+    normalize_dispatch,
     normalize_restore_token,
     resolve_trust_mode_policy,
 )
@@ -966,6 +967,7 @@ class MacOSComputerUseRuntime:
             else _default_capture_debug_dir()
         )
         self._session: _RuntimeSession | None = None
+        self._element_index_cache: dict[int, dict[str, Any]] = {}
 
     @property
     def supported(self) -> bool:
@@ -1009,6 +1011,9 @@ class MacOSComputerUseRuntime:
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "list_windows": self.list_windows,
+            "get_window_state": self.get_window_state,
+            "element_action": self.element_action,
             "ax_snapshot": self.ax_snapshot,
             "ax_action": self.ax_action,
             "move": self.move,
@@ -1026,7 +1031,19 @@ class MacOSComputerUseRuntime:
             )
         normalized_method = str(method or "").strip().lower()
         normalized_params = dict(params)
-        if normalized_method in {"capture", "ax_snapshot", "ax_action", "move", "click", "scroll", "key", "type"}:
+        if normalized_method in {
+            "capture",
+            "list_windows",
+            "get_window_state",
+            "element_action",
+            "ax_snapshot",
+            "ax_action",
+            "move",
+            "click",
+            "scroll",
+            "key",
+            "type",
+        }:
             normalized_params = normalize_action_payload(
                 normalized_method,
                 normalized_params,
@@ -1169,6 +1186,138 @@ class MacOSComputerUseRuntime:
         else:
             result["png_base64"] = base64.b64encode(png_bytes).decode("ascii")
         return result
+
+    def list_windows(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        accessibility = _load_accessibility_module()
+        max_windows = max(1, coerce_int(params.get("max_windows"), name="max_windows", default=80))
+        include_hidden = coerce_bool(params.get("include_hidden"), default=False)
+        include_offscreen = coerce_bool(params.get("include_offscreen"), default=False)
+        screen_size = (session.session.width, session.session.height)
+        windows: list[dict[str, Any]] = []
+        for app_info, _app_root, window, path in self._ax_window_roots(accessibility):
+            if not include_hidden and bool(app_info.get("hidden")):
+                continue
+            summary = self._ax_target_summary(accessibility, window, path=path, screen_size=screen_size)
+            if not include_offscreen and self._ax_summary_is_offscreen(summary):
+                continue
+            window_id = self._window_id_for_ax_window(app_info, path=path)
+            windows.append(
+                {
+                    "window_id": window_id,
+                    "pid": app_info.get("pid"),
+                    "app_name": app_info.get("name"),
+                    "bundle_id": app_info.get("bundle_id"),
+                    "title": summary.get("title"),
+                    "role": summary.get("role", "AXWindow"),
+                    "frame": summary.get("frame"),
+                    "focused": summary.get("focused"),
+                    "visible": not bool(app_info.get("hidden")),
+                    "path": list(path),
+                }
+            )
+            if len(windows) >= max_windows:
+                break
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "backend": "ax",
+            "count": len(windows),
+            "windows": windows,
+        }
+
+    def get_window_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        accessibility = _load_accessibility_module()
+        max_depth = min(
+            _AX_HARD_MAX_DEPTH,
+            max(0, coerce_int(params.get("max_depth"), name="max_depth", default=_AX_DEFAULT_MAX_DEPTH)),
+        )
+        max_nodes = min(
+            _AX_HARD_MAX_NODES,
+            max(1, coerce_int(params.get("max_nodes"), name="max_nodes", default=_AX_DEFAULT_MAX_NODES)),
+        )
+        screen_size = (session.session.width, session.session.height)
+        app_info, window, path, window_summary = self._resolve_ax_window_root(
+            accessibility,
+            params,
+            screen_size=screen_size,
+        )
+        budget = {"count": 0, "truncated": False}
+        tree = self._serialize_ax_element(
+            accessibility,
+            window,
+            path=path,
+            depth=0,
+            max_depth=max_depth,
+            max_nodes=max_nodes,
+            budget=budget,
+            screen_size=screen_size,
+        ) or {}
+        window_id = self._window_id_for_ax_window(app_info, path=path)
+        self._cache_element_indices(tree, window_id=window_id)
+        window_summary["window_id"] = window_id
+        return {
+            "session_id": session.session.session_id,
+            "context_id": session.session.context_id,
+            "backend": "ax",
+            "mode": str(params.get("mode") or "ax").strip() or "ax",
+            "window_id": window_id,
+            "window": window_summary,
+            "app": app_info,
+            "tree": tree,
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def element_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        accessibility = _load_accessibility_module()
+        dispatch = normalize_dispatch(params.get("dispatch"), default="background")
+        operation = str(
+            params.get("operation")
+            or params.get("ax_action")
+            or params.get("name")
+            or "press"
+        ).strip().lower()
+        if operation in {"click", "activate", "invoke"}:
+            operation = "press"
+        if operation in {"type", "type_text"}:
+            operation = "set_value"
+        element, target = self._resolve_element_action_target(accessibility, params)
+        target.setdefault("element_index", params.get("element_index"))
+
+        if dispatch in {"background", "auto"}:
+            background_result = self._try_background_ax_action(
+                accessibility,
+                element,
+                target=target,
+                operation=operation,
+                params=params,
+                session_id=session.session.session_id,
+                context_id=session.session.context_id,
+                requested_dispatch=dispatch,
+            )
+            if not background_result.get("background_unavailable"):
+                return background_result
+            if dispatch == "background":
+                return background_result
+
+        foreground_result = self._perform_ax_element_action(
+            accessibility,
+            element,
+            target=target,
+            operation=operation,
+            params=params,
+            session_id=session.session.session_id,
+            context_id=session.session.context_id,
+        )
+        foreground_result["requested_dispatch"] = dispatch
+        foreground_result["actual_dispatch"] = "foreground"
+        foreground_result["foreground_fallback_used"] = dispatch == "auto"
+        return foreground_result
 
     def ax_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
@@ -1396,6 +1545,135 @@ class MacOSComputerUseRuntime:
                 "Unable to create a macOS Accessibility application element.",
             ) from exc
 
+    def _ax_application_info(self, application: Any) -> dict[str, Any]:
+        app_info: dict[str, Any] = {}
+        if application is None:
+            return app_info
+        for key, method_name in (
+            ("name", "localizedName"),
+            ("bundle_id", "bundleIdentifier"),
+            ("pid", "processIdentifier"),
+            ("hidden", "isHidden"),
+            ("active", "isActive"),
+        ):
+            method = getattr(application, method_name, None)
+            if callable(method):
+                with contextlib.suppress(Exception):
+                    value = method()
+                    if value is not None:
+                        app_info[key] = _ax_scalar(value)
+        return app_info
+
+    def _ax_application_roots(self, accessibility: Any) -> list[tuple[dict[str, Any], Any]]:
+        create_application = getattr(accessibility, "AXUIElementCreateApplication", None)
+        if create_application is None:
+            app_info, root = self._frontmost_ax_root(accessibility)
+            return [(app_info, root)]
+
+        applications: list[Any] = []
+        try:
+            appkit = _load_appkit_module()
+            workspace = appkit.NSWorkspace.sharedWorkspace()
+            running = getattr(workspace, "runningApplications", None)
+            if callable(running):
+                applications = list(running() or [])
+            if not applications:
+                frontmost = getattr(workspace, "frontmostApplication", None)
+                if callable(frontmost):
+                    application = frontmost()
+                    if application is not None:
+                        applications = [application]
+        except Exception:
+            applications = []
+
+        roots: list[tuple[dict[str, Any], Any]] = []
+        for application in applications:
+            app_info = self._ax_application_info(application)
+            pid = app_info.get("pid")
+            if pid is None:
+                continue
+            with contextlib.suppress(Exception):
+                roots.append((app_info, create_application(int(pid))))
+        if roots:
+            return roots
+        app_info, root = self._frontmost_ax_root(accessibility)
+        return [(app_info, root)]
+
+    def _ax_window_roots(self, accessibility: Any) -> list[tuple[dict[str, Any], Any, Any, list[int]]]:
+        windows: list[tuple[dict[str, Any], Any, Any, list[int]]] = []
+        for app_info, app_root in self._ax_application_roots(accessibility):
+            app_windows = self._ax_children(accessibility, app_root, root=True)
+            if not app_windows:
+                windows.append((app_info, app_root, app_root, []))
+                continue
+            for index, window in enumerate(app_windows):
+                windows.append((app_info, app_root, window, [index]))
+        return windows
+
+    def _window_id_for_ax_window(self, app_info: dict[str, Any], *, path: list[int]) -> str:
+        path_text = ".".join(str(item) for item in path)
+        pid = app_info.get("pid")
+        if pid not in (None, ""):
+            return f"ax-pid:{pid}:path:{path_text}"
+        bundle_id = str(app_info.get("bundle_id") or "").strip()
+        if bundle_id:
+            return f"ax-bundle:{bundle_id}:path:{path_text}"
+        return f"ax-path:{path_text}"
+
+    def _parse_ax_window_id(self, window_id: str) -> tuple[int | None, str | None, list[int] | None]:
+        value = str(window_id or "").strip()
+        if not value:
+            return None, None, None
+        pid: int | None = None
+        bundle_id: str | None = None
+        path_text = ""
+        if value.startswith("ax-pid:") and ":path:" in value:
+            pid_text, path_text = value.removeprefix("ax-pid:").split(":path:", 1)
+            with contextlib.suppress(ValueError):
+                pid = int(pid_text)
+        elif value.startswith("ax-bundle:") and ":path:" in value:
+            bundle_id, path_text = value.removeprefix("ax-bundle:").split(":path:", 1)
+        elif value.startswith("ax-path:"):
+            path_text = value.removeprefix("ax-path:")
+        else:
+            return None, None, None
+        try:
+            return pid, bundle_id, _normalize_ax_path(path_text)
+        except Exception:
+            return pid, bundle_id, None
+
+    def _resolve_ax_window_root(
+        self,
+        accessibility: Any,
+        params: dict[str, Any],
+        *,
+        screen_size: tuple[int, int],
+    ) -> tuple[dict[str, Any], Any, list[int], dict[str, Any]]:
+        requested_window_id = str(params.get("window_id") or "").strip()
+        requested_pid = params.get("pid")
+        parsed_pid, parsed_bundle, parsed_path = self._parse_ax_window_id(requested_window_id)
+        if requested_pid is None and parsed_pid is not None:
+            requested_pid = parsed_pid
+
+        candidates = self._ax_window_roots(accessibility)
+        for app_info, app_root, window, path in candidates:
+            pid_matches = requested_pid is None or str(app_info.get("pid") or "") == str(requested_pid)
+            bundle_matches = not parsed_bundle or str(app_info.get("bundle_id") or "") == parsed_bundle
+            path_matches = parsed_path is None or path == parsed_path
+            if pid_matches and bundle_matches and path_matches:
+                summary = self._ax_target_summary(accessibility, window, path=path, screen_size=screen_size)
+                return app_info, window, path, summary
+
+        if not requested_window_id and requested_pid is None and candidates:
+            app_info, _app_root, window, path = candidates[0]
+            summary = self._ax_target_summary(accessibility, window, path=path, screen_size=screen_size)
+            return app_info, window, path, summary
+
+        raise MacOSComputerUseError(
+            "COMPUTER_USE_WINDOW_NOT_FOUND",
+            "No matching macOS Accessibility window was found.",
+        )
+
     def _serialize_ax_element(
         self,
         accessibility: Any,
@@ -1542,6 +1820,111 @@ class MacOSComputerUseRuntime:
             element = children[index]
         return element
 
+    def _ax_app_root_for_window_id(self, accessibility: Any, window_id: str) -> tuple[dict[str, Any], Any]:
+        parsed_pid, parsed_bundle, _parsed_path = self._parse_ax_window_id(window_id)
+        candidates = self._ax_application_roots(accessibility)
+        for app_info, app_root in candidates:
+            pid_matches = parsed_pid is None or str(app_info.get("pid") or "") == str(parsed_pid)
+            bundle_matches = not parsed_bundle or str(app_info.get("bundle_id") or "") == parsed_bundle
+            if pid_matches and bundle_matches:
+                return app_info, app_root
+        if not window_id and candidates:
+            return candidates[0][0], candidates[0][1]
+        raise MacOSComputerUseError(
+            "COMPUTER_USE_WINDOW_NOT_FOUND",
+            "No matching macOS Accessibility app/window root was found.",
+        )
+
+    def _ax_element_for_window_path(
+        self,
+        accessibility: Any,
+        *,
+        window_id: str,
+        path: list[int],
+    ) -> tuple[Any, dict[str, Any]]:
+        app_info, app_root = self._ax_app_root_for_window_id(accessibility, window_id)
+        element = self._ax_element_for_path(accessibility, app_root, path)
+        if element is None:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_AX_TARGET_NOT_FOUND",
+                "No matching macOS Accessibility element was found for the cached path.",
+            )
+        return element, app_info
+
+    def _cache_element_indices(self, tree: dict[str, Any], *, window_id: str) -> None:
+        self._element_index_cache.clear()
+        next_index = 0
+
+        def visit(node: dict[str, Any]) -> None:
+            nonlocal next_index
+            index = next_index
+            next_index += 1
+            node["element_index"] = index
+            self._element_index_cache[index] = {
+                "window_id": window_id,
+                "path": list(node.get("path") or []),
+                "target": dict(node),
+            }
+            children = node.get("children")
+            if isinstance(children, list):
+                for child in children:
+                    if isinstance(child, dict):
+                        visit(child)
+
+        if tree:
+            visit(tree)
+
+    def _resolve_element_action_target(self, accessibility: Any, params: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        screen_size = (0, 0)
+        if self._session is not None:
+            screen_size = (self._session.session.width, self._session.session.height)
+        element_index = params.get("element_index")
+        if element_index is not None:
+            try:
+                index = int(element_index)
+            except (TypeError, ValueError) as exc:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_BAD_ELEMENT_INDEX",
+                    "element_index must be an integer from the latest get_window_state.",
+                ) from exc
+            cached = self._element_index_cache.get(index)
+            if cached is None:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_ELEMENT_INDEX_STALE",
+                    "element_index was not found. Call get_window_state and retry with a fresh index.",
+                )
+            requested_window_id = str(params.get("window_id") or "").strip()
+            cached_window_id = str(cached.get("window_id") or "").strip()
+            if requested_window_id and requested_window_id != cached_window_id:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_ELEMENT_WINDOW_MISMATCH",
+                    "element_index belongs to a different cached window_id.",
+                )
+            path = _normalize_ax_path(cached.get("path"))
+            element, _app_info = self._ax_element_for_window_path(
+                accessibility,
+                window_id=cached_window_id,
+                path=path,
+            )
+            summary = self._ax_target_summary(accessibility, element, path=path, screen_size=screen_size)
+            summary["element_index"] = index
+            return element, summary
+
+        target_value = params.get("target")
+        target = dict(target_value) if isinstance(target_value, dict) else {}
+        path = _normalize_ax_path(params.get("path", target.get("path")))
+        window_id = str(params.get("window_id") or "").strip()
+        if window_id and path:
+            element, _app_info = self._ax_element_for_window_path(
+                accessibility,
+                window_id=window_id,
+                path=path,
+            )
+            summary = self._ax_target_summary(accessibility, element, path=path, screen_size=screen_size)
+            if self._ax_summary_matches(summary, target, allow_empty=True):
+                return element, summary
+        return self._resolve_ax_target(accessibility, params)
+
     def _find_ax_matches(
         self,
         accessibility: Any,
@@ -1587,6 +1970,8 @@ class MacOSComputerUseRuntime:
             ("description", "kAXDescriptionAttribute", "AXDescription"),
             ("value", "kAXValueAttribute", "AXValue"),
             ("identifier", "kAXIdentifierAttribute", "AXIdentifier"),
+            ("enabled", "kAXEnabledAttribute", "AXEnabled"),
+            ("focused", "kAXFocusedAttribute", "AXFocused"),
         ):
             value = _ax_copy_attribute(accessibility, element, attr_name, fallback)
             if value is not None and value != "":
@@ -1635,6 +2020,159 @@ class MacOSComputerUseRuntime:
             else:
                 return 0
         return score if used else 0
+
+    def _ax_summary_is_offscreen(self, summary: dict[str, Any]) -> bool:
+        frame = summary.get("frame")
+        if not isinstance(frame, dict):
+            return False
+        normalized = frame.get("normalized")
+        if not isinstance(normalized, dict):
+            return False
+        try:
+            x = float(normalized.get("x"))
+            y = float(normalized.get("y"))
+            width = float(normalized.get("width"))
+            height = float(normalized.get("height"))
+        except (TypeError, ValueError):
+            return False
+        return x + width <= 0 or y + height <= 0 or x >= 1 or y >= 1
+
+    def _background_unavailable(
+        self,
+        *,
+        session_id: str,
+        context_id: str,
+        target: dict[str, Any],
+        operation: str,
+        reason: str,
+        requested_dispatch: str = "background",
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session_id,
+            "context_id": context_id,
+            "operation": operation,
+            "target": target,
+            "requested_dispatch": requested_dispatch,
+            "actual_dispatch": "none",
+            "background_unavailable": True,
+            "reason": reason,
+        }
+
+    def _try_background_ax_action(
+        self,
+        accessibility: Any,
+        element: Any,
+        *,
+        target: dict[str, Any],
+        operation: str,
+        params: dict[str, Any],
+        session_id: str,
+        context_id: str,
+        requested_dispatch: str,
+    ) -> dict[str, Any]:
+        if operation == "focus":
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason="AX focus changes active UI state and is treated as foreground dispatch.",
+                requested_dispatch=requested_dispatch,
+            )
+        if operation not in {"press", "set_value"}:
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason=f"operation {operation!r} is not supported for background dispatch.",
+                requested_dispatch=requested_dispatch,
+            )
+        if operation == "set_value" and coerce_bool(params.get("submit")):
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason="submit requires keyboard input and cannot be guaranteed in background.",
+                requested_dispatch=requested_dispatch,
+            )
+        try:
+            result = self._perform_ax_element_action(
+                accessibility,
+                element,
+                target=target,
+                operation=operation,
+                params=params,
+                session_id=session_id,
+                context_id=context_id,
+            )
+        except MacOSComputerUseError as exc:
+            return self._background_unavailable(
+                session_id=session_id,
+                context_id=context_id,
+                target=target,
+                operation=operation,
+                reason=str(exc),
+                requested_dispatch=requested_dispatch,
+            )
+        result["requested_dispatch"] = requested_dispatch
+        result["actual_dispatch"] = "background"
+        result["background_unavailable"] = False
+        return result
+
+    def _perform_ax_element_action(
+        self,
+        accessibility: Any,
+        element: Any,
+        *,
+        target: dict[str, Any],
+        operation: str,
+        params: dict[str, Any],
+        session_id: str,
+        context_id: str,
+    ) -> dict[str, Any]:
+        if operation not in {"press", "focus", "set_value"}:
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_BAD_AX_ACTION",
+                "element_action operation must be one of: press, focus, set_value.",
+            )
+        if operation == "press":
+            action_name = _ax_constant(accessibility, "kAXPressAction", "AXPress")
+            error_code = self._perform_ax_action(accessibility, element, action_name)
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX press failed with error {error_code}.",
+                )
+        elif operation == "focus":
+            focused_attr = _ax_constant(accessibility, "kAXFocusedAttribute", "AXFocused")
+            error_code = self._set_ax_attribute(accessibility, element, focused_attr, True)
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX focus failed with error {error_code}.",
+                )
+        else:
+            value = params.get("value", params.get("text"))
+            if value is None:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_VALUE_REQUIRED",
+                    "element_action set_value requires value or text.",
+                )
+            value_attr = _ax_constant(accessibility, "kAXValueAttribute", "AXValue")
+            error_code = self._set_ax_attribute(accessibility, element, value_attr, str(value))
+            if error_code != 0:
+                raise MacOSComputerUseError(
+                    "COMPUTER_USE_AX_ACTION_FAILED",
+                    f"AX set_value failed with error {error_code}.",
+                )
+        return {
+            "session_id": session_id,
+            "context_id": context_id,
+            "operation": operation,
+            "target": target,
+        }
 
     def _perform_ax_action(self, accessibility: Any, element: Any, action_name: Any) -> int:
         perform_action = getattr(accessibility, "AXUIElementPerformAction")
@@ -1843,6 +2381,9 @@ def serve_stdio(runtime: MacOSComputerUseRuntime | None = None) -> int:
                         "start_session",
                         "status",
                         "capture",
+                        "list_windows",
+                        "get_window_state",
+                        "element_action",
                         "ax_snapshot",
                         "ax_action",
                         "move",

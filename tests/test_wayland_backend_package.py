@@ -352,6 +352,11 @@ def test_wayland_backend_spec_exposes_expected_metadata() -> None:
     assert "global-pixel-actions" in spec.features
     assert "atspi-tree-snapshot" in spec.features
     assert "atspi-structural-targeting" in spec.features
+    assert "native-window-list" in spec.features
+    assert "window-state" in spec.features
+    assert "element-index-targeting" in spec.features
+    assert "background-dispatch" in spec.features
+    assert "foreground-dispatch-fallback" in spec.features
     assert "real-cursor-may-move" in spec.features
 
 
@@ -508,6 +513,113 @@ def test_wayland_ax_action_presses_element_by_path(
     assert result["target"]["path"] == [0, 0]
     assert result["target"]["role"] == "push button"
     assert result["target"]["title"] == "Open"
+
+
+def test_wayland_window_state_indexes_elements_for_background_actions(
+    wayland_helper_module,
+) -> None:
+    button = _FakeAtspiAccessible(
+        role="push button",
+        name="Open",
+        actions=["press"],
+        frame=(100, 200, 80, 30),
+    )
+    text_field = _FakeAtspiAccessible(
+        role="text",
+        name="Search",
+        states={"VISIBLE", "SHOWING", "ENABLED", "FOCUSABLE", "EDITABLE"},
+        frame=(20, 40, 300, 36),
+    )
+    app = _FakeAtspiAccessible(
+        role="application",
+        name="Fake App",
+        children=[button, text_field],
+        frame=(0, 0, 800, 600),
+        pid=321,
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(role="desktop", children=[app])
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    windows = helper.list_windows({"session_id": "sess-1"})
+    state = helper.get_window_state(
+        {
+            "session_id": "sess-1",
+            "window_id": windows["windows"][0]["window_id"],
+            "max_depth": 2,
+        }
+    )
+    button_index = state["tree"]["children"][0]["element_index"]
+    text_index = state["tree"]["children"][1]["element_index"]
+    press = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "window_id": state["window_id"],
+            "element_index": button_index,
+            "operation": "press",
+            "dispatch": "background",
+        }
+    )
+    typed = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "window_id": state["window_id"],
+            "element_index": text_index,
+            "operation": "set_value",
+            "dispatch": "background",
+            "value": "hello",
+        }
+    )
+
+    assert windows["windows"][0]["window_id"] == "atspi-pid:321:path:0"
+    assert state["tree"]["element_index"] == 0
+    assert button_index == 1
+    assert text_index == 2
+    assert button.performed_actions == [0]
+    assert text_field.set_text_values == ["hello"]
+    assert press["actual_dispatch"] == "background"
+    assert typed["actual_dispatch"] == "background"
+
+
+def test_wayland_background_focus_reports_unavailable_and_auto_falls_back(
+    wayland_helper_module,
+) -> None:
+    text_field = _FakeAtspiAccessible(
+        role="text",
+        name="Search",
+        states={"VISIBLE", "SHOWING", "ENABLED", "FOCUSABLE", "EDITABLE"},
+        frame=(20, 40, 300, 36),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[text_field])],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+    state = helper.get_window_state({"session_id": "sess-1", "max_depth": 2})
+    text_index = state["tree"]["children"][0]["element_index"]
+
+    background_only = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "element_index": text_index,
+            "operation": "focus",
+            "dispatch": "background",
+        }
+    )
+    assert background_only["background_unavailable"] is True
+    assert text_field.focused is False
+
+    auto = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "element_index": text_index,
+            "operation": "focus",
+            "dispatch": "auto",
+        }
+    )
+
+    assert text_field.focused is True
+    assert auto["actual_dispatch"] == "foreground"
+    assert auto["foreground_fallback_used"] is True
 
 
 def test_wayland_ax_action_sets_text_by_semantic_target(

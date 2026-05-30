@@ -315,6 +315,33 @@ def _int_param(value: object, *, default: int, minimum: int, maximum: int) -> in
     return min(max(parsed, minimum), maximum)
 
 
+def _bool_param(value: object, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off", ""}:
+        return False
+    return default
+
+
+def _normalize_dispatch(value: object, *, default: str = "background") -> str:
+    dispatch = str(value or default).strip().lower()
+    if not dispatch:
+        return default
+    if dispatch not in {"background", "foreground", "auto"}:
+        raise PortalError(
+            "COMPUTER_USE_BAD_DISPATCH",
+            "element_action dispatch must be background, foreground, or auto.",
+        )
+    return dispatch
+
+
 def _load_atspi_module() -> Any:
     try:
         gi.require_version("Atspi", "2.0")
@@ -614,6 +641,54 @@ def _atspi_element_for_path(desktop: object, path: list[int]) -> object | None:
     return element
 
 
+def _atspi_window_id(node: dict[str, Any], *, path: list[int]) -> str:
+    path_text = ".".join(str(item) for item in path)
+    pid = node.get("pid")
+    if pid not in (None, ""):
+        return f"atspi-pid:{pid}:path:{path_text}"
+    return f"atspi-path:{path_text}"
+
+
+def _parse_atspi_window_id(window_id: str) -> tuple[int | None, list[int] | None]:
+    value = str(window_id or "").strip()
+    if not value:
+        return None, None
+    pid: int | None = None
+    path_text = ""
+    if value.startswith("atspi-pid:") and ":path:" in value:
+        pid_text, path_text = value.removeprefix("atspi-pid:").split(":path:", 1)
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            pid = None
+    elif value.startswith("atspi-path:"):
+        path_text = value.removeprefix("atspi-path:")
+    else:
+        return None, None
+    return pid, _parse_ax_path(path_text) or []
+
+
+def _atspi_node_is_visible(node: dict[str, Any]) -> bool:
+    states = {str(item).strip().casefold() for item in node.get("states", [])}
+    if states:
+        return "visible" in states or "showing" in states
+    return True
+
+
+def _atspi_node_is_offscreen(node: dict[str, Any]) -> bool:
+    frame = node.get("frame")
+    if not isinstance(frame, dict):
+        return False
+    try:
+        x = float(frame.get("normalized_x"))
+        y = float(frame.get("normalized_y"))
+        width = float(frame.get("normalized_width"))
+        height = float(frame.get("normalized_height"))
+    except (TypeError, ValueError):
+        return False
+    return x + width <= 0 or y + height <= 0 or x >= 1 or y >= 1
+
+
 def _node_text_fields(node: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
     values: list[str] = []
     for key in keys:
@@ -863,12 +938,16 @@ class PortalComputerUseHelper:
         self._remote_desktop = dbus.Interface(portal, PORTAL_REMOTE_DESKTOP_IFACE)
         self._screencast = dbus.Interface(portal, PORTAL_SCREENCAST_IFACE)
         self._session: PortalSession | None = None
+        self._element_index_cache: dict[int, dict[str, Any]] = {}
 
     def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         handlers = {
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
+            "list_windows": self.list_windows,
+            "get_window_state": self.get_window_state,
+            "element_action": self.element_action,
             "ax_snapshot": self.ax_snapshot,
             "ax_action": self.ax_action,
             "move": self.move,
@@ -964,6 +1043,145 @@ class PortalComputerUseHelper:
         result["stream_id"] = session.stream_id
         result["session_id"] = session.session_id
         return result
+
+    def list_windows(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        Atspi = _load_atspi_module()
+        desktop = _atspi_desktop(Atspi)
+        max_windows = _int_param(params.get("max_windows"), default=80, minimum=1, maximum=500)
+        include_hidden = _bool_param(params.get("include_hidden"), default=False)
+        include_offscreen = _bool_param(params.get("include_offscreen"), default=False)
+        windows: list[dict[str, Any]] = []
+        for index in range(_atspi_child_count(desktop)):
+            child = _atspi_child_at(desktop, index)
+            if child is None:
+                continue
+            path = [index]
+            node = _atspi_node_metadata(Atspi, child, path=path, session=session)
+            if not include_hidden and not _atspi_node_is_visible(node):
+                continue
+            if not include_offscreen and _atspi_node_is_offscreen(node):
+                continue
+            window_id = _atspi_window_id(node, path=path)
+            windows.append(
+                {
+                    "window_id": window_id,
+                    "pid": node.get("pid"),
+                    "app_name": node.get("title") or node.get("name"),
+                    "title": node.get("title") or node.get("name"),
+                    "role": node.get("role", "application"),
+                    "frame": node.get("frame"),
+                    "visible": _atspi_node_is_visible(node),
+                    "path": path,
+                }
+            )
+            if len(windows) >= max_windows:
+                break
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "backend": "at-spi",
+            "count": len(windows),
+            "windows": windows,
+        }
+
+    def get_window_state(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        Atspi = _load_atspi_module()
+        desktop = _atspi_desktop(Atspi)
+        max_depth = _int_param(
+            params.get("max_depth"),
+            default=_AX_DEFAULT_MAX_DEPTH,
+            minimum=0,
+            maximum=_AX_HARD_MAX_DEPTH,
+        )
+        max_nodes = _int_param(
+            params.get("max_nodes"),
+            default=_AX_DEFAULT_MAX_NODES,
+            minimum=1,
+            maximum=_AX_HARD_MAX_NODES,
+        )
+        element, path, window = self._resolve_atspi_window_root(Atspi, desktop, session=session, params=params)
+        budget: dict[str, Any] = {
+            "count": 0,
+            "max_nodes": max_nodes,
+            "truncated": False,
+        }
+        tree = _serialize_atspi_element(
+            Atspi,
+            element,
+            path=path,
+            session=session,
+            depth=0,
+            max_depth=max_depth,
+            budget=budget,
+        ) or {}
+        window_id = _atspi_window_id(window, path=path)
+        self._cache_element_indices(tree, window_id=window_id)
+        window["window_id"] = window_id
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "backend": "at-spi",
+            "mode": str(params.get("mode") or "at-spi").strip() or "at-spi",
+            "window_id": window_id,
+            "window": window,
+            "app": {"name": window.get("title") or window.get("name") or "Linux app", "backend": "at-spi"},
+            "tree": tree,
+            "node_count": budget["count"],
+            "truncated": bool(budget["truncated"]),
+            "max_depth": max_depth,
+            "max_nodes": max_nodes,
+        }
+
+    def element_action(self, params: dict[str, Any]) -> dict[str, Any]:
+        session = self._require_session(params)
+        Atspi = _load_atspi_module()
+        desktop = _atspi_desktop(Atspi)
+        dispatch = _normalize_dispatch(params.get("dispatch"), default="background")
+        operation = str(params.get("operation") or params.get("name") or "press").strip().lower()
+        operation_aliases = {
+            "activate": "press",
+            "click": "press",
+            "invoke": "press",
+            "type": "set_value",
+            "type_text": "set_value",
+        }
+        operation = operation_aliases.get(operation, operation)
+        element, target = self._resolve_element_action_target(
+            Atspi,
+            desktop,
+            session=session,
+            params=params,
+            operation=operation,
+        )
+        target.setdefault("element_index", params.get("element_index"))
+
+        if dispatch in {"background", "auto"}:
+            background_result = self._try_background_atspi_action(
+                element,
+                target=target,
+                operation=operation,
+                params=params,
+                session=session,
+                requested_dispatch=dispatch,
+            )
+            if not background_result.get("background_unavailable"):
+                return background_result
+            if dispatch == "background":
+                return background_result
+
+        foreground_result = self._perform_atspi_element_action(
+            element,
+            target=target,
+            operation=operation,
+            params=params,
+            session=session,
+        )
+        foreground_result["requested_dispatch"] = dispatch
+        foreground_result["actual_dispatch"] = "foreground"
+        foreground_result["foreground_fallback_used"] = dispatch == "auto"
+        return foreground_result
 
     def ax_snapshot(self, params: dict[str, Any]) -> dict[str, Any]:
         session = self._require_session(params)
@@ -1395,6 +1613,229 @@ class PortalComputerUseHelper:
                 "The requested computer-use session is no longer active.",
             )
         return session
+
+    def _resolve_atspi_window_root(
+        self,
+        Atspi: Any,
+        desktop: object,
+        *,
+        session: PortalSession,
+        params: dict[str, Any],
+    ) -> tuple[object, list[int], dict[str, Any]]:
+        requested_window_id = str(params.get("window_id") or "").strip()
+        requested_pid = params.get("pid")
+        parsed_pid, parsed_path = _parse_atspi_window_id(requested_window_id)
+        if requested_pid is None and parsed_pid is not None:
+            requested_pid = parsed_pid
+        if parsed_path is not None and requested_window_id:
+            element = _atspi_element_for_path(desktop, parsed_path)
+            if element is not None:
+                node = _atspi_node_metadata(Atspi, element, path=parsed_path, session=session)
+                pid_matches = requested_pid is None or str(node.get("pid") or "") == str(requested_pid)
+                if pid_matches:
+                    return element, parsed_path, node
+        for index in range(_atspi_child_count(desktop)):
+            child = _atspi_child_at(desktop, index)
+            if child is None:
+                continue
+            path = [index]
+            node = _atspi_node_metadata(Atspi, child, path=path, session=session)
+            if requested_pid is not None and str(node.get("pid") or "") != str(requested_pid):
+                continue
+            if requested_window_id and _atspi_window_id(node, path=path) != requested_window_id:
+                continue
+            return child, path, node
+        if not requested_window_id and requested_pid is None and _atspi_child_count(desktop) > 0:
+            child = _atspi_child_at(desktop, 0)
+            if child is not None:
+                path = [0]
+                return child, path, _atspi_node_metadata(Atspi, child, path=path, session=session)
+        raise PortalError(
+            "COMPUTER_USE_WINDOW_NOT_FOUND",
+            "No matching AT-SPI top-level window/application was found.",
+        )
+
+    def _cache_element_indices(self, tree: dict[str, Any], *, window_id: str) -> None:
+        if not hasattr(self, "_element_index_cache"):
+            self._element_index_cache = {}
+        self._element_index_cache.clear()
+        next_index = 0
+
+        def visit(node: dict[str, Any]) -> None:
+            nonlocal next_index
+            index = next_index
+            next_index += 1
+            node["element_index"] = index
+            self._element_index_cache[index] = {
+                "window_id": window_id,
+                "path": list(node.get("path") or []),
+                "target": dict(node),
+            }
+            children = node.get("children")
+            if isinstance(children, list):
+                for child in children:
+                    if isinstance(child, dict):
+                        visit(child)
+
+        if tree:
+            visit(tree)
+
+    def _resolve_element_action_target(
+        self,
+        Atspi: Any,
+        desktop: object,
+        *,
+        session: PortalSession,
+        params: dict[str, Any],
+        operation: str,
+    ) -> tuple[object, dict[str, Any]]:
+        element_index = params.get("element_index")
+        if element_index is not None:
+            try:
+                index = int(element_index)
+            except (TypeError, ValueError) as exc:
+                raise PortalError(
+                    "COMPUTER_USE_BAD_ELEMENT_INDEX",
+                    "element_index must be an integer from the latest get_window_state.",
+                ) from exc
+            if not hasattr(self, "_element_index_cache"):
+                self._element_index_cache = {}
+            cached = self._element_index_cache.get(index)
+            if cached is None:
+                raise PortalError(
+                    "COMPUTER_USE_ELEMENT_INDEX_STALE",
+                    "element_index was not found. Call get_window_state and retry with a fresh index.",
+                )
+            requested_window_id = str(params.get("window_id") or "").strip()
+            cached_window_id = str(cached.get("window_id") or "").strip()
+            if requested_window_id and requested_window_id != cached_window_id:
+                raise PortalError(
+                    "COMPUTER_USE_ELEMENT_WINDOW_MISMATCH",
+                    "element_index belongs to a different cached window_id.",
+                )
+            path = list(cached.get("path") or [])
+            element = _atspi_element_for_path(desktop, path)
+            if element is None:
+                raise PortalError(
+                    "COMPUTER_USE_AX_TARGET_NOT_FOUND",
+                    "No AT-SPI element exists at the cached path. Call get_window_state and retry.",
+                )
+            node = _atspi_node_metadata(Atspi, element, path=path, session=session)
+            node["element_index"] = index
+            return element, node
+        return self._resolve_atspi_target(
+            Atspi,
+            desktop,
+            session=session,
+            params=params,
+            operation=operation,
+        )
+
+    def _background_unavailable(
+        self,
+        *,
+        session: PortalSession,
+        target: dict[str, Any],
+        operation: str,
+        reason: str,
+        requested_dispatch: str = "background",
+    ) -> dict[str, Any]:
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "operation": operation,
+            "target": target,
+            "requested_dispatch": requested_dispatch,
+            "actual_dispatch": "none",
+            "background_unavailable": True,
+            "reason": reason,
+        }
+
+    def _try_background_atspi_action(
+        self,
+        element: object,
+        *,
+        target: dict[str, Any],
+        operation: str,
+        params: dict[str, Any],
+        session: PortalSession,
+        requested_dispatch: str,
+    ) -> dict[str, Any]:
+        if operation == "focus":
+            return self._background_unavailable(
+                session=session,
+                target=target,
+                operation=operation,
+                reason="AT-SPI focus changes active UI state and is treated as foreground dispatch.",
+                requested_dispatch=requested_dispatch,
+            )
+        if operation not in {"press", "set_value"}:
+            return self._background_unavailable(
+                session=session,
+                target=target,
+                operation=operation,
+                reason=f"operation {operation!r} is not supported for background dispatch.",
+                requested_dispatch=requested_dispatch,
+            )
+        if operation == "set_value" and _bool_param(params.get("submit"), default=False):
+            return self._background_unavailable(
+                session=session,
+                target=target,
+                operation=operation,
+                reason="submit requires keyboard input and cannot be guaranteed in background.",
+                requested_dispatch=requested_dispatch,
+            )
+        try:
+            result = self._perform_atspi_element_action(
+                element,
+                target=target,
+                operation=operation,
+                params=params,
+                session=session,
+            )
+        except PortalError as exc:
+            return self._background_unavailable(
+                session=session,
+                target=target,
+                operation=operation,
+                reason=str(exc),
+                requested_dispatch=requested_dispatch,
+            )
+        result["requested_dispatch"] = requested_dispatch
+        result["actual_dispatch"] = "background"
+        result["background_unavailable"] = False
+        return result
+
+    def _perform_atspi_element_action(
+        self,
+        element: object,
+        *,
+        target: dict[str, Any],
+        operation: str,
+        params: dict[str, Any],
+        session: PortalSession,
+    ) -> dict[str, Any]:
+        if operation == "press":
+            self._press_atspi_element(element, target=target, requested=params)
+        elif operation == "focus":
+            if _safe_call(element, "grab_focus") is False:
+                raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI focus action failed.")
+        elif operation == "set_value":
+            value = params.get("value", params.get("text"))
+            if value is None:
+                raise PortalError("COMPUTER_USE_TEXT_REQUIRED", "set_value requires value or text.")
+            self._set_atspi_value(element, value)
+        else:
+            raise PortalError(
+                "COMPUTER_USE_BAD_AX_ACTION",
+                "element_action operation must be press, focus, or set_value.",
+            )
+        return {
+            "session_id": session.session_id,
+            "context_id": session.context_id,
+            "operation": operation,
+            "target": target,
+        }
 
     def _keysym(self, value: str) -> int:
         normalized = _KEY_ALIASES.get(value.strip().lower(), value)

@@ -223,6 +223,11 @@ def test_macos_backend_spec_exports_expected_metadata() -> None:
     assert "accessibility-tree-snapshot" in spec.features
     assert "accessibility-structural-targeting" in spec.features
     assert "accessibility-element-click" in spec.features
+    assert "native-window-list" in spec.features
+    assert "window-state" in spec.features
+    assert "element-index-targeting" in spec.features
+    assert "background-dispatch" in spec.features
+    assert "foreground-dispatch-fallback" in spec.features
     assert "semantic-click-before-quartz-fallback" in spec.features
     assert "no-cursor-steal-accessibility-click" in spec.features
     assert "real-cursor-may-move" in spec.features
@@ -258,6 +263,22 @@ def test_macos_action_normalization_matches_shared_surface() -> None:
         {"target": {"role": "AXButton", "title": "Save"}, "operation": "press"},
         context_id="ctx-1",
     )
+    window_state = normalize_action_payload(
+        "get_window_state",
+        {"pid": "123", "window_id": "ax-pid:123:path:0", "max_depth": 2},
+        context_id="ctx-1",
+    )
+    element_action = normalize_action_payload(
+        "element_action",
+        {
+            "window_id": "ax-pid:123:path:0",
+            "element_index": "2",
+            "operation": "set_value",
+            "dispatch": "background",
+            "text": "final",
+        },
+        context_id="ctx-1",
+    )
 
     assert move["x"] == 0.25 and move["y"] == 0.75
     assert click["button"] == "right" and click["count"] == 2
@@ -267,6 +288,11 @@ def test_macos_action_normalization_matches_shared_surface() -> None:
     assert ax_snapshot["max_depth"] == 3 and ax_snapshot["max_nodes"] == 50
     assert ax_action["target"]["title"] == "Save"
     assert ax_action["operation"] == "press"
+    assert window_state["pid"] == 123
+    assert window_state["window_id"] == "ax-pid:123:path:0"
+    assert element_action["element_index"] == 2
+    assert element_action["dispatch"] == "background"
+    assert element_action["text"] == "final"
 
 
 def test_macos_runtime_rejects_allow_without_restore_token(tmp_path: Path) -> None:
@@ -425,6 +451,103 @@ def test_macos_runtime_ax_action_presses_semantic_target(
     assert result["target"]["path"] == [0, 0]
     assert result["target"]["title"] == "Save"
     assert fake_accessibility.performed == [(button, "AXPress")]
+
+
+def test_macos_runtime_window_state_indexes_elements_for_background_actions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    fake_accessibility, _window, button, text_field = _install_fake_ax_tree(monkeypatch)
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+
+    windows = runtime.list_windows({"context_id": "ctx-1"})
+    state = runtime.get_window_state(
+        {
+            "context_id": "ctx-1",
+            "window_id": windows["windows"][0]["window_id"],
+            "max_depth": 2,
+        }
+    )
+    button_index = state["tree"]["children"][0]["element_index"]
+    text_index = state["tree"]["children"][1]["element_index"]
+    press = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "window_id": state["window_id"],
+            "element_index": button_index,
+            "operation": "press",
+            "dispatch": "background",
+        }
+    )
+    typed = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "window_id": state["window_id"],
+            "element_index": text_index,
+            "operation": "set_value",
+            "dispatch": "background",
+            "value": "final",
+        }
+    )
+
+    assert windows["windows"][0]["window_id"] == "ax-pid:123:path:0"
+    assert state["tree"]["element_index"] == 0
+    assert button_index == 1
+    assert text_index == 2
+    assert press["actual_dispatch"] == "background"
+    assert press["background_unavailable"] is False
+    assert typed["actual_dispatch"] == "background"
+    assert fake_accessibility.performed == [(button, "AXPress")]
+    assert fake_accessibility.set_values == [(text_field, "AXValue", "final")]
+    assert text_field.attrs["AXValue"] == "final"
+
+
+def test_macos_runtime_background_focus_reports_unavailable_and_auto_falls_back(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = _runtime(tmp_path)
+    fake_accessibility, _window, _button, text_field = _install_fake_ax_tree(monkeypatch)
+    runtime.start_session(
+        {
+            "context_id": "ctx-1",
+            "trust_mode": "persistent",
+            "restore_token": "123e4567-e89b-12d3-a456-426614174000",
+        }
+    )
+    state = runtime.get_window_state({"context_id": "ctx-1", "max_depth": 2})
+    text_index = state["tree"]["children"][1]["element_index"]
+
+    background_only = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "element_index": text_index,
+            "operation": "focus",
+            "dispatch": "background",
+        }
+    )
+    assert background_only["background_unavailable"] is True
+    assert fake_accessibility.set_values == []
+
+    auto = runtime.element_action(
+        {
+            "context_id": "ctx-1",
+            "element_index": text_index,
+            "operation": "focus",
+            "dispatch": "auto",
+        }
+    )
+
+    assert auto["actual_dispatch"] == "foreground"
+    assert auto["foreground_fallback_used"] is True
+    assert fake_accessibility.set_values == [(text_field, "AXFocused", True)]
 
 
 def test_macos_runtime_ax_action_sets_value_by_path(
