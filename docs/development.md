@@ -57,15 +57,6 @@ export AGENT_ZERO_HOST=http://localhost:50001
 a0
 ```
 
-Linux / X11:
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
-export AGENT_ZERO_HOST=http://localhost:50001
-a0
-```
-
 One-off host overrides can also be passed directly:
 
 ```bash
@@ -85,7 +76,7 @@ When you are developing against a Docker-detected local Agent Zero instance, pre
 
 For connection-flow testing, `a0 --no-auto-connect` keeps the picker open when a single Docker instance is detected, and `a0 --no-docker-discovery` opens the manual URL path without inspecting Docker.
 
-The published `a0` wheel embeds the Wayland, X11, macOS, and Windows backend modules. Environment markers install only the third-party runtime libraries relevant to the current platform. Linux includes both Wayland and X11 backend code; the backend resolver picks Wayland for Wayland sessions and X11 for Xorg/X11 sessions.
+The published `a0` wheel embeds the Wayland, macOS, and Windows remote computer-use backend modules. Environment markers install only the third-party runtime libraries relevant to the current platform. Linux remote host control uses the Wayland portal backend; X11/Xpra automation is maintained in Agent Zero Core's internal Docker Desktop tooling instead of the A0 CLI host connector.
 
 The sibling `packages/a0-computer-use-*` manifests remain useful for isolated backend package development, but end-user installs should use the root `a0` package.
 

@@ -7,6 +7,7 @@ import sys
 from typing import Any, Callable, Protocol
 
 _ENTRY_POINT_GROUP = "a0.computer_use_backends"
+_DISABLED_REMOTE_BACKEND_IDS = {"x11"}
 
 
 @dataclass(frozen=True)
@@ -44,6 +45,11 @@ class ComputerUseBackend(Protocol):
 
 _BUILTIN_SPECS: dict[str, ComputerUseBackendSpec] = {}
 _EXTRA_SPECS: dict[str, ComputerUseBackendSpec] = {}
+
+
+def _remote_backend_enabled(spec: ComputerUseBackendSpec) -> bool:
+    backend_id = str(spec.backend_id or "").strip().lower()
+    return backend_id not in _DISABLED_REMOTE_BACKEND_IDS
 
 
 def register_builtin_backend_spec(spec: ComputerUseBackendSpec) -> ComputerUseBackendSpec:
@@ -109,6 +115,8 @@ def available_backend_specs() -> list[ComputerUseBackendSpec]:
     merged: dict[str, ComputerUseBackendSpec] = {}
     for source in (_BUILTIN_SPECS.values(), _entry_point_specs(), _EXTRA_SPECS.values()):
         for spec in source:
+            if not _remote_backend_enabled(spec):
+                continue
             merged[spec.backend_id] = spec
     return sorted(merged.values(), key=lambda item: (-item.priority, item.backend_id))
 
@@ -141,12 +149,15 @@ def _unsupported_preference(spec: ComputerUseBackendSpec) -> int:
     if session_type == "wayland":
         return 0 if backend_id == "wayland" else 1
     if session_type in {"x11", "xorg"} or display_name:
-        return 0 if backend_id == "x11" else 1
+        return 0 if backend_id == "wayland" else 1
     return 0
 
 
 def resolve_backend_selection() -> ComputerUseBackendSelection:
-    specs = sorted(available_backend_specs(), key=lambda item: (-item.priority, item.backend_id))
+    specs = sorted(
+        (spec for spec in available_backend_specs() if _remote_backend_enabled(spec)),
+        key=lambda item: (-item.priority, item.backend_id),
+    )
     if not specs:
         return ComputerUseBackendSelection(
             spec=None,

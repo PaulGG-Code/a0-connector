@@ -52,7 +52,6 @@ dependencies = [
     "markupsafe==3.0.3",
     "mdit-py-plugins==0.6.1",
     "mdurl==0.1.2",
-    "mss==10.2.0 ; sys_platform == 'linux'",
     "multidict==6.7.1",
     "numpy==2.4.6 ; sys_platform == 'win32'",
     "pillow==12.2.0 ; sys_platform == 'win32'",
@@ -66,7 +65,6 @@ dependencies = [
     "pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin'",
     "python-engineio==4.13.2",
     "python-socketio==5.16.2",
-    "python-xlib==0.33 ; sys_platform == 'linux'",
     "pywin32==311 ; sys_platform == 'win32'",
     "pywinauto==0.6.9 ; sys_platform == 'win32'",
     "rich==15.0.0",
@@ -90,7 +88,6 @@ a0 = "agent_zero_cli.__main__:main"
 
 [project.entry-points."a0.computer_use_backends"]
 wayland = "a0_computer_use_wayland.backend:WAYLAND_BACKEND_SPEC"
-x11 = "a0_computer_use_x11.backend:X11_BACKEND_SPEC"
 macos = "a0_computer_use_macos.backend:MACOS_BACKEND_SPEC"
 windows = "a0_computer_use_windows.backend:WINDOWS_BACKEND_SPEC"
 
@@ -98,7 +95,6 @@ windows = "a0_computer_use_windows.backend:WINDOWS_BACKEND_SPEC"
 packages = [
     "src/agent_zero_cli",
     "packages/a0-computer-use-wayland/src/a0_computer_use_wayland",
-    "packages/a0-computer-use-x11/src/a0_computer_use_x11",
     "packages/a0-computer-use-macos/src/a0_computer_use_macos",
     "packages/a0-computer-use-windows/src/a0_computer_use_windows",
 ]

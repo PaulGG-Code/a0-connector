@@ -31,7 +31,7 @@ irm https://raw.githubusercontent.com/agent0ai/a0-connector/main/install.ps1 | i
 a0
 ```
 
-Computer-use backends are embedded in the `a0` wheel, so the CLI and local computer-use support install and update together. Linux backend selection is automatic: Wayland sessions use the portal backend, while Xorg/X11 sessions use the X11 backend.
+Computer-use backends are embedded in the `a0` wheel, so the CLI and local computer-use support install and update together. Linux host computer use uses the Wayland portal backend; X11/Xpra control belongs to Agent Zero's internal Docker Desktop tooling rather than the remote host connector.
 
 ## Manual install
 

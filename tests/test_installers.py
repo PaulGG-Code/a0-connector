@@ -95,8 +95,8 @@ def test_root_package_embeds_platform_backends() -> None:
     assert "a0-computer-use-macos" not in dependency_text
     assert "a0-computer-use-windows" not in dependency_text
 
-    assert "mss==10.2.0 ; sys_platform == 'linux'" in dependencies
-    assert "python-xlib==0.33 ; sys_platform == 'linux'" in dependencies
+    assert "mss==10.2.0 ; sys_platform == 'linux'" not in dependencies
+    assert "python-xlib==0.33 ; sys_platform == 'linux'" not in dependencies
     assert "pyobjc-framework-applicationservices==12.1 ; sys_platform == 'darwin'" in dependencies
     assert "pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin'" in dependencies
     assert "dxcam==0.3.0 ; sys_platform == 'win32'" in dependencies
@@ -107,7 +107,6 @@ def test_root_package_embeds_platform_backends() -> None:
     entry_points = pyproject["project"]["entry-points"]["a0.computer_use_backends"]
     assert entry_points == {
         "wayland": "a0_computer_use_wayland.backend:WAYLAND_BACKEND_SPEC",
-        "x11": "a0_computer_use_x11.backend:X11_BACKEND_SPEC",
         "macos": "a0_computer_use_macos.backend:MACOS_BACKEND_SPEC",
         "windows": "a0_computer_use_windows.backend:WINDOWS_BACKEND_SPEC",
     }
@@ -115,7 +114,7 @@ def test_root_package_embeds_platform_backends() -> None:
     wheel_packages = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]["packages"]
     assert "src/agent_zero_cli" in wheel_packages
     assert "packages/a0-computer-use-wayland/src/a0_computer_use_wayland" in wheel_packages
-    assert "packages/a0-computer-use-x11/src/a0_computer_use_x11" in wheel_packages
+    assert "packages/a0-computer-use-x11/src/a0_computer_use_x11" not in wheel_packages
     assert "packages/a0-computer-use-macos/src/a0_computer_use_macos" in wheel_packages
     assert "packages/a0-computer-use-windows/src/a0_computer_use_windows" in wheel_packages
 
