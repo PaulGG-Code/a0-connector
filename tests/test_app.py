@@ -354,6 +354,14 @@ class FakeComputerUseManager:
 
     async def handle_op(self, data: dict[str, object]) -> dict[str, object]:
         self.handled_ops.append(dict(data))
+        action = str(data.get("action") or "").strip().lower().replace("-", "_")
+        if action == "start_session":
+            self.enabled = True
+            self.status_label = "active"
+            self.status_detail = ""
+        elif action == "stop_session":
+            self.status_label = "allow" if self.enabled else "disabled"
+            self.status_detail = ""
         return {"op_id": data.get("op_id"), "ok": True, "result": {"status": "active"}}
 
 
@@ -2745,7 +2753,7 @@ async def test_computer_use_slash_commands_update_notice_and_status(
     assert status.computer_use_status == "Active"
     assert banner.display is True
     assert banner.message == "Computer Use is active for this CLI session."
-    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
+    assert notices == [("Computer use is active for this CLI session.", False)]
 
     await dummy_app._dispatch_command("/computer-use off")
 
@@ -3084,6 +3092,27 @@ async def test_computer_use_removed_mode_commands_show_usage_without_fallback(
     ]
 
 
+async def test_computer_use_status_command_reports_runtime_status(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.trust_mode = "allow"
+    dummy_app._computer_use.status_label = "active"
+
+    await dummy_app._dispatch_command("/computer-use status")
+
+    assert notices == [
+        (
+            "Computer use is enabled for this CLI session (Allow); "
+            "status: Active. Use /computer-use on|off.",
+            False,
+        )
+    ]
+
+
 async def test_computer_use_on_arms_current_chat_when_allow_needs_permission(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -3100,7 +3129,7 @@ async def test_computer_use_on_arms_current_chat_when_allow_needs_permission(
     assert dummy_app._computer_use.enabled is True
     assert dummy_app._computer_use.trust_mode == "allow"
     assert status.computer_use_status == "Active"
-    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
+    assert notices == [("Computer use is active for this CLI session.", False)]
 
 
 async def test_computer_use_on_reports_rearm_failure_without_compat_command(
@@ -3154,7 +3183,7 @@ async def test_computer_use_on_rearms_after_runtime_marked_token_stale(
     assert dummy_app._computer_use.rearm_calls == ["ctx-stale-token"]
     assert dummy_app._computer_use.enabled is True
     assert status.computer_use_status == "Active"
-    assert notices == [("Computer use enabled for this CLI session (Allow).", False)]
+    assert notices == [("Computer use is active for this CLI session.", False)]
 
 
 def test_connection_status_endpoint_indicator_omits_computer_use_summary() -> None:
@@ -3238,6 +3267,113 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
             },
         },
     ]
+
+
+async def test_computer_use_status_transition_refreshes_hello_metadata_when_connected(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+    workers: list[tuple[object, dict[str, object]]] = []
+
+    async def fake_send_hello(
+        *,
+        context_id: str | None = None,
+        computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
+        remote_files: dict[str, object] | None = None,
+        remote_exec: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "context_id": context_id,
+                "computer_use": dict(computer_use or {}),
+                "host_browser": dict(host_browser or {}),
+                "remote_files": dict(remote_files or {}),
+                "remote_exec": dict(remote_exec or {}),
+            }
+        )
+        return {"exec_config": {"version": 1}}
+
+    def fake_run_worker(awaitable: object, **kwargs: object) -> object:
+        workers.append((awaitable, dict(kwargs)))
+        return object()
+
+    dummy_app.connected = True
+    dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-cu"
+    dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
+    monkeypatch.setattr(dummy_app, "run_worker", fake_run_worker)
+
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.status_label = "active"
+    dummy_app._apply_computer_use_status("active", "")
+
+    assert len(workers) == 1
+    assert workers[0][1] == {
+        "exclusive": True,
+        "name": "computer-use-metadata-refresh",
+    }
+    await workers[0][0]  # type: ignore[misc]
+
+    assert calls[-1]["context_id"] == "ctx-cu"
+    assert calls[-1]["computer_use"] == {
+        "supported": True,
+        "enabled": True,
+        "trust_mode": "allow",
+        "status": "active",
+        "last_error": "",
+        "restore_token_present": False,
+        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+    }
+
+
+async def test_computer_use_start_session_op_refreshes_active_metadata(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_send_hello(
+        *,
+        context_id: str | None = None,
+        computer_use: dict[str, object] | None = None,
+        host_browser: dict[str, object] | None = None,
+        remote_files: dict[str, object] | None = None,
+        remote_exec: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        calls.append(
+            {
+                "context_id": context_id,
+                "computer_use": dict(computer_use or {}),
+                "host_browser": dict(host_browser or {}),
+                "remote_files": dict(remote_files or {}),
+                "remote_exec": dict(remote_exec or {}),
+            }
+        )
+        return {"exec_config": {"version": 1}}
+
+    dummy_app.client.connected = True
+    dummy_app.current_context = "ctx-cu"
+    dummy_app.client.send_hello = fake_send_hello  # type: ignore[method-assign]
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.status_label = "rearm required"
+
+    result = await dummy_app._handle_computer_use_op(
+        {"action": "start_session", "op_id": "op-cu"}
+    )
+
+    assert result == {"op_id": "op-cu", "ok": True, "result": {"status": "active"}}
+    assert dummy_app._computer_use.handled_ops == [{"action": "start_session", "op_id": "op-cu"}]
+    assert calls[-1]["context_id"] == "ctx-cu"
+    assert calls[-1]["computer_use"] == {
+        "supported": True,
+        "enabled": True,
+        "trust_mode": "allow",
+        "status": "active",
+        "last_error": "",
+        "restore_token_present": False,
+        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+    }
 
 
 async def test_remote_exec_toggle_warns_when_metadata_refresh_fails(

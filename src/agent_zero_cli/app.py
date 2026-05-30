@@ -916,7 +916,9 @@ class AgentZeroCLI(App):
         normalized = str(label or "").strip().lower()
         del detail
         self._sync_computer_use_status()
-        if normalized == "rearm required" and self.connected and self.client.connected:
+        if normalized and self.connected and self.client.connected:
+            # Remote tool availability depends on this metadata; publish status
+            # transitions immediately so users do not need to restart the CLI.
             self.run_worker(
                 self._refresh_remote_tool_metadata(),
                 exclusive=True,
@@ -2049,10 +2051,14 @@ class AgentZeroCLI(App):
                     error=True,
                 )
             else:
-                self._show_notice(
-                    f"Computer use {state} for this CLI session "
-                    f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
-                )
+                status = str(self._computer_use.status_label or "").strip().lower()
+                if self._computer_use.enabled and status == "active":
+                    self._show_notice("Computer use is active for this CLI session.")
+                else:
+                    self._show_notice(
+                        f"Computer use {state} for this CLI session "
+                        f"({_computer_use_mode_label(self._computer_use.trust_mode)})."
+                    )
         else:
             self._show_notice(
                 "Computer use changed locally, but Agent Zero did not acknowledge "
@@ -2066,10 +2072,14 @@ class AgentZeroCLI(App):
         action = "-".join(token.strip().lower().replace("_", "-") for token in tokens) if tokens else "status"
         if action in {"status", "state", ""}:
             state = "enabled" if self._computer_use.enabled else "disabled"
+            status = _computer_use_label(self._computer_use.status_label) or "Unknown"
+            detail = str(self._computer_use.status_detail or "").strip()
+            detail_suffix = f": {detail}" if detail else ""
             self._show_notice(
                 "Computer use is "
                 f"{state} for this CLI session "
-                f"({_computer_use_mode_label(self._computer_use.trust_mode)}). "
+                f"({_computer_use_mode_label(self._computer_use.trust_mode)}); "
+                f"status: {status}{detail_suffix}. "
                 "Use /computer-use on|off."
             )
             return

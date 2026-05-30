@@ -208,7 +208,14 @@ async def handle_exec_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, A
 
 
 async def handle_computer_use_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, Any]:
-    return await app._computer_use.handle_op(data)
+    action = str(data.get("action") or "").strip().lower().replace("-", "_")
+    refresh_after = action in {"start_session", "stop_session"}
+    try:
+        return await app._computer_use.handle_op(data)
+    finally:
+        if refresh_after:
+            with contextlib.suppress(Exception):
+                await app._refresh_remote_tool_metadata()
 
 
 async def handle_browser_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, Any]:

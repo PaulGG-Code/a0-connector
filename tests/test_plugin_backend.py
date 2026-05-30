@@ -88,6 +88,7 @@ def _install_fake_helpers(
     login_mod = types.ModuleType("helpers.login")
     plugins_mod = types.ModuleType("helpers.plugins")
     print_style_mod = types.ModuleType("helpers.print_style")
+    chat_media_mod = types.ModuleType("helpers.chat_media")
     history_mod = types.ModuleType("helpers.history")
     media_artifacts_mod = types.ModuleType("helpers.media_artifacts")
     message_queue_mod = types.ModuleType("helpers.message_queue")
@@ -188,6 +189,35 @@ def _install_fake_helpers(
 
     def raw_message(*, raw_content, preview=None):
         return {"raw_content": raw_content, "preview": preview}
+
+    def _save_image_file(
+        *,
+        context_id: str,
+        path: object,
+        category: str,
+        source: str,
+        preferred_name: str | None = None,
+        max_bytes: int | None = None,
+    ) -> object:
+        del context_id, category, source, preferred_name, max_bytes
+        return types.SimpleNamespace(path=str(path), a0_path=str(path))
+
+    def _save_image_base64(
+        *,
+        context_id: str,
+        data: str,
+        mime_type: str,
+        category: str,
+        source: str,
+        preferred_name: str | None = None,
+        max_bytes: int | None = None,
+    ) -> object:
+        del context_id, category, source, max_bytes
+        filename = preferred_name or f"inline.{mime_type.removeprefix('image/') or 'png'}"
+        return types.SimpleNamespace(
+            path=filename,
+            a0_path=f"data:{mime_type};base64,{data}",
+        )
 
     def _safe_filename(
         value: str,
@@ -314,6 +344,8 @@ def _install_fake_helpers(
     api_mod.ApiHandler = ApiHandler
     api_mod.Request = Request
     api_mod.Response = Response
+    chat_media_mod.save_image_file = _save_image_file
+    chat_media_mod.save_image_base64 = _save_image_base64
     history_mod.RawMessage = raw_message
     media_artifacts_mod.estimated_base64_decoded_size = lambda data: (len(str(data or "")) * 3) // 4
     media_artifacts_mod.safe_filename = _safe_filename
@@ -343,6 +375,7 @@ def _install_fake_helpers(
     )
 
     sys.modules["helpers.api"] = api_mod
+    sys.modules["helpers.chat_media"] = chat_media_mod
     sys.modules["helpers.history"] = history_mod
     sys.modules["helpers.media_artifacts"] = media_artifacts_mod
     sys.modules["helpers.message_queue"] = message_queue_mod
@@ -387,6 +420,7 @@ def _install_fake_helpers(
     files_mod.write_file_base64 = _write_file_base64
 
     helpers_pkg.api = api_mod
+    helpers_pkg.chat_media = chat_media_mod
     helpers_pkg.files = files_mod
     helpers_pkg.history = history_mod
     helpers_pkg.media_artifacts = media_artifacts_mod
@@ -1322,6 +1356,8 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
         "backend_id": "wayland",
         "backend_family": "linux",
         "features": ["inline-png-capture", "pointer-injection"],
+        "capabilities": {},
+        "contract_version": 0,
         "support_reason": "Wayland portal backend is available.",
         "updated_at": stored["updated_at"],
     }
