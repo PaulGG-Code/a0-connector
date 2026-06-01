@@ -1158,10 +1158,35 @@ def test_chat_input_activity_placeholder_renders_detail_literally() -> None:
 
     input_widget.set_activity("Using tool", "[/a0/tests/test_a0_connector_prompt_gating.py]")
 
+    # [ in the detail is escaped to \[ so Rich/Textual never interprets it as a
+    # markup tag; the outer \[ wrapper similarly avoids [/...] being read as a
+    # closing tag (issue #13).
     assert input_widget.placeholder == (
-        "|>  Using tool [[/a0/tests/test_a0_connector_prompt_gating.py]]"
+        "|>  Using tool \\[\\[/a0/tests/test_a0_connector_prompt_gating.py]]"
     )
     assert "[dim]" not in input_widget.placeholder
+
+
+def test_chat_input_activity_placeholder_bare_path_is_markup_safe() -> None:
+    """Bare paths in the detail (no brackets) must not produce a [/...] closing tag."""
+    input_widget = ChatInput()
+
+    input_widget.set_activity("Running code", "/a0/usr/workdir/process_aws_health_event")
+
+    assert input_widget.placeholder == (
+        "|>  Running code \\[/a0/usr/workdir/process_aws_health_event]"
+    )
+
+
+def test_chat_input_activity_placeholder_shell_expr_is_markup_safe() -> None:
+    """Shell expressions with Rich-like syntax must not raise MarkupError."""
+    input_widget = ChatInput()
+
+    input_widget.set_activity("Running code", "decision=$(sed -n 's/^DECISION: //p' <<<")
+
+    assert input_widget.placeholder == (
+        "|>  Running code \\[decision=$(sed -n 's/^DECISION: //p' <<<]"
+    )
 
 
 def test_context_event_after_complete_persists_status_without_reactivating_input(
