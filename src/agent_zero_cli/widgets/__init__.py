@@ -1,6 +1,7 @@
 from agent_zero_cli.widgets.chat_input import ChatInput
 from agent_zero_cli.widgets.computer_use_banner import ComputerUseBanner
 from agent_zero_cli.widgets.connection_status import ConnectionStatus
+from agent_zero_cli.widgets.context_tabs import ContextTab, ContextTabs, context_tab_from_metadata
 from agent_zero_cli.widgets.dynamic_footer import DynamicFooter
 from agent_zero_cli.widgets.model_switcher_bar import (
     ModelIdentity,
@@ -23,6 +24,8 @@ __all__ = [
     "ChatInput",
     "ComputerUseBanner",
     "ConnectionStatus",
+    "ContextTab",
+    "ContextTabs",
     "DynamicFooter",
     "ModelIdentity",
     "ModelPreset",
@@ -38,4 +41,5 @@ __all__ = [
     "SplashStage",
     "SplashStatusPanel",
     "SplashView",
+    "context_tab_from_metadata",
 ]

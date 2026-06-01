@@ -25,11 +25,14 @@ from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import (
     ChatInput,
     ConnectionStatus,
+    ContextTab,
+    ContextTabs,
     MessageQueueBar,
     ModelSwitcherBar,
     ProfileMenuItem,
     ProjectMenuItem,
     SplashState,
+    context_tab_from_metadata,
 )
 
 
@@ -191,6 +194,26 @@ class FakeConnectionStatus:
 
     def clear_token_usage(self) -> None:
         return None
+
+
+class FakeContextTabs:
+    def __init__(self) -> None:
+        self.display = False
+        self.tabs: tuple[ContextTab, ...] = ()
+        self.active_context_id = ""
+        self.can_create = False
+
+    def set_tabs(
+        self,
+        tabs: list[ContextTab],
+        active_context_id: str | None,
+        *,
+        can_create: bool = False,
+    ) -> None:
+        self.tabs = tuple(tabs)
+        self.active_context_id = active_context_id or ""
+        self.can_create = can_create
+        self.display = bool(tabs)
 
 
 class FakeComputerUseBanner:
@@ -460,6 +483,28 @@ class TranscriptSelectionApp(App[None]):
         self.quit_attempts += 1
 
 
+class ContextTabsRenderApp(App[None]):
+    CSS = """
+    ContextTabs {
+        height: 1;
+        padding: 0 1;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        yield ContextTabs(id="context-tabs")
+
+    def on_mount(self) -> None:
+        self.query_one("#context-tabs", ContextTabs).set_tabs(
+            [
+                ContextTab("ctx-alpha", "Architecture sketch", True, project_color="#14d6c8"),
+                ContextTab("ctx-beta", "Streaming fix", True),
+            ],
+            "ctx-alpha",
+            can_create=True,
+        )
+
+
 @pytest.fixture
 def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
     app = DummyAgentZeroCLI()
@@ -474,6 +519,7 @@ def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
         "#model-switcher-bar": FakeModelSwitcher(),
         "#message-queue-bar": FakeMessageQueueBar(),
         "#connection-status": FakeConnectionStatus(),
+        "#context-tabs": FakeContextTabs(),
     }
 
     def _query_one(selector: object, cls: object = None) -> object:
@@ -1278,6 +1324,7 @@ async def test_switch_context_persists_last_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dummy_app.current_context = "ctx-old"
+    dummy_app.agent_active = True
 
     unsubscribed: list[str] = []
     subscribed: list[tuple[str, int]] = []
@@ -1316,6 +1363,78 @@ async def test_switch_context_persists_last_context(
     assert remembered == ["ctx-2"]
     assert dummy_app.current_context == "ctx-2"
     assert dummy_app.current_context_has_messages is True
+    assert dummy_app.agent_active is False
+
+
+def test_context_tab_metadata_updates_active_tab(dummy_app: DummyAgentZeroCLI) -> None:
+    dummy_app.connected = True
+    dummy_app.connector_features = {"chat_create"}
+    dummy_app.current_context = "ctx-alpha"
+
+    dummy_app._remember_context_tab(
+        "ctx-alpha",
+        {
+            "id": "ctx-alpha",
+            "name": "",
+            "no": 45,
+            "last_message": "ignored",
+            "project": {"name": "project-1", "color": "#12ABEF"},
+        },
+        has_messages_hint=True,
+    )
+
+    tab_strip = dummy_app._test_widgets["#context-tabs"]  # type: ignore[index]
+    assert tab_strip.display is True
+    assert tab_strip.active_context_id == "ctx-alpha"
+    assert tab_strip.can_create is True
+    assert tab_strip.tabs == (ContextTab("ctx-alpha", "Chat #45", True, "#12abef"),)
+
+
+def test_context_tab_metadata_uses_webui_name_rule() -> None:
+    named = context_tab_from_metadata(
+        {"id": "ctx-alpha", "name": "Initial Greeting", "no": 45},
+        index=1,
+    )
+    numbered = context_tab_from_metadata(
+        {"id": "ctx-beta", "name": "", "no": 44, "last_message": "2026-06-01T12:00:00"},
+        index=2,
+    )
+
+    assert named.label == "Initial Greeting"
+    assert numbered.label == "Chat #44"
+    assert numbered.has_messages is False
+
+
+async def test_context_tabs_render_in_textual() -> None:
+    app = ContextTabsRenderApp()
+
+    async with app.run_test(size=(80, 4)) as pilot:
+        await pilot.pause(delay=0.1)
+        screenshot = app.export_screenshot()
+
+    assert "Architecture" in screenshot
+    assert "Streaming" in screenshot
+
+
+async def test_context_tab_switch_uses_stored_message_hint(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.current_context = "ctx-alpha"
+    dummy_app._context_tabs = [
+        ContextTab("ctx-alpha", "Alpha", True),
+        ContextTab("ctx-beta", "Beta", True),
+    ]
+    switches: list[tuple[str, bool]] = []
+
+    async def fake_switch_context(context_id: str, *, has_messages_hint: bool) -> None:
+        switches.append((context_id, has_messages_hint))
+
+    monkeypatch.setattr(dummy_app, "_switch_context", fake_switch_context)
+
+    await dummy_app._switch_context_from_tab("ctx-beta")
+
+    assert switches == [("ctx-beta", True)]
 
 
 async def test_remote_tree_snapshot_resends_unchanged_tree_before_backend_expiry(

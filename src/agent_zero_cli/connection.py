@@ -303,6 +303,8 @@ async def begin_connection(
 
     app.current_context = context_id
     app.current_context_has_messages = has_messages_hint
+    app._remember_context_tab(context_id, has_messages_hint=has_messages_hint)
+    await app._refresh_context_tab_metadata(context_id, has_messages_hint=has_messages_hint)
     app._response_delivered = False
     app._context_run_complete = False
     app._chat_intro_pending = True
@@ -327,6 +329,7 @@ async def begin_connection(
     app._remember_context(context_id, host=normalized_host)
     app.connected = True
     app._sync_connection_status("connected", normalized_host)
+    app._sync_context_tabs()
     input_widget = app.query_one("#message-input", ChatInput)
     input_widget.set_history_context(context_id)
     input_widget.disabled = False
@@ -372,6 +375,7 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app.agent_active = False
     app.current_context = None
     app.current_context_has_messages = False
+    app._clear_context_tabs()
     app._response_delivered = False
     app._context_run_complete = False
     app._chat_intro_pending = True
@@ -412,6 +416,7 @@ def set_connected(app: AgentZeroCLI, value: bool) -> None:
     if value:
         app.connected = True
         app._sync_connection_status("connected")
+        app._sync_context_tabs()
         input_widget = app.query_one("#message-input", ChatInput)
         input_widget.disabled = False
         return

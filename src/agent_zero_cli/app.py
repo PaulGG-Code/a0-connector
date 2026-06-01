@@ -45,7 +45,12 @@ from agent_zero_cli.config import CLIConfig, load_config, save_last_context
 from agent_zero_cli.instance_discovery import DiscoveryResult, discover_local_instances
 from agent_zero_cli.remote_exec import PythonTTYManager
 from agent_zero_cli.remote_files import RemoteFileUtility
-from agent_zero_cli.project_utils import normalize_project_list, normalize_project_summary, project_name
+from agent_zero_cli.project_utils import (
+    normalize_project_list,
+    normalize_project_summary,
+    project_color,
+    project_name,
+)
 from agent_zero_cli.widgets.command_palette import (
     AgentCommandPalette,
     OrderedSystemCommandsProvider,
@@ -55,6 +60,8 @@ from agent_zero_cli.widgets import (
     ChatInput,
     ComputerUseBanner,
     ConnectionStatus,
+    ContextTab,
+    ContextTabs,
     DynamicFooter,
     MessageQueueBar,
     ModelSwitcherBar,
@@ -65,6 +72,7 @@ from agent_zero_cli.widgets import (
     SplashAction,
     SplashState,
     SplashView,
+    context_tab_from_metadata,
 )
 from agent_zero_cli.widgets.chat_log import ChatLog
 from agent_zero_cli.model_commands import (
@@ -193,6 +201,7 @@ class AgentZeroCLI(App):
         self.current_project: dict[str, str] | None = None
         self.current_context: str | None = None
         self.current_context_has_messages = False
+        self._context_tabs: list[ContextTab] = []
         self.message_queue: list[dict[str, Any]] = []
         self.show_utility_messages = False
         self._response_delivered = False
@@ -253,6 +262,7 @@ class AgentZeroCLI(App):
 
     def compose(self) -> ComposeResult:
         yield ConnectionStatus(id="connection-status")
+        yield ContextTabs(id="context-tabs")
         with ContentSwitcher(initial="splash-view", id="body-switcher"):
             yield SplashView()
             yield ChatLog(id="chat-log")
@@ -300,6 +310,7 @@ class AgentZeroCLI(App):
         input_widget.disabled = True
         self.query_one("#model-switcher-bar", ModelSwitcherBar).clear()
         self.query_one("#message-queue-bar", MessageQueueBar).clear()
+        self._sync_context_tabs()
         self.query_one("#splash-view", SplashView).set_state(self._splash_state)
         self._sync_workspace_widgets()
         self.query_one("#connection-status", ConnectionStatus).clear_token_usage()
@@ -575,12 +586,14 @@ class AgentZeroCLI(App):
         self.project_list = normalize_project_list(payload.get("projects"))
         self.current_project = normalize_project_summary(payload.get("current_project"))
         self._skill_palette_cache_key = None
+        self._set_context_tab_project(self.current_context, self.current_project)
         self._sync_project_header()
 
     def _clear_project_state(self) -> None:
         self.project_list = []
         self.current_project = None
         self._skill_palette_cache_key = None
+        self._set_context_tab_project(self.current_context, None)
         self._sync_project_header()
 
     def _sync_project_header(self) -> None:
@@ -837,6 +850,173 @@ class AgentZeroCLI(App):
         self.config.last_context_host = normalized_host
         save_last_context(normalized_host, normalized_context_id)
 
+    def _sync_context_tabs(self) -> None:
+        try:
+            self.query_one("#context-tabs", ContextTabs).set_tabs(
+                self._context_tabs if self.connected else [],
+                self.current_context,
+                can_create=self.connected and "chat_create" in self.connector_features,
+            )
+        except Exception:
+            pass
+
+    def _clear_context_tabs(self) -> None:
+        self._context_tabs = []
+        self._sync_context_tabs()
+
+    def _remember_context_tab(
+        self,
+        context_id: str,
+        metadata: Mapping[str, object] | None = None,
+        *,
+        has_messages_hint: bool = False,
+    ) -> None:
+        normalized_context_id = str(context_id or "").strip()
+        if not normalized_context_id:
+            return
+
+        updated_tabs: list[ContextTab] = []
+        replaced = False
+        for index, tab in enumerate(self._context_tabs, start=1):
+            if tab.context_id != normalized_context_id:
+                updated_tabs.append(tab)
+                continue
+
+            if metadata is None:
+                updated_tabs.append(
+                    ContextTab(
+                        context_id=tab.context_id,
+                        label=tab.label,
+                        has_messages=tab.has_messages or has_messages_hint,
+                        project_color=tab.project_color,
+                    )
+                )
+            else:
+                metadata_tab = context_tab_from_metadata(
+                    metadata,
+                    context_id=normalized_context_id,
+                    index=index,
+                    has_messages_hint=tab.has_messages or has_messages_hint,
+                )
+                updated_tabs.append(
+                    ContextTab(
+                        context_id=metadata_tab.context_id,
+                        label=metadata_tab.label,
+                        has_messages=metadata_tab.has_messages,
+                        project_color=metadata_tab.project_color or tab.project_color,
+                    )
+                )
+            replaced = True
+
+        if not replaced:
+            updated_tabs.append(
+                context_tab_from_metadata(
+                    metadata,
+                    context_id=normalized_context_id,
+                    index=len(updated_tabs) + 1,
+                    has_messages_hint=has_messages_hint,
+                )
+            )
+
+        self._context_tabs = updated_tabs
+        self._sync_context_tabs()
+
+    async def _refresh_context_tab_metadata(
+        self,
+        context_id: str,
+        *,
+        has_messages_hint: bool = False,
+    ) -> None:
+        if "chat_get" not in self.connector_features:
+            return
+        normalized_context_id = str(context_id or "").strip()
+        if not normalized_context_id:
+            return
+
+        try:
+            metadata = await self.client.get_chat(normalized_context_id)
+        except Exception:
+            return
+        if isinstance(metadata, Mapping):
+            self._remember_context_tab(
+                normalized_context_id,
+                metadata,
+                has_messages_hint=has_messages_hint,
+            )
+
+    def _set_context_tab_project(
+        self,
+        context_id: str | None,
+        project: Mapping[str, object] | None,
+    ) -> None:
+        normalized_context_id = str(context_id or "").strip()
+        if not normalized_context_id:
+            return
+
+        color = project_color(normalize_project_summary(project) or project)
+        changed = False
+        updated_tabs: list[ContextTab] = []
+        for tab in self._context_tabs:
+            if tab.context_id == normalized_context_id and tab.project_color != color:
+                updated_tabs.append(
+                    ContextTab(
+                        context_id=tab.context_id,
+                        label=tab.label,
+                        has_messages=tab.has_messages,
+                        project_color=color,
+                    )
+                )
+                changed = True
+            else:
+                updated_tabs.append(tab)
+
+        if changed:
+            self._context_tabs = updated_tabs
+            self._sync_context_tabs()
+
+    def _set_context_tab_has_messages(self, context_id: str | None = None) -> None:
+        normalized_context_id = str(context_id or self.current_context or "").strip()
+        if not normalized_context_id:
+            return
+
+        changed = False
+        updated_tabs: list[ContextTab] = []
+        for tab in self._context_tabs:
+            if tab.context_id == normalized_context_id and not tab.has_messages:
+                updated_tabs.append(
+                    ContextTab(
+                        context_id=tab.context_id,
+                        label=tab.label,
+                        has_messages=True,
+                        project_color=tab.project_color,
+                    )
+                )
+                changed = True
+            else:
+                updated_tabs.append(tab)
+
+        if changed:
+            self._context_tabs = updated_tabs
+            self._sync_context_tabs()
+
+    async def _switch_context_from_tab(self, context_id: str) -> None:
+        normalized_context_id = str(context_id or "").strip()
+        if not normalized_context_id:
+            return
+        if normalized_context_id == self.current_context:
+            self._focus_message_input()
+            return
+
+        tab = next(
+            (candidate for candidate in self._context_tabs if candidate.context_id == normalized_context_id),
+            None,
+        )
+        await self._switch_context(
+            normalized_context_id,
+            has_messages_hint=bool(tab.has_messages if tab is not None else False),
+        )
+        self._focus_message_input()
+
     def _set_splash_state(self, **changes: Any) -> None:
         splash_helpers.set_splash_state(self, **changes)
 
@@ -1018,6 +1198,7 @@ class AgentZeroCLI(App):
         if self.current_context_has_messages:
             return
         self.current_context_has_messages = True
+        self._set_context_tab_has_messages()
         self._sync_body_mode()
 
     def _show_chat_intro(self, log: ChatLog, category: str) -> None:
@@ -1935,6 +2116,21 @@ class AgentZeroCLI(App):
     def on_connection_status_project_requested(self, event: ConnectionStatus.ProjectRequested) -> None:
         del event
         self.run_worker(self._toggle_project_menu(), exclusive=True, name="toggle-project-menu")
+
+    def on_context_tabs_context_selected(self, event: ContextTabs.ContextSelected) -> None:
+        event.stop()
+        context_id = event.context_id.strip()
+        if not context_id:
+            return
+        self.run_worker(
+            self._switch_context_from_tab(context_id),
+            exclusive=True,
+            name=f"context-tab-{context_id}",
+        )
+
+    def on_context_tabs_new_requested(self, event: ContextTabs.NewRequested) -> None:
+        event.stop()
+        self.run_worker(self._cmd_new(), exclusive=True, name="context-tab-new")
 
     def on_project_menu_popover_dismiss_requested(self, event: ProjectMenuPopover.DismissRequested) -> None:
         del event

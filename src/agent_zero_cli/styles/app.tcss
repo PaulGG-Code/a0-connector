@@ -7,6 +7,21 @@ Screen {
     height: 1fr;
 }
 
+#context-tabs {
+    height: 1;
+    min-height: 1;
+    margin-top: 1;
+    margin-bottom: 0;
+    padding: 0;
+    background: transparent;
+    color: #9aa7b4;
+    overflow-x: hidden;
+}
+
+#context-tabs:focus {
+    background: transparent;
+}
+
 #chat-log {
     height: 1fr;
     padding: 0;

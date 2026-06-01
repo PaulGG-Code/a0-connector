@@ -43,6 +43,12 @@ def _context_name(context: Mapping[str, object]) -> str:
     name = str(context.get("name", "") or "").strip()
     if name:
         return name
+    try:
+        chat_no = int(context.get("no", 0) or 0)
+    except (TypeError, ValueError):
+        chat_no = 0
+    if chat_no > 0:
+        return f"Chat #{chat_no}"
     return str(context.get("id", "") or "")
 
 
@@ -214,7 +220,9 @@ async def switch_context(app: AgentZeroCLI, context_id: str, *, has_messages_hin
     app.current_context = context_id
     app.query_one("#message-input", ChatInput).set_history_context(context_id)
     app._set_pause_latched(False)
+    app.agent_active = False
     app.current_context_has_messages = has_messages_hint
+    app._remember_context_tab(context_id, has_messages_hint=has_messages_hint)
     app._set_message_queue([])
     app._response_delivered = False
     app._context_run_complete = False
@@ -224,6 +232,7 @@ async def switch_context(app: AgentZeroCLI, context_id: str, *, has_messages_hin
     app._clear_project_state()
     app._sync_body_mode()
     await app.client.subscribe_context(context_id, from_seq=0)
+    await app._refresh_context_tab_metadata(context_id, has_messages_hint=has_messages_hint)
     await app._refresh_remote_tool_metadata()
     await app._publish_remote_tree_snapshot(force=True)
     app._remember_context(context_id)
@@ -277,6 +286,7 @@ async def cmd_chats(
             metadata = {}
         has_messages_hint = bool(metadata.get("last_message") or metadata.get("log_entries"))
 
+    app._remember_context_tab(result, selected, has_messages_hint=has_messages_hint)
     await app._switch_context(result, has_messages_hint=has_messages_hint)
 
 

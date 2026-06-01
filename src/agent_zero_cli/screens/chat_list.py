@@ -87,20 +87,35 @@ def _normalize_preview(value: object, *, created_at: object = "") -> str:
     return preview
 
 
+def _format_webui_title(context: Mapping[str, object], index: int) -> str:
+    raw_name = _normalize_text(context.get("name"))
+    if raw_name:
+        return raw_name
+
+    try:
+        chat_no = int(context.get("no", 0) or 0)
+    except (TypeError, ValueError):
+        chat_no = 0
+    if chat_no > 0:
+        return f"Chat #{chat_no}"
+
+    return f"Chat {index}"
+
+
 def _build_entry(context: Mapping[str, object], index: int, *, now: datetime | None = None) -> ChatListEntry:
     context_id = _normalize_text(context.get("id"))
     raw_name = _normalize_text(context.get("name"))
     created_at = context.get("created_at")
     updated_at = context.get("updated_at")
     preview = _normalize_preview(context.get("last_message"), created_at=created_at)
-    title = raw_name or f"Chat {index}"
+    title = _format_webui_title(context, index)
     generated_name = _looks_generated_name(raw_name)
 
     parsed_created_at = _parse_timestamp(created_at)
     parsed_updated_at = _parse_timestamp(updated_at)
 
     if generated_name:
-        title = f"Chat {index}"
+        title = _format_webui_title({**context, "name": ""}, index)
 
     meta_bits = [f"Started {_format_timestamp(parsed_created_at, now=now)}"]
     if parsed_updated_at and parsed_updated_at != parsed_created_at:
