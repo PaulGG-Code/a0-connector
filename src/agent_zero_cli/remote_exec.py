@@ -16,7 +16,15 @@ import uuid
 from dataclasses import dataclass
 from typing import Any
 
-_ANSI_ESCAPE_RE = re.compile(r"\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_ANSI_ESCAPE_RE = re.compile(
+    r"\x1B(?:"
+    r"\][^\x07\x1B]*(?:\x07|\x1B\\|$)"
+    r"|[PX^_].*?(?:\x1B\\|$)"
+    r"|\[[0-?]*[ -/]*[@-~]"
+    r"|[@-Z\\-_]"
+    r")",
+    re.DOTALL,
+)
 _HEX_ESCAPE_RE = re.compile(r"(?<!\\)\\x[0-9A-Fa-f]{2}")
 _TIMEOUT_KEYS = (
     "first_output_timeout",
@@ -379,7 +387,12 @@ class LocalShellSession:
 
     def _shell_command(self) -> list[str]:
         if os.name == "nt":
-            executable = shutil.which("powershell.exe") or shutil.which("pwsh") or "powershell.exe"
+            executable = (
+                shutil.which("pwsh.exe")
+                or shutil.which("pwsh")
+                or shutil.which("powershell.exe")
+                or "powershell.exe"
+            )
             return [
                 executable,
                 "-NoLogo",

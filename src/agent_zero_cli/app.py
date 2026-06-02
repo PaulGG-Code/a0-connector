@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from functools import partial
 from typing import Any, Iterable, Mapping
 
 from textual import events
@@ -334,10 +335,9 @@ class AgentZeroCLI(App):
             yield SystemCommand(
                 command,
                 spec.description,
-                lambda command=command, worker_name=worker_name: self.run_worker(
-                    self._dispatch_command(command),
-                    exclusive=True,
-                    name=worker_name,
+                lambda command=command, worker_name=worker_name: self._run_dispatch_command(
+                    command,
+                    worker_name=worker_name,
                 ),
             )
         yield SystemCommand(
@@ -1511,6 +1511,20 @@ class AgentZeroCLI(App):
             slug = slug.replace("--", "-")
         return slug or "command"
 
+    def _run_dispatch_command(self, text: str, *, worker_name: str):
+        return self.run_worker(
+            partial(self._dispatch_command, text),
+            exclusive=True,
+            name=worker_name,
+        )
+
+    def _run_skill_command(self, text: str, *, worker_name: str):
+        return self.run_worker(
+            partial(self._dispatch_skill_command, text),
+            exclusive=True,
+            name=worker_name,
+        )
+
     def _skills_available(self) -> bool:
         return (
             self.connected
@@ -1953,11 +1967,7 @@ class AgentZeroCLI(App):
         if text.startswith("/"):
             token = text.split(maxsplit=1)[0].strip().lower().lstrip("/") or "command"
             worker_name = f"slash-{token.replace('/', '-')}"
-            self.run_worker(
-                self._dispatch_command(text),
-                exclusive=True,
-                name=worker_name,
-            )
+            self._run_dispatch_command(text, worker_name=worker_name)
             return
 
         if text == "$" or is_raw_skill_command(text):
@@ -2111,7 +2121,7 @@ class AgentZeroCLI(App):
             return
 
         worker_name = f"splash-{event.action.lstrip('/').replace('/', '-')}"
-        self.run_worker(self._dispatch_command(event.action), exclusive=True, name=worker_name)
+        self._run_dispatch_command(event.action, worker_name=worker_name)
 
     def on_connection_status_project_requested(self, event: ConnectionStatus.ProjectRequested) -> None:
         del event
@@ -2316,7 +2326,10 @@ class AgentZeroCLI(App):
             )
 
     async def action_toggle_remote_exec(self) -> None:
-        self._set_remote_exec_enabled(not self._remote_exec_enabled)
+        next_enabled = not self._remote_exec_enabled
+        self._set_remote_exec_enabled(next_enabled)
+        if not next_enabled:
+            await self._python_tty.close()
         synced = await self._refresh_remote_tool_metadata()
         mode = "enabled" if self._remote_exec_enabled else "disabled"
         if synced:

@@ -85,6 +85,7 @@ def _install_fake_helpers(
 
     helpers_pkg = _make_package("helpers")
     api_mod = types.ModuleType("helpers.api")
+    git_mod = types.ModuleType("helpers.git")
     login_mod = types.ModuleType("helpers.login")
     plugins_mod = types.ModuleType("helpers.plugins")
     print_style_mod = types.ModuleType("helpers.print_style")
@@ -359,6 +360,7 @@ def _install_fake_helpers(
     message_queue_mod.send_all_aggregated = _queue_send_all_aggregated
     persist_chat_mod.save_tmp_chat = lambda context: None
     state_monitor_mod.mark_dirty_for_context = lambda *args, **kwargs: None
+    git_mod.get_version = lambda: "v1.18"
     login_mod.is_login_required = lambda: auth_required
     plugins_mod.get_plugin_config = lambda plugin_name, **kwargs: (
         code_execution_config if plugin_name == "_code_execution" else {}
@@ -375,6 +377,7 @@ def _install_fake_helpers(
     )
 
     sys.modules["helpers.api"] = api_mod
+    sys.modules["helpers.git"] = git_mod
     sys.modules["helpers.chat_media"] = chat_media_mod
     sys.modules["helpers.history"] = history_mod
     sys.modules["helpers.media_artifacts"] = media_artifacts_mod
@@ -387,6 +390,7 @@ def _install_fake_helpers(
     sys.modules["helpers.tool"] = tool_mod
     sys.modules["helpers.ws"] = ws_mod
     sys.modules["helpers.ws_manager"] = ws_manager_mod
+    helpers_pkg.git = git_mod
 
     for module_name in (
         "helpers.settings",
@@ -739,6 +743,7 @@ def test_capabilities_advertise_current_ws_contract() -> None:
     payload = asyncio.run(capabilities_mod.Capabilities(None, None).process({}, object()))
 
     assert payload["protocol"] == "a0-connector.v1"
+    assert payload["agent_zero_version"] == "v1.18"
     assert payload["auth"] == ["session"]
     assert payload["auth_required"] is False
     assert payload["websocket_namespace"] == "/ws"
@@ -1131,6 +1136,7 @@ def test_ws_connector_hello_advertises_remote_exec_and_tree_features() -> None:
     payload = asyncio.run(ws_connector_mod.WsConnector(None, None).process("connector_hello", {}, "sid-1"))
 
     assert payload["protocol"] == "a0-connector.v1"
+    assert payload["agent_zero_version"] == "v1.18"
     assert "remote_file_tree" in payload["features"]
     assert "message_queue" in payload["features"]
     assert "code_execution_remote" in payload["features"]

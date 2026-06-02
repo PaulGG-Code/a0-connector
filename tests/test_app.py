@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -764,6 +765,76 @@ async def test_cli_update_check_stays_quiet_when_no_update(
 
     assert notices == []
     assert notifications == []
+
+
+def test_connector_version_warning_flags_newer_core() -> None:
+    message = connection.connector_version_warning(
+        {"agent_zero_version": "v1.18"},
+        client_version="1.12",
+    )
+
+    assert "Agent Zero v1.18 is newer than a0 CLI 1.12" in message
+    assert "a0 update" in message
+
+
+def test_connector_version_warning_ignores_equal_or_older_core() -> None:
+    assert connection.connector_version_warning(
+        {"agent_zero_version": "v1.18"},
+        client_version="1.19",
+    ) == ""
+    assert connection.connector_version_warning(
+        {"agent_zero_version": "unknown"},
+        client_version="1.12",
+    ) == ""
+
+
+def test_dispatch_command_worker_passes_coroutine_function_not_created_coroutine(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[tuple[object, dict[str, object]]] = []
+
+    def fake_run_worker(work: object, **kwargs: object) -> object:
+        captured.append((work, kwargs))
+        return object()
+
+    monkeypatch.setattr(dummy_app, "run_worker", fake_run_worker)
+
+    dummy_app._run_dispatch_command("/help", worker_name="slash-help")
+
+    work, kwargs = captured[0]
+    assert callable(work)
+    assert not inspect.isawaitable(work)
+    assert inspect.iscoroutinefunction(work.func)  # type: ignore[attr-defined]
+    assert kwargs == {
+        "exclusive": True,
+        "name": "slash-help",
+    }
+
+
+async def test_remote_exec_toggle_off_closes_existing_sessions(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    class FakePythonTty:
+        def __init__(self) -> None:
+            self.enabled = True
+            self.close_calls = 0
+
+        def set_enabled(self, enabled: bool) -> None:
+            self.enabled = enabled
+
+        async def close(self) -> None:
+            self.close_calls += 1
+
+    fake_tty = FakePythonTty()
+    dummy_app._python_tty = fake_tty  # type: ignore[assignment]
+    dummy_app._remote_exec_enabled = True
+
+    await dummy_app.action_toggle_remote_exec()
+
+    assert dummy_app._remote_exec_enabled is False
+    assert fake_tty.enabled is False
+    assert fake_tty.close_calls == 1
 
 
 def test_apply_instance_discovery_result_autoconnects_single_instance(

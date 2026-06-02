@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import TYPE_CHECKING, Any
 
+from agent_zero_cli import __version__
 from agent_zero_cli.client import (
     A0ConnectorPluginMissingError,
     DEFAULT_HOST,
@@ -16,6 +18,9 @@ from agent_zero_cli.widgets.chat_log import ChatLog
 
 if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
+
+
+_VERSION_PATTERN = re.compile(r"v?(?P<version>\d+(?:\.\d+)*)", re.IGNORECASE)
 
 
 async def startup(app: AgentZeroCLI) -> None:
@@ -80,6 +85,36 @@ def validate_capabilities(
         raise ValueError("Connector capabilities features payload is invalid")
     if "connector_login" in features:
         raise ValueError("Connector capabilities still advertise the removed connector_login feature")
+
+
+def _numeric_version(value: object) -> tuple[int, ...] | None:
+    match = _VERSION_PATTERN.search(str(value or "").strip())
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.group("version").split("."))
+
+
+def connector_version_warning(
+    capabilities: dict[str, Any],
+    *,
+    client_version: str = __version__,
+) -> str:
+    server_label = str(
+        capabilities.get("agent_zero_version")
+        or capabilities.get("server_version")
+        or ""
+    ).strip()
+    server_version = _numeric_version(server_label)
+    installed_version = _numeric_version(client_version)
+    if server_version is None or installed_version is None:
+        return ""
+    if server_version <= installed_version:
+        return ""
+    return (
+        f"Agent Zero {server_label} is newer than a0 CLI {client_version}. "
+        "Run `a0 update` after exiting; connector features may misbehave until "
+        "the CLI is updated."
+    )
 
 
 def _chat_identifier(chat: dict[str, Any]) -> str:
@@ -360,6 +395,8 @@ async def begin_connection(
         login_error="",
         actions=app._welcome_actions(),
     )
+    if warning := connector_version_warning(capabilities):
+        app._show_notice(warning, error=True)
     await app._refresh_model_switcher()
     await app._refresh_settings_snapshot()
     await app._refresh_projects(context_id=context_id)

@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_zero_cli import remote_exec
 from agent_zero_cli.remote_exec import LocalShellSession, RemoteExecManager
 
 
@@ -34,6 +35,12 @@ class FakeShellSession:
         self.commands.append(command)
         if command == "ansi":
             self._full_output = "\x1b[31mhello\x1b[0m\r\n"
+            self._partial_output = self._full_output
+            self.command_completed = True
+            return
+
+        if command == "osc":
+            self._full_output = "\x1b]8;;https://example.test\x07link\x1b]8;;\x07\r\n"
             self._partial_output = self._full_output
             self.command_completed = True
             return
@@ -143,6 +150,43 @@ async def test_remote_exec_uses_connector_local_runtime_without_core_checkout(
     assert created_shells[0].commands == ["ansi"]
 
     await manager.close()
+
+
+async def test_remote_exec_strips_osc_terminal_sequences(
+    tmp_path: Path,
+    created_shells: list[FakeShellSession],
+) -> None:
+    manager = _manager(tmp_path)
+
+    result = await manager.handle_exec_op(
+        {
+            "op_id": "exec-osc",
+            "runtime": "terminal",
+            "session": 0,
+            "code": "osc",
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["output"] == "link"
+    assert created_shells[0].commands == ["osc"]
+
+    await manager.close()
+
+
+def test_windows_shell_prefers_pwsh_when_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands = {
+        "pwsh.exe": r"C:\Program Files\PowerShell\7\pwsh.exe",
+        "powershell.exe": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    }
+    monkeypatch.setattr(remote_exec.os, "name", "nt")
+    monkeypatch.setattr(remote_exec.shutil, "which", lambda name: commands.get(name))
+
+    command = LocalShellSession(cwd=None)._shell_command()
+
+    assert command[0] == commands["pwsh.exe"]
 
 
 async def test_exec_op_payload_timeouts_override_connector_defaults(

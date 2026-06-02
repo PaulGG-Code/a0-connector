@@ -222,11 +222,7 @@ class AgentCommandPalette(CommandPalette):
             token = raw_command.split(maxsplit=1)[0].strip().lower().lstrip("/") or "command"
             worker_name = f"slash-{token.replace('/', '-')}"
             self._close_and_call_later(
-                lambda: self.app.run_worker(
-                    self.app._dispatch_command(raw_command),
-                    exclusive=True,
-                    name=worker_name,
-                )
+                lambda: self.app._run_dispatch_command(raw_command, worker_name=worker_name)
             )
             return
 
@@ -236,11 +232,7 @@ class AgentCommandPalette(CommandPalette):
             token = raw_command[1:].split(maxsplit=1)[0].strip().lower() or "skill"
             worker_name = f"skill-{self.app._command_worker_slug(token)}"
             self._close_and_call_later(
-                lambda: self.app.run_worker(
-                    self.app._dispatch_skill_command(raw_command),
-                    exclusive=True,
-                    name=worker_name,
-                )
+                lambda: self.app._run_skill_command(raw_command, worker_name=worker_name)
             )
             return
 

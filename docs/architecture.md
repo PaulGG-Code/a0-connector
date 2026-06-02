@@ -40,7 +40,7 @@ All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
 
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
-| `capabilities` | Public | Discovery: protocol, features, session contract, `auth_required` |
+| `capabilities` | Public | Discovery: protocol, Agent Zero version, features, session contract, `auth_required` |
 | `chat_create` | Session | Create a new chat context |
 | `chats_list` | Session | List existing contexts |
 | `chat_get` | Session | Get a single context |
@@ -72,7 +72,7 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 
 | Event | Purpose |
 |-------|---------|
-| `connector_hello` | Handshake/metadata refresh: returns protocol version, features, `exec_config`, and remote-tool state |
+| `connector_hello` | Handshake/metadata refresh: returns protocol version, Agent Zero version, features, `exec_config`, and remote-tool state |
 | `connector_subscribe_context` | Subscribe to a context event stream |
 | `connector_unsubscribe_context` | Unsubscribe from a context |
 | `connector_send_message` | Send user message asynchronously |
@@ -103,6 +103,10 @@ active, the payload includes `context_id`; the backend re-associates that SID
 with the context before the next prompt is built so gated stubs such as
 `code_execution_remote` and host-backed Browser routing are exposed for the
 correct chat.
+
+Both public `capabilities` and `connector_hello` include `agent_zero_version`.
+The CLI compares that value with its own package version and surfaces a warning
+when the connected Agent Zero Core is newer than the installed CLI.
 
 ## Host browser operations
 
