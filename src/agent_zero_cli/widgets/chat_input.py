@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
+from rich.markup import escape as _markup_escape
 from textual import events
 from textual.message import Message
 from textual.widgets import TextArea
@@ -160,7 +161,13 @@ class ChatInput(TextArea):
     # ---- in-input progress (WebUI-style) ----------------------------
 
     def _compose_activity_placeholder(self) -> str:
-        detail = f" [{self._activity_detail}]" if self._activity_detail else ""
+        if self._activity_detail:
+            # Escape [ to \[ so Rich/Textual does not interpret path components or
+            # shell expressions inside the label as markup tags (issue #13).
+            safe = _markup_escape(self._activity_detail)
+            detail = f" \\[{safe}]"
+        else:
+            detail = ""
         return f"{_PROGRESS_PREFIX}{self._activity_label}{detail}"
 
     def _compose_placeholder(self) -> str:
