@@ -4,6 +4,7 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 from textual.app import App, ComposeResult
+from textual.css.query import NoMatches
 from textual.widgets import Static
 
 from agent_zero_cli.screens.installed_plugins import (
@@ -128,6 +129,27 @@ async def test_installed_plugins_screen_strips_control_chars_from_search() -> No
         search.value = "\x06linear"
         await pilot.pause(0.2)
         assert search.value == "linear"
+
+
+async def test_installed_plugins_screen_omits_unavailable_marketplace_copy() -> None:
+    app = InstalledPluginsHarness(
+        [
+            {
+                "name": "_linear",
+                "display_name": "Linear",
+                "enabled": True,
+                "toggleable": True,
+            }
+        ]
+    )
+
+    async with app.run_test(size=(120, 30)) as pilot:
+        await pilot.pause(0.2)
+        assert app.screen_ref is not None
+        with pytest.raises(NoMatches):
+            app.screen_ref.query_one("#installed-plugins-tabs")
+        help_text = app.screen_ref.query_one("#installed-plugins-help", Static)
+        assert "ctrl+f" not in str(help_text.content).casefold()
 
 
 async def test_installed_plugins_screen_refuses_protected_toggle() -> None:

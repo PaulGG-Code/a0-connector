@@ -174,10 +174,6 @@ class InstalledPluginsScreen(ModalScreen[None]):
             with Vertical(id="installed-plugins-box"):
                 yield Static("Plugins", id="installed-plugins-title")
                 yield Static("", id="installed-plugins-summary")
-                yield Static(
-                    "[Installed Plugins]  Marketplace install unavailable",
-                    id="installed-plugins-tabs",
-                )
                 yield Input(
                     placeholder="Type to search installed plugins",
                     id="installed-plugins-search",
@@ -186,7 +182,7 @@ class InstalledPluginsScreen(ModalScreen[None]):
                 yield Static("", id="installed-plugins-empty")
                 yield Static("", id="installed-plugins-status")
                 yield Static(
-                    "space toggle | arrows | enter details | ctrl+f search | esc close",
+                    "space toggle | arrows | enter details | esc close",
                     id="installed-plugins-help",
                 )
 

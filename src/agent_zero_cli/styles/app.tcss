@@ -608,15 +608,9 @@ InstalledPluginsScreen {
 }
 
 #installed-plugins-summary,
-#installed-plugins-tabs,
 #installed-plugins-status,
 #installed-plugins-help {
     color: #9aa7b4;
-}
-
-#installed-plugins-tabs {
-    color: #38c5d8;
-    text-style: bold;
 }
 
 #installed-plugins-search {
