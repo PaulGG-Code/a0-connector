@@ -584,9 +584,16 @@ def _load_text_editor_remote_tool(*, file_op_handler):
     return shared_ws_manager, ws_runtime_mod, tool_mod
 
 
-def _load_code_execution_remote_tool(*, exec_handler):
+def _load_code_execution_remote_tool(
+    *,
+    exec_handler,
+    code_execution_config: dict[str, object] | None = None,
+):
     shared_ws_manager = _FakeExecWsManager(exec_handler=exec_handler)
-    _install_fake_helpers(shared_ws_manager=shared_ws_manager)
+    _install_fake_helpers(
+        code_execution_config=code_execution_config,
+        shared_ws_manager=shared_ws_manager,
+    )
     ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     shared_ws_manager.ws_runtime_mod = ws_runtime_mod
@@ -1755,6 +1762,90 @@ def test_code_execution_remote_allows_output_runtime_while_cli_is_read_only() ->
 
     assert response.message == "Session 8 completed.\n\ntick:1\ntick:2\ntick:3"
     assert shared_ws_manager.calls[0]["payload"]["runtime"] == "output"
+
+
+def test_code_execution_remote_forwards_code_execution_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    code_timeouts = {
+        "first_output_timeout": 12,
+        "between_output_timeout": 8,
+        "max_exec_timeout": 345,
+        "dialog_timeout": 2,
+    }
+    output_timeouts = {
+        "first_output_timeout": 24,
+        "between_output_timeout": 12,
+        "max_exec_timeout": 600,
+        "dialog_timeout": 3,
+    }
+    config = {
+        "code_exec_first_output_timeout": code_timeouts["first_output_timeout"],
+        "code_exec_between_output_timeout": code_timeouts["between_output_timeout"],
+        "code_exec_max_exec_timeout": code_timeouts["max_exec_timeout"],
+        "code_exec_dialog_timeout": code_timeouts["dialog_timeout"],
+        "output_first_output_timeout": output_timeouts["first_output_timeout"],
+        "output_between_output_timeout": output_timeouts["between_output_timeout"],
+        "output_max_exec_timeout": output_timeouts["max_exec_timeout"],
+        "output_dialog_timeout": output_timeouts["dialog_timeout"],
+    }
+
+    def handler(payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "op_id": payload["op_id"],
+            "ok": True,
+            "result": {
+                "message": f"Session {payload['session']} completed.",
+                "output": str(payload["runtime"]),
+                "running": False,
+            },
+        }
+
+    shared_ws_manager, ws_runtime_mod, tool_mod = _load_code_execution_remote_tool(
+        exec_handler=handler,
+        code_execution_config=config,
+    )
+    original_wait_for = asyncio.wait_for
+    wait_timeouts: list[float] = []
+
+    async def recording_wait_for(future, timeout):
+        wait_timeouts.append(timeout)
+        return await original_wait_for(future, timeout=0.25)
+
+    monkeypatch.setattr(tool_mod.asyncio, "wait_for", recording_wait_for)
+
+    agent = _FakeRemoteAgent()
+    ws_runtime_mod.register_sid("sid-cli")
+    ws_runtime_mod.subscribe_sid_to_context("sid-cli", agent.context.id)
+    ws_runtime_mod.store_sid_remote_exec_metadata("sid-cli", {"enabled": True})
+    ws_runtime_mod.store_sid_remote_file_metadata(
+        "sid-cli",
+        {"enabled": True, "write_enabled": True, "mode": "read_write"},
+    )
+
+    terminal_response = asyncio.run(
+        _create_code_execution_remote(
+            tool_mod,
+            agent,
+            runtime="terminal",
+            session=0,
+            code="pwd",
+        ).execute()
+    )
+    output_response = asyncio.run(
+        _create_code_execution_remote(
+            tool_mod,
+            agent,
+            runtime="output",
+            session=0,
+        ).execute()
+    )
+
+    assert terminal_response.message == "Session 0 completed.\n\nterminal"
+    assert output_response.message == "Session 0 completed.\n\noutput"
+    assert shared_ws_manager.calls[0]["payload"]["timeouts"] == code_timeouts
+    assert shared_ws_manager.calls[1]["payload"]["timeouts"] == output_timeouts
+    assert wait_timeouts == [360.0, 615.0]
 
 
 def test_code_execution_remote_forwards_reset_true_with_replacement_command() -> None:

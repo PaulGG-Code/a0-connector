@@ -29,13 +29,13 @@ _SUPPORTED_RUNTIMES = ("terminal", "python", "nodejs", "output", "reset", "input
 _DEFAULT_CODE_EXEC_TIMEOUTS = {
     "first_output_timeout": 30,
     "between_output_timeout": 15,
-    "max_exec_timeout": 180,
+    "max_exec_timeout": 240,
     "dialog_timeout": 5,
 }
 _DEFAULT_OUTPUT_TIMEOUTS = {
-    "first_output_timeout": 90,
-    "between_output_timeout": 45,
-    "max_exec_timeout": 300,
+    "first_output_timeout": 120,
+    "between_output_timeout": 60,
+    "max_exec_timeout": 600,
     "dialog_timeout": 5,
 }
 _DEFAULT_PROMPT_PATTERNS = (
@@ -122,6 +122,19 @@ def _coerce_timeout_group(raw: Any, defaults: dict[str, int]) -> dict[str, int]:
             result[key] = int(value)
         except (TypeError, ValueError):
             result[key] = defaults[key]
+    return result
+
+
+def _merge_timeout_group(defaults: dict[str, int], raw: Any) -> dict[str, int]:
+    group = raw if isinstance(raw, dict) else {}
+    result = dict(defaults)
+    for key in _TIMEOUT_KEYS:
+        if key not in group:
+            continue
+        try:
+            result[key] = max(0, int(group[key]))
+        except (TypeError, ValueError):
+            continue
     return result
 
 
@@ -546,6 +559,13 @@ class RemoteExecManager:
     def set_exec_config(self, payload: dict[str, Any] | None) -> None:
         self._exec_config = _normalize_exec_config(payload)
 
+    def _timeouts_for_runtime(self, runtime: str, payload: dict[str, Any]) -> dict[str, int]:
+        if runtime == "output":
+            defaults = self._exec_config.output_timeouts
+        else:
+            defaults = self._exec_config.code_exec_timeouts
+        return _merge_timeout_group(defaults, payload.get("timeouts"))
+
     async def close(self) -> None:
         sessions = list(self._sessions.values())
         self._sessions.clear()
@@ -594,6 +614,7 @@ class RemoteExecManager:
                     session=session,
                     command=str(code),
                     reset=reset_requested,
+                    timeouts=self._timeouts_for_runtime(runtime, data),
                 )
             elif runtime == "python":
                 code = data.get("code")
@@ -603,6 +624,7 @@ class RemoteExecManager:
                     session=session,
                     code=str(code),
                     reset=reset_requested,
+                    timeouts=self._timeouts_for_runtime(runtime, data),
                 )
             elif runtime == "nodejs":
                 code = data.get("code")
@@ -612,6 +634,7 @@ class RemoteExecManager:
                     session=session,
                     code=str(code),
                     reset=reset_requested,
+                    timeouts=self._timeouts_for_runtime(runtime, data),
                 )
             elif runtime == "input":
                 keyboard = data.get("keyboard")
@@ -619,9 +642,16 @@ class RemoteExecManager:
                     keyboard = data.get("code")
                 if keyboard is None:
                     raise ValueError("keyboard is required for runtime=input")
-                result = await self.send_input(session=session, keyboard=str(keyboard))
+                result = await self.send_input(
+                    session=session,
+                    keyboard=str(keyboard),
+                    timeouts=self._timeouts_for_runtime(runtime, data),
+                )
             elif runtime == "output":
-                result = await self.collect_output(session=session)
+                result = await self.collect_output(
+                    session=session,
+                    timeouts=self._timeouts_for_runtime(runtime, data),
+                )
             else:
                 result = await self.reset_session(
                     session=session,
@@ -638,11 +668,12 @@ class RemoteExecManager:
         session: int,
         command: str,
         reset: bool = False,
+        timeouts: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=command,
-            timeouts=self._exec_config.code_exec_timeouts,
+            timeouts=timeouts or self._exec_config.code_exec_timeouts,
             reset=reset,
         )
 
@@ -652,11 +683,12 @@ class RemoteExecManager:
         session: int,
         code: str,
         reset: bool = False,
+        timeouts: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=_build_python_command(code),
-            timeouts=self._exec_config.code_exec_timeouts,
+            timeouts=timeouts or self._exec_config.code_exec_timeouts,
             reset=reset,
         )
 
@@ -666,15 +698,22 @@ class RemoteExecManager:
         session: int,
         code: str,
         reset: bool = False,
+        timeouts: dict[str, int] | None = None,
     ) -> dict[str, Any]:
         return await self._run_shell_command(
             session=session,
             command=_build_node_command(code),
-            timeouts=self._exec_config.code_exec_timeouts,
+            timeouts=timeouts or self._exec_config.code_exec_timeouts,
             reset=reset,
         )
 
-    async def send_input(self, *, session: int, keyboard: str) -> dict[str, Any]:
+    async def send_input(
+        self,
+        *,
+        session: int,
+        keyboard: str,
+        timeouts: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         if session not in self._sessions or not self._sessions[session].running:
             raise ValueError(
                 f"Session {session} is not awaiting input. runtime=input is a deprecated "
@@ -687,14 +726,19 @@ class RemoteExecManager:
         state.running = True
         return await self._get_terminal_output(
             session=session,
-            timeouts=self._exec_config.code_exec_timeouts,
+            timeouts=timeouts or self._exec_config.code_exec_timeouts,
             reset_full_output=False,
         )
 
-    async def collect_output(self, *, session: int) -> dict[str, Any]:
+    async def collect_output(
+        self,
+        *,
+        session: int,
+        timeouts: dict[str, int] | None = None,
+    ) -> dict[str, Any]:
         return await self._get_terminal_output(
             session=session,
-            timeouts=self._exec_config.output_timeouts,
+            timeouts=timeouts or self._exec_config.output_timeouts,
             reset_full_output=False,
         )
 

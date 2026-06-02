@@ -56,6 +56,12 @@ class FakeShellSession:
             self.command_completed = False
             return
 
+        if command == "silent":
+            self._full_output = ""
+            self._partial_output = ""
+            self.command_completed = False
+            return
+
         self._full_output = f"ran:{command}\r\n"
         self._partial_output = self._full_output
         self.command_completed = True
@@ -99,6 +105,23 @@ def _manager(tmp_path: Path, *, enabled: bool = True) -> RemoteExecManager:
     return RemoteExecManager(cwd=str(tmp_path), enabled=enabled, poll_interval=0.01)
 
 
+def test_default_timeout_config_matches_core_code_execution(tmp_path: Path) -> None:
+    manager = _manager(tmp_path)
+
+    assert manager._exec_config.code_exec_timeouts == {
+        "first_output_timeout": 30,
+        "between_output_timeout": 15,
+        "max_exec_timeout": 240,
+        "dialog_timeout": 5,
+    }
+    assert manager._exec_config.output_timeouts == {
+        "first_output_timeout": 120,
+        "between_output_timeout": 60,
+        "max_exec_timeout": 600,
+        "dialog_timeout": 5,
+    }
+
+
 async def test_remote_exec_uses_connector_local_runtime_without_core_checkout(
     tmp_path: Path,
     created_shells: list[FakeShellSession],
@@ -118,6 +141,35 @@ async def test_remote_exec_uses_connector_local_runtime_without_core_checkout(
     assert result["result"]["output"] == "hello"
     assert result["result"]["running"] is False
     assert created_shells[0].commands == ["ansi"]
+
+    await manager.close()
+
+
+async def test_exec_op_payload_timeouts_override_connector_defaults(
+    tmp_path: Path,
+    created_shells: list[FakeShellSession],
+) -> None:
+    manager = _manager(tmp_path)
+
+    result = await manager.handle_exec_op(
+        {
+            "op_id": "exec-timeout",
+            "runtime": "terminal",
+            "session": 0,
+            "code": "silent",
+            "timeouts": {
+                "first_output_timeout": 0,
+                "between_output_timeout": 1,
+                "max_exec_timeout": 5,
+                "dialog_timeout": 0,
+            },
+        }
+    )
+
+    assert result["ok"] is True
+    assert result["result"]["running"] is True
+    assert "after 0 seconds with no output" in result["result"]["message"]
+    assert created_shells[0].commands == ["silent"]
 
     await manager.close()
 

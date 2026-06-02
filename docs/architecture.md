@@ -276,6 +276,18 @@ must terminate the existing session process tree before running the replacement
 command, so stuck child processes cannot keep the session or CLI shutdown path
 blocked.
 
+Execution payloads may include a `timeouts` object with the same keys used by
+Agent Zero's `_code_execution` plugin settings:
+- `first_output_timeout`
+- `between_output_timeout`
+- `max_exec_timeout`
+- `dialog_timeout`
+
+The backend selects `code_exec_timeouts` for `terminal`, `python`, `nodejs`, and
+`input`, and `output_timeouts` for `output`. The CLI merges operation-level
+timeouts over its latest `connector_hello.exec_config` values before monitoring
+the local shell.
+
 `connector_hello` includes `exec_config` with:
 - `code_exec_timeouts`
 - `output_timeouts`
