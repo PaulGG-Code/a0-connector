@@ -1017,6 +1017,51 @@ class AgentZeroCLI(App):
         )
         self._focus_message_input()
 
+    async def _close_context_tab(
+        self,
+        context_id: str,
+        *,
+        replacement_context_id: str = "",
+    ) -> None:
+        normalized_context_id = str(context_id or "").strip()
+        if not normalized_context_id:
+            return
+
+        existing_index = next(
+            (
+                index
+                for index, tab in enumerate(self._context_tabs)
+                if tab.context_id == normalized_context_id
+            ),
+            None,
+        )
+        if existing_index is None:
+            return
+
+        was_current = normalized_context_id == self.current_context
+        remaining_tabs = [
+            tab for tab in self._context_tabs if tab.context_id != normalized_context_id
+        ]
+        self._context_tabs = remaining_tabs
+        self._sync_context_tabs()
+
+        if not was_current:
+            self._focus_message_input()
+            return
+
+        replacement = str(replacement_context_id or "").strip()
+        if not replacement or all(tab.context_id != replacement for tab in remaining_tabs):
+            if remaining_tabs:
+                replacement = remaining_tabs[min(existing_index, len(remaining_tabs) - 1)].context_id
+            else:
+                replacement = ""
+
+        if replacement:
+            await self._switch_context_from_tab(replacement)
+            return
+
+        self._focus_message_input()
+
     def _set_splash_state(self, **changes: Any) -> None:
         splash_helpers.set_splash_state(self, **changes)
 
@@ -2141,6 +2186,20 @@ class AgentZeroCLI(App):
     def on_context_tabs_new_requested(self, event: ContextTabs.NewRequested) -> None:
         event.stop()
         self.run_worker(self._cmd_new(), exclusive=True, name="context-tab-new")
+
+    def on_context_tabs_close_requested(self, event: ContextTabs.CloseRequested) -> None:
+        event.stop()
+        context_id = event.context_id.strip()
+        if not context_id:
+            return
+        self.run_worker(
+            self._close_context_tab(
+                context_id,
+                replacement_context_id=event.replacement_context_id,
+            ),
+            exclusive=True,
+            name=f"context-tab-close-{context_id}",
+        )
 
     def on_project_menu_popover_dismiss_requested(self, event: ProjectMenuPopover.DismissRequested) -> None:
         del event

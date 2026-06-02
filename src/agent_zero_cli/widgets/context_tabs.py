@@ -156,6 +156,7 @@ class ContextTabs(Static):
         Binding("left", "previous_tab", "Previous tab", show=False),
         Binding("right", "next_tab", "Next tab", show=False),
         Binding("enter", "activate", "Activate tab", show=False),
+        Binding("x", "close_tab", "Close tab", show=False),
         Binding("n", "new_chat", "New chat", show=False),
     ]
 
@@ -168,6 +169,18 @@ class ContextTabs(Static):
     class NewRequested(Message):
         def __init__(self, tabs: "ContextTabs") -> None:
             super().__init__()
+            self.tabs = tabs
+
+    class CloseRequested(Message):
+        def __init__(
+            self,
+            context_id: str,
+            replacement_context_id: str,
+            tabs: "ContextTabs",
+        ) -> None:
+            super().__init__()
+            self.context_id = context_id
+            self.replacement_context_id = replacement_context_id
             self.tabs = tabs
 
     def __init__(self, *, id: str | None = None) -> None:
@@ -383,6 +396,19 @@ class ContextTabs(Static):
                 return index
         return 0
 
+    def _active_tab_index(self) -> int | None:
+        for index, tab in enumerate(self._tabs):
+            if tab.context_id == self._active_context_id:
+                return index
+        return None
+
+    def _replacement_after_close(self, closed_index: int) -> str:
+        remaining = [tab for index, tab in enumerate(self._tabs) if index != closed_index]
+        if not remaining:
+            return ""
+        replacement_index = min(closed_index, len(remaining) - 1)
+        return remaining[replacement_index].context_id
+
     def _select_relative(self, delta: int) -> None:
         if len(self._tabs) < 2:
             return
@@ -398,6 +424,20 @@ class ContextTabs(Static):
     def action_activate(self) -> None:
         if self._active_context_id:
             self.post_message(self.ContextSelected(self._active_context_id, self))
+
+    def action_close_tab(self) -> None:
+        index = self._active_tab_index()
+        if index is None:
+            return
+
+        tab = self._tabs[index]
+        self.post_message(
+            self.CloseRequested(
+                tab.context_id,
+                self._replacement_after_close(index),
+                self,
+            )
+        )
 
     def action_new_chat(self) -> None:
         if self._can_create:

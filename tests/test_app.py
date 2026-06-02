@@ -492,6 +492,10 @@ class ContextTabsRenderApp(App[None]):
     }
     """
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_events: list[tuple[str, str]] = []
+
     def compose(self) -> ComposeResult:
         yield ContextTabs(id="context-tabs")
 
@@ -504,6 +508,10 @@ class ContextTabsRenderApp(App[None]):
             "ctx-alpha",
             can_create=True,
         )
+
+    def on_context_tabs_close_requested(self, event: ContextTabs.CloseRequested) -> None:
+        event.stop()
+        self.close_events.append((event.context_id, event.replacement_context_id))
 
 
 @pytest.fixture
@@ -1512,6 +1520,17 @@ async def test_context_tabs_render_in_textual() -> None:
     assert "Streaming" in screenshot
 
 
+async def test_context_tabs_x_requests_close_for_active_tab() -> None:
+    app = ContextTabsRenderApp()
+
+    async with app.run_test(size=(80, 4)) as pilot:
+        await pilot.press("tab")
+        await pilot.press("x")
+        await pilot.pause(delay=0.1)
+
+    assert app.close_events == [("ctx-alpha", "ctx-beta")]
+
+
 async def test_context_tab_switch_uses_stored_message_hint(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -1531,6 +1550,59 @@ async def test_context_tab_switch_uses_stored_message_hint(
     await dummy_app._switch_context_from_tab("ctx-beta")
 
     assert switches == [("ctx-beta", True)]
+
+
+async def test_closing_active_context_tab_hides_tab_and_switches_to_neighbor(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.connector_features = {"chat_create"}
+    dummy_app.current_context = "ctx-alpha"
+    dummy_app._context_tabs = [
+        ContextTab("ctx-alpha", "Alpha", True),
+        ContextTab("ctx-beta", "Beta", True),
+        ContextTab("ctx-gamma", "Gamma", False),
+    ]
+    switches: list[str] = []
+
+    async def fake_switch_context_from_tab(context_id: str) -> None:
+        switches.append(context_id)
+
+    monkeypatch.setattr(dummy_app, "_switch_context_from_tab", fake_switch_context_from_tab)
+
+    await dummy_app._close_context_tab("ctx-alpha", replacement_context_id="ctx-beta")
+
+    tab_strip = dummy_app._test_widgets["#context-tabs"]  # type: ignore[index]
+    assert tab_strip.tabs == (
+        ContextTab("ctx-beta", "Beta", True),
+        ContextTab("ctx-gamma", "Gamma", False),
+    )
+    assert switches == ["ctx-beta"]
+
+
+async def test_closing_last_context_tab_hides_strip_without_switching(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-alpha"
+    dummy_app._context_tabs = [ContextTab("ctx-alpha", "Alpha", True)]
+    switches: list[str] = []
+
+    async def fake_switch_context_from_tab(context_id: str) -> None:
+        switches.append(context_id)
+
+    monkeypatch.setattr(dummy_app, "_switch_context_from_tab", fake_switch_context_from_tab)
+
+    await dummy_app._close_context_tab("ctx-alpha")
+
+    tab_strip = dummy_app._test_widgets["#context-tabs"]  # type: ignore[index]
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert tab_strip.tabs == ()
+    assert tab_strip.display is False
+    assert switches == []
+    assert input_widget.focused is True
 
 
 async def test_remote_tree_snapshot_resends_unchanged_tree_before_backend_expiry(
