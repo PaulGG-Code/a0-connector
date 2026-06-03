@@ -426,6 +426,9 @@ class ContextTabs(Static):
             self.post_message(self.ContextSelected(self._active_context_id, self))
 
     def action_close_tab(self) -> None:
+        if len(self._tabs) < 2:
+            return
+
         index = self._active_tab_index()
         if index is None:
             return

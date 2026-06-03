@@ -4,7 +4,17 @@ This note lists files that define the **Textual** terminal UI (layout, widgets, 
 
 ## IDE embedded terminal
 
-When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, top chat tabs that can be focused with `Tab` (`Left`/`Right` switch, `x` hides the current tab without deleting the chat, `n` creates a chat), and a compact footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F6` Chats, `F7` Nudge, `F8` Pause or Resume, and `^P` Commands).
+When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, top chat tabs, and a compact footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F6` Chats, `F7` Nudge, `F8` Pause or Resume, and `^P` Commands).
+
+## Chat Tab Shortcuts
+
+Focus the top chat tab strip with `Tab` first, then use:
+
+| Shortcut | Action |
+|----------|--------|
+| `Tab`, then `n` | Create a new chat in a new tab. |
+| `Tab`, then `x` | Close/hide the current tab without deleting the chat, when another tab remains. |
+| `Tab`, then `Left` / `Right` | Move between visible chat tabs. |
 
 ## Files that are mainly “frontend”
 

@@ -1037,6 +1037,8 @@ class AgentZeroCLI(App):
         )
         if existing_index is None:
             return
+        if len(self._context_tabs) < 2:
+            return
 
         was_current = normalized_context_id == self.current_context
         remaining_tabs = [

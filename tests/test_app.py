@@ -656,6 +656,20 @@ def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     assert bindings["command_palette"].key_display == "^P"
 
 
+def test_surface_help_documents_chat_tab_shortcuts(dummy_app: DummyAgentZeroCLI) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context_has_messages = True
+
+    dummy_app._surface_help()
+
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    help_text = "\n".join(str(write) for write in log.writes)
+    assert "Chat tab shortcuts:" in help_text
+    assert "Tab + n - create a new chat in a new tab." in help_text
+    assert "Tab + x - close/hide the current tab without deleting the chat" in help_text
+    assert "Tab + Left/Right - move between visible chat tabs." in help_text
+
+
 def test_raw_slash_command_detection_requires_arguments() -> None:
     assert is_raw_slash_command("/browser status")
     assert is_raw_slash_command("/computer-use on")
@@ -1531,6 +1545,22 @@ async def test_context_tabs_x_requests_close_for_active_tab() -> None:
     assert app.close_events == [("ctx-alpha", "ctx-beta")]
 
 
+async def test_context_tabs_x_ignores_only_visible_tab() -> None:
+    app = ContextTabsRenderApp()
+
+    async with app.run_test(size=(80, 4)) as pilot:
+        app.query_one("#context-tabs", ContextTabs).set_tabs(
+            [ContextTab("ctx-alpha", "Architecture sketch", True)],
+            "ctx-alpha",
+            can_create=True,
+        )
+        await pilot.press("tab")
+        await pilot.press("x")
+        await pilot.pause(delay=0.1)
+
+    assert app.close_events == []
+
+
 async def test_context_tab_switch_uses_stored_message_hint(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -1581,13 +1611,14 @@ async def test_closing_active_context_tab_hides_tab_and_switches_to_neighbor(
     assert switches == ["ctx-beta"]
 
 
-async def test_closing_last_context_tab_hides_strip_without_switching(
+async def test_closing_only_context_tab_is_ignored(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     dummy_app.connected = True
     dummy_app.current_context = "ctx-alpha"
     dummy_app._context_tabs = [ContextTab("ctx-alpha", "Alpha", True)]
+    dummy_app._sync_context_tabs()
     switches: list[str] = []
 
     async def fake_switch_context_from_tab(context_id: str) -> None:
@@ -1599,10 +1630,11 @@ async def test_closing_last_context_tab_hides_strip_without_switching(
 
     tab_strip = dummy_app._test_widgets["#context-tabs"]  # type: ignore[index]
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
-    assert tab_strip.tabs == ()
-    assert tab_strip.display is False
+    assert dummy_app._context_tabs == [ContextTab("ctx-alpha", "Alpha", True)]
+    assert tab_strip.tabs == (ContextTab("ctx-alpha", "Alpha", True),)
+    assert tab_strip.display is True
     assert switches == []
-    assert input_widget.focused is True
+    assert input_widget.focused is False
 
 
 async def test_remote_tree_snapshot_resends_unchanged_tree_before_backend_expiry(

@@ -21,6 +21,13 @@ if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
 
 
+_CHAT_TAB_SHORTCUT_LINES = (
+    "Tab + n - create a new chat in a new tab.",
+    "Tab + x - close/hide the current tab without deleting the chat, when another tab remains.",
+    "Tab + Left/Right - move between visible chat tabs.",
+)
+
+
 async def refresh_workspace_from_settings(app: AgentZeroCLI) -> None:
     if "settings_get" not in app.connector_features:
         app._set_workspace_context(remote_workspace="")
@@ -217,6 +224,9 @@ def surface_help(app: AgentZeroCLI) -> None:
             lines.append("")
             lines.append("Unavailable right now:")
             lines.extend(f"- {line}" for line in unavailable)
+        lines.append("")
+        lines.append("Chat tab shortcuts:")
+        lines.extend(f"- {line}" for line in _CHAT_TAB_SHORTCUT_LINES)
         app._set_splash_state(
             message="Available commands",
             detail="\n".join(lines),
@@ -232,6 +242,9 @@ def surface_help(app: AgentZeroCLI) -> None:
         log.write(Text("Unavailable right now:", style="dim"))
         for line in unavailable:
             log.write(line)
+    log.write(Text("Chat tab shortcuts:", style="bold"))
+    for line in _CHAT_TAB_SHORTCUT_LINES:
+        log.write(line)
 
 
 def welcome_actions(app: AgentZeroCLI) -> tuple[SplashAction, ...]:
