@@ -1073,12 +1073,16 @@ async def test_remote_debugging_session_opens_lists_and_reads_content(
     session = HostBrowserSession(context_id="ctx-cdp-actions", profile=profile)
 
     opened = await session.open("https://example.com/")
+    reopened = await session.open("https://example.com")
+    assert len(instances[0].targets) == 1
     content = await session.content(opened["id"])
     listed = await session.list(include_content=True)
     closed = await session.close_browser(opened["id"])
     await session.close()
 
     assert opened["state"]["currentUrl"] == "https://example.com/"
+    assert reopened["id"] == opened["id"]
+    assert reopened["reused"] is True
     assert content == {"document": "[button 1] Continue"}
     assert listed["browsers"][0]["content"] == {"document": "[button 1] Continue"}
     assert closed == {"browsers": [], "last_interacted_browser_id": None}

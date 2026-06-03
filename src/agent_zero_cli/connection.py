@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -301,7 +302,13 @@ async def begin_connection(
     app.client.on_file_op = app._handle_file_op
     app.client.on_exec_op = app._handle_exec_op
     app.client.on_computer_use_op = app._handle_computer_use_op
+    app.client.on_computer_use_op_result_sent = (
+        lambda request, _result: _refresh_metadata_after_computer_use_result(app, request)
+    )
     app.client.on_browser_op = app._handle_browser_op
+    app.client.on_browser_op_result_sent = (
+        lambda request, _result: _refresh_metadata_after_browser_result(app, request)
+    )
 
     try:
         await app.client.connect_websocket()
@@ -405,6 +412,32 @@ async def begin_connection(
     app._start_token_refresh()
     app._sync_body_mode()
     app._focus_message_input()
+
+
+def _refresh_metadata_after_computer_use_result(
+    app: AgentZeroCLI,
+    request: dict[str, Any],
+) -> None:
+    action = str(request.get("action") or "").strip().lower().replace("-", "_")
+    if action in {"start_session", "stop_session"}:
+        _schedule_remote_tool_metadata_refresh(app)
+
+
+def _refresh_metadata_after_browser_result(
+    app: AgentZeroCLI,
+    request: dict[str, Any],
+) -> None:
+    action = str(request.get("action") or "").strip().lower().replace("-", "_")
+    if action in {"ensure", "open", "close", "close_all"}:
+        _schedule_remote_tool_metadata_refresh(app)
+
+
+def _schedule_remote_tool_metadata_refresh(app: AgentZeroCLI) -> None:
+    async def refresh() -> None:
+        with contextlib.suppress(Exception):
+            await app._refresh_remote_tool_metadata()
+
+    asyncio.create_task(refresh())
 
 
 def _reset_disconnected_state(app: AgentZeroCLI) -> None:

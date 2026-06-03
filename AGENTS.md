@@ -158,6 +158,15 @@ The builtin `_a0_connector` plugin is not stored in this repository. For backend
 work, use Agent Zero Core's `plugins/_a0_connector` directory (or
 `/a0/plugins/_a0_connector` in Docker).
 
+Remote tool operation handlers must emit their `connector_*_op_result` event
+before starting follow-up metadata refresh work. Use the client after-result
+callbacks for Browser and computer-use status refreshes so server-side pending
+operations resolve before any nested `connector_hello` round trip.
+
+Host-browser `open` should reuse an already-open tab with the same normalized
+URL before creating a new tab. Keep `list`/`set_active` available for
+title-based or URL-based tab selection workflows.
+
 ---
 
 ## TUI Architecture

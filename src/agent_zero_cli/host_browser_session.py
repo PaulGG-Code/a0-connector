@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import platform
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit, urlunsplit
 
 from agent_zero_cli.host_browser_cdp import CDPConnection, CDPContext, CDPPage
 from agent_zero_cli.host_browser_common import (
@@ -426,10 +427,22 @@ class HostBrowserSession:
 
     async def open(self, url: str = "") -> dict[str, Any]:
         await self.ensure_started()
+        target_url = normalize_url(url) if str(url or "").strip() else "about:blank"
+        if target_url != "about:blank":
+            existing_id = await self._browser_id_for_url(target_url)
+            if existing_id is not None:
+                self.last_interacted_browser_id = existing_id
+                with contextlib.suppress(Exception):
+                    await self._page(existing_id).bring_to_front()
+                return {
+                    "id": existing_id,
+                    "reused": True,
+                    "state": await self._state(existing_id),
+                }
+
         page = await self.context.new_page()
         browser_page = await self._register_page(page)
         self.last_interacted_browser_id = browser_page.id
-        target_url = normalize_url(url) if str(url or "").strip() else "about:blank"
         if target_url != "about:blank":
             await self._goto(page, target_url)
         else:
@@ -1161,6 +1174,17 @@ class HostBrowserSession:
                 return browser_id
         return None
 
+    async def _browser_id_for_url(self, url: str) -> int | None:
+        await self._runtime.refresh_pages(self)
+        target = _canonical_compare_url(url)
+        if not target:
+            return None
+        for browser_id in sorted(self.pages):
+            current_url = await self._runtime.current_url(self.pages[browser_id].page)
+            if _canonical_compare_url(current_url) == target:
+                return browser_id
+        return None
+
     def _resolve_browser_id(self, browser_id: int | str | None = None) -> int:
         if browser_id is None or str(browser_id).strip() == "":
             if self.last_interacted_browser_id in self.pages:
@@ -1220,3 +1244,27 @@ class ProfileLockedError(RuntimeError):
     def __init__(self, message: str, *, lock_state: ProfileLockState):
         super().__init__(message)
         self.lock_state = lock_state
+
+
+def _canonical_compare_url(value: str) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw == "about:blank":
+        return raw
+    normalized = normalize_url(raw)
+    parsed = urlsplit(normalized)
+    if not parsed.scheme or not parsed.netloc:
+        return normalized.rstrip("/")
+    path = parsed.path or ""
+    if path == "/":
+        path = ""
+    return urlunsplit(
+        (
+            parsed.scheme.lower(),
+            parsed.netloc.lower(),
+            path.rstrip("/"),
+            parsed.query,
+            parsed.fragment,
+        )
+    )

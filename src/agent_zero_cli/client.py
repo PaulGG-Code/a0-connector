@@ -125,7 +125,9 @@ class A0Client:
         self.on_file_op: Callable[[dict[str, Any]], Any] | None = None
         self.on_exec_op: Callable[[dict[str, Any]], Any] | None = None
         self.on_computer_use_op: Callable[[dict[str, Any]], Any] | None = None
+        self.on_computer_use_op_result_sent: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None
         self.on_browser_op: Callable[[dict[str, Any]], Any] | None = None
+        self.on_browser_op_result_sent: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.base_url}{_PLUGIN_API}/{endpoint}"
@@ -543,6 +545,11 @@ class A0Client:
                 result,
                 namespace=WS_NAMESPACE,
             )
+            await self._notify_op_result_sent(
+                self.on_computer_use_op_result_sent,
+                request,
+                result,
+            )
 
         @self.sio.on(_EVENT_BROWSER_OP, namespace=WS_NAMESPACE)
         async def _on_browser_op(payload: dict[str, Any]) -> None:
@@ -553,8 +560,28 @@ class A0Client:
                 result,
                 namespace=WS_NAMESPACE,
             )
+            await self._notify_op_result_sent(
+                self.on_browser_op_result_sent,
+                request,
+                result,
+            )
 
         self._events_registered = True
+
+    @staticmethod
+    async def _notify_op_result_sent(
+        callback: Callable[[dict[str, Any], dict[str, Any]], Any] | None,
+        request: dict[str, Any],
+        result: dict[str, Any],
+    ) -> None:
+        if callback is None:
+            return
+        try:
+            notification = callback(request, result)
+            if asyncio.iscoroutine(notification):
+                await notification
+        except Exception:
+            return
 
     async def _handle_file_op(self, data: dict[str, Any]) -> dict[str, Any]:
         callback = self.on_file_op

@@ -1993,6 +1993,28 @@ async def test_chat_submission_refreshes_remote_tool_metadata_before_send(
     assert calls[2] == ("message", ("visit LinkedIn in my browser", "ctx-1", []))
 
 
+async def test_remote_tool_op_handlers_return_before_metadata_refresh(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fail_if_refreshed() -> None:
+        raise AssertionError("metadata refresh should happen after result emission")
+
+    monkeypatch.setattr(dummy_app, "_refresh_remote_tool_metadata", fail_if_refreshed)
+
+    computer_use_result = await event_handlers.handle_computer_use_op(
+        dummy_app,
+        {"op_id": "cu-1", "action": "start_session", "context_id": "ctx-1"},
+    )
+    browser_result = await event_handlers.handle_browser_op(
+        dummy_app,
+        {"op_id": "browser-1", "action": "open", "context_id": "ctx-1"},
+    )
+
+    assert computer_use_result == {"op_id": "cu-1", "ok": True, "result": {"status": "active"}}
+    assert browser_result == {"op_id": "browser-1", "ok": True, "result": {"status": "ready"}}
+
+
 async def test_attach_clipboard_image_adds_pending_attachment(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -3651,6 +3673,14 @@ async def test_computer_use_start_session_op_refreshes_active_metadata(
 
     assert result == {"op_id": "op-cu", "ok": True, "result": {"status": "active"}}
     assert dummy_app._computer_use.handled_ops == [{"action": "start_session", "op_id": "op-cu"}]
+    assert calls == []
+
+    connection._refresh_metadata_after_computer_use_result(
+        dummy_app,
+        {"action": "start_session", "op_id": "op-cu"},
+    )
+    await asyncio.sleep(0)
+
     assert calls[-1]["context_id"] == "ctx-cu"
     assert calls[-1]["computer_use"] == {
         "supported": True,

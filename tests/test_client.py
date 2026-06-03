@@ -1209,6 +1209,12 @@ async def test_registers_computer_use_ws_handler_and_emits_result() -> None:
     client.on_computer_use_op = AsyncMock(
         return_value={"op_id": "cu-1", "ok": True, "result": {"status": "active"}}
     )
+    after_calls: list[tuple[dict, dict, list[tuple[str, dict, str | None]]]] = []
+
+    def after_result_sent(request: dict, result: dict) -> None:
+        after_calls.append((dict(request), dict(result), list(client.sio.emit_calls)))
+
+    client.on_computer_use_op_result_sent = after_result_sent
 
     await client.connect_websocket()
 
@@ -1221,6 +1227,19 @@ async def test_registers_computer_use_ws_handler_and_emits_result() -> None:
             "connector_computer_use_op_result",
             {"op_id": "cu-1", "ok": True, "result": {"status": "active"}},
             "/ws",
+        )
+    ]
+    assert after_calls == [
+        (
+            {"op_id": "cu-1", "action": "status", "context_id": "ctx-1"},
+            {"op_id": "cu-1", "ok": True, "result": {"status": "active"}},
+            [
+                (
+                    "connector_computer_use_op_result",
+                    {"op_id": "cu-1", "ok": True, "result": {"status": "active"}},
+                    "/ws",
+                )
+            ],
         )
     ]
 
@@ -1238,6 +1257,12 @@ async def test_registers_browser_ws_handler_and_emits_result() -> None:
     client.on_browser_op = AsyncMock(
         return_value={"op_id": "browser-1", "ok": True, "result": {"id": 1}}
     )
+    after_calls: list[tuple[dict, dict, list[tuple[str, dict, str | None]]]] = []
+
+    def after_result_sent(request: dict, result: dict) -> None:
+        after_calls.append((dict(request), dict(result), list(client.sio.emit_calls)))
+
+    client.on_browser_op_result_sent = after_result_sent
 
     await client.connect_websocket()
 
@@ -1250,6 +1275,19 @@ async def test_registers_browser_ws_handler_and_emits_result() -> None:
             "connector_browser_op_result",
             {"op_id": "browser-1", "ok": True, "result": {"id": 1}},
             "/ws",
+        )
+    ]
+    assert after_calls == [
+        (
+            {"op_id": "browser-1", "action": "open", "context_id": "ctx-1"},
+            {"op_id": "browser-1", "ok": True, "result": {"id": 1}},
+            [
+                (
+                    "connector_browser_op_result",
+                    {"op_id": "browser-1", "ok": True, "result": {"id": 1}},
+                    "/ws",
+                )
+            ],
         )
     ]
 

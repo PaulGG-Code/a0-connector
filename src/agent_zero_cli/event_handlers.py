@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
@@ -208,23 +207,11 @@ async def handle_exec_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, A
 
 
 async def handle_computer_use_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, Any]:
-    action = str(data.get("action") or "").strip().lower().replace("-", "_")
-    refresh_after = action in {"start_session", "stop_session"}
-    try:
-        return await app._computer_use.handle_op(data)
-    finally:
-        if refresh_after:
-            with contextlib.suppress(Exception):
-                await app._refresh_remote_tool_metadata()
+    return await app._computer_use.handle_op(data)
 
 
 async def handle_browser_op(app: AgentZeroCLI, data: dict[str, Any]) -> dict[str, Any]:
-    result = await app._host_browser.handle_op(data)
-    action = str(data.get("action") or "").strip().lower().replace("-", "_")
-    if action in {"ensure", "open", "close", "close_all"}:
-        with contextlib.suppress(Exception):
-            await app._refresh_remote_tool_metadata()
-    return result
+    return await app._host_browser.handle_op(data)
 
 
 def start_remote_tree_publisher(app: AgentZeroCLI) -> None:
