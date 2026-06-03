@@ -2273,23 +2273,12 @@ class AgentZeroCLI(App):
 
     async def _set_computer_use_enabled(self, enabled: bool) -> None:
         was_enabled = self._computer_use.enabled
-        was_rearm_required = self._computer_use.status_label == "rearm required"
         if enabled:
             self._computer_use.set_trust_mode("allow")
         self._computer_use.set_enabled(enabled)
-        arm_result: dict[str, Any] | None = None
         rearm_result: dict[str, Any] | None = None
-        if enabled and not was_rearm_required:
+        if enabled:
             self._computer_use.mark_approval_pending()
-            arm_result = await self._computer_use.ensure_armed(context_id=self.current_context)
-        if (
-            enabled
-            and (
-                was_rearm_required
-                or self._computer_use.status_label == "rearm required"
-                or _computer_use_result_code(arm_result) == "COMPUTER_USE_REARM_REQUIRED"
-            )
-        ):
             rearm_result = await self._computer_use.rearm(context_id=self.current_context)
         if not enabled and was_enabled:
             await self._computer_use.disconnect()
@@ -2299,8 +2288,6 @@ class AgentZeroCLI(App):
             activation_error = None
             if rearm_result is not None and not bool(rearm_result.get("ok")):
                 activation_error = rearm_result
-            elif rearm_result is None and arm_result is not None and not bool(arm_result.get("ok")):
-                activation_error = arm_result
             if activation_error is not None:
                 message = (
                     _computer_use_result_message(activation_error)

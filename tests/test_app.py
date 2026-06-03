@@ -3057,7 +3057,7 @@ async def test_computer_use_slash_commands_update_notice_and_status(
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert dummy_app._computer_use.enabled is True
     assert dummy_app._computer_use.trust_mode == "allow"
-    assert dummy_app._computer_use.arm_calls == [None]
+    assert dummy_app._computer_use.arm_calls == []
     assert dummy_app._computer_use.rearm_calls == [None]
     assert status.computer_use_status == "Active"
     assert banner.display is True
@@ -3422,19 +3422,20 @@ async def test_computer_use_status_command_reports_runtime_status(
     ]
 
 
-async def test_computer_use_on_arms_current_chat_when_allow_needs_permission(
+async def test_computer_use_on_forces_approval_prompt_for_current_chat(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     notices: list[tuple[str, bool]] = []
     monkeypatch.setattr(dummy_app, "_show_notice", lambda message, *, error=False: notices.append((message, error)))
     dummy_app.current_context = "ctx-cua"
+    dummy_app._computer_use.arm_result = {"ok": True, "result": {"status": "active"}}
 
     await dummy_app._dispatch_command("/computer-use on")
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
     assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
-    assert dummy_app._computer_use.arm_calls == ["ctx-cua"]
+    assert dummy_app._computer_use.arm_calls == []
     assert dummy_app._computer_use.enabled is True
     assert dummy_app._computer_use.trust_mode == "allow"
     assert status.computer_use_status == "Active"
@@ -3458,7 +3459,7 @@ async def test_computer_use_on_reports_rearm_failure_without_compat_command(
 
     status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
 
-    assert dummy_app._computer_use.arm_calls == ["ctx-cua"]
+    assert dummy_app._computer_use.arm_calls == []
     assert dummy_app._computer_use.rearm_calls == ["ctx-cua"]
     assert dummy_app._computer_use.enabled is True
     assert status.computer_use_status == "Rearm Required"

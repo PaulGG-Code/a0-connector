@@ -163,6 +163,11 @@ before starting follow-up metadata refresh work. Use the client after-result
 callbacks for Browser and computer-use status refreshes so server-side pending
 operations resolve before any nested `connector_hello` round trip.
 
+`/computer-use on` is a human approval command. It must force the platform
+approval/rearm flow immediately through `ComputerUseManager.rearm()` instead of
+silently validating a saved restore token first; the permission portal should
+appear when the user types the command, not only after the first agent action.
+
 Host-browser `open` should reuse an already-open tab with the same normalized
 URL before creating a new tab. Keep `list`/`set_active` available for
 title-based or URL-based tab selection workflows.
