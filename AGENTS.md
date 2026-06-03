@@ -297,6 +297,9 @@ Why this matters:
 - Mixing them replays older status/tool events.
 - Replayed events make the TUI active-step shimmer jump back to previous lines
   and flash.
+- Large chat history must be replayed as bounded `connector_context_snapshot`
+  pages before live streaming; do not send the whole transcript in one
+  WebSocket frame or turn old history into live `connector_context_event`s.
 
 Quick regression signal:
 - During a single run, streamed `event.sequence` should be non-decreasing
