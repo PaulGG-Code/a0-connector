@@ -218,6 +218,69 @@ async def test_allow_without_restore_token_returns_rearm_required(
     assert manager.hello_metadata()["restore_token_present"] is False
 
 
+async def test_windows_rearm_uses_arming_status_without_approval_prompt(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        backend_selection=_selection(backend_id="windows", backend_family="windows"),
+    )
+    statuses: list[str] = []
+    manager.set_status_callback(lambda status, detail: statuses.append(status))
+
+    async def fake_start_session(op_id: str, session: _HelperSession) -> dict[str, object]:
+        del op_id
+        assert statuses[-1] == "arming"
+        session.active = True
+        session.session_id = "sess-windows"
+        session.session_result = {
+            "session_id": "sess-windows",
+            "status": "active",
+            "active": True,
+        }
+        return {"op_id": "rearm-test", "ok": True, "result": dict(session.session_result)}
+
+    monkeypatch.setattr(manager, "_start_session", fake_start_session)
+
+    result = await manager.rearm(context_id="ctx-win")
+
+    assert result["ok"] is True
+    assert "approval required" not in statuses
+    assert "arming" in statuses
+    assert statuses[-1] == "active"
+
+
+async def test_prompt_backends_rearm_keep_approval_required_status(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(enabled=True, trust_mode="allow")
+    statuses: list[str] = []
+    manager.set_status_callback(lambda status, detail: statuses.append(status))
+
+    async def fake_start_session(op_id: str, session: _HelperSession) -> dict[str, object]:
+        del op_id
+        assert statuses[-1] == "approval required"
+        session.active = True
+        session.session_id = "sess-linux"
+        session.session_result = {
+            "session_id": "sess-linux",
+            "status": "active",
+            "active": True,
+        }
+        return {"op_id": "rearm-test", "ok": True, "result": dict(session.session_result)}
+
+    monkeypatch.setattr(manager, "_start_session", fake_start_session)
+
+    result = await manager.rearm(context_id="ctx-linux")
+
+    assert result["ok"] is True
+    assert "approval required" in statuses
+    assert statuses[-1] == "active"
+
+
 def test_allow_with_restore_token_starts_in_allow_status(
     _temp_env: Path,
 ) -> None:

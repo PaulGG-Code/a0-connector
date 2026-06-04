@@ -529,6 +529,17 @@ class ComputerUseManager:
         if self._status_callback is not None:
             self._status_callback(status, error)
 
+    def _uses_automatic_arming(self) -> bool:
+        return (
+            str(self._backend_metadata.get("backend_id") or "").strip().lower() == "windows"
+            or str(self._backend_metadata.get("backend_family") or "").strip().lower() == "windows"
+        )
+
+    def _starting_status(self, *, allow_prompt: bool) -> str:
+        if allow_prompt and not self._uses_automatic_arming():
+            return "approval required"
+        return _ARMING_STATUS
+
     def mark_approval_pending(self) -> None:
         if self.enabled:
             self._set_status(_ARMING_STATUS)
@@ -617,7 +628,7 @@ class ComputerUseManager:
         previous_restore_token = self.restore_token
         if self.trust_mode != "persistent":
             self._store_trust_mode("persistent")
-            self._set_status("approval required")
+            self._set_status(self._starting_status(allow_prompt=True))
 
         # Re-arming is an intentional user-approved flow. Do not try to
         # silently revive the old token; force the backend to ask the platform.
@@ -1226,7 +1237,7 @@ class ComputerUseManager:
             request["allow_prompt"] = True
             request["request_timeout_seconds"] = 180.0
 
-        self._set_status("approval required" if _coerce_bool(request.get("allow_prompt")) else _ARMING_STATUS)
+        self._set_status(self._starting_status(allow_prompt=_coerce_bool(request.get("allow_prompt"))))
         response = await self._helper_request(session, request)
         return self._normalize_helper_response(op_id, session, response, action="start_session")
 

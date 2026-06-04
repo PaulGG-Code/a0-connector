@@ -21,6 +21,7 @@ from agent_zero_cli.rendering import extract_detail, render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.screens.installed_plugins import InstalledPluginsScreen
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
+from agent_zero_cli.widgets import computer_use_banner as computer_use_banner_mod
 from agent_zero_cli.widgets.command_palette import is_raw_skill_command, is_raw_slash_command
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import (
@@ -222,10 +223,22 @@ class FakeComputerUseBanner:
         self.display = False
         self.message = ""
 
-    def set_state(self, *, enabled: bool, status: str = "") -> None:
+    def set_state(
+        self,
+        *,
+        enabled: bool,
+        status: str = "",
+        backend_id: str = "",
+        backend_family: str = "",
+    ) -> None:
         if not enabled or status == "Disabled":
             self.display = False
             self.message = ""
+            return
+        is_windows = backend_id == "windows" or backend_family == "windows"
+        if is_windows and status in {"Approval Required", "Rearm Required"}:
+            self.message = "Computer Use is checking Windows desktop access."
+            self.display = True
             return
         if status == "Active":
             self.message = "Computer Use is active for this CLI session."
@@ -283,6 +296,8 @@ class FakeComputerUseManager:
         self.trust_mode = "allow"
         self.status_label = "disabled"
         self.status_detail = ""
+        self.backend_id = ""
+        self.backend_family = ""
         self.disconnect_calls = 0
         self.arm_calls: list[str | None] = []
         self.rearm_calls: list[str | None] = []
@@ -333,7 +348,7 @@ class FakeComputerUseManager:
         return mode
 
     def metadata(self) -> dict[str, object]:
-        return {
+        metadata = {
             "supported": True,
             "enabled": self.enabled,
             "trust_mode": self.trust_mode,
@@ -342,6 +357,11 @@ class FakeComputerUseManager:
             "restore_token_present": False,
             "artifact_root": "/a0/tmp/_a0_connector/computer_use",
         }
+        if self.backend_id:
+            metadata["backend_id"] = self.backend_id
+        if self.backend_family:
+            metadata["backend_family"] = self.backend_family
+        return metadata
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
@@ -3541,6 +3561,37 @@ def test_connection_status_endpoint_indicator_omits_computer_use_summary() -> No
     assert "Allow" not in rendered
 
 
+def test_computer_use_banner_uses_windows_checking_copy_for_prompt_states() -> None:
+    approval_message = computer_use_banner_mod._message_for_status(
+        "Approval Required",
+        enabled=True,
+        backend_family="windows",
+    )
+    rearm_message = computer_use_banner_mod._message_for_status(
+        "Rearm Required",
+        enabled=True,
+        backend_id="windows",
+    )
+
+    assert approval_message == "Computer Use is checking Windows desktop access."
+    assert rearm_message == "Computer Use is checking Windows desktop access."
+    assert "platform permission prompt" not in approval_message
+    assert "restart the CLI" not in approval_message
+
+
+def test_computer_use_banner_keeps_permission_copy_for_prompt_backends() -> None:
+    message = computer_use_banner_mod._message_for_status(
+        "Approval Required",
+        enabled=True,
+        backend_family="linux",
+    )
+
+    assert message == (
+        "Computer Use is waiting for your platform permission prompt. "
+        "If you already approved it, restart the CLI."
+    )
+
+
 async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
     dummy_app: DummyAgentZeroCLI,
 ) -> None:
@@ -3802,6 +3853,45 @@ def test_sync_computer_use_status_shows_arming_banner_copy(
     assert status.computer_use_status == "Arming"
     assert banner.display is True
     assert banner.message == "Computer Use is checking host permissions."
+
+
+def test_sync_computer_use_status_suppresses_windows_approval_prompt_copy(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context_has_messages = True
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.status_label = "approval required"
+    dummy_app._computer_use.backend_id = "windows"
+    dummy_app._computer_use.backend_family = "windows"
+
+    dummy_app._sync_computer_use_status()
+
+    banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
+    assert banner.display is True
+    assert banner.message == "Computer Use is checking Windows desktop access."
+    assert "platform permission prompt" not in banner.message
+    assert "restart the CLI" not in banner.message
+
+
+def test_sync_computer_use_status_keeps_portal_prompt_copy_for_non_windows(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context_has_messages = True
+    dummy_app._computer_use.enabled = True
+    dummy_app._computer_use.status_label = "approval required"
+    dummy_app._computer_use.backend_id = "wayland"
+    dummy_app._computer_use.backend_family = "linux"
+
+    dummy_app._sync_computer_use_status()
+
+    banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
+    assert banner.display is True
+    assert banner.message == (
+        "Computer Use is waiting for your platform permission prompt. "
+        "If you already approved it, restart the CLI."
+    )
 
 
 async def test_reset_disconnected_state_disconnects_computer_use_manager(

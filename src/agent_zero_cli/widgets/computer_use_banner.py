@@ -7,10 +7,23 @@ def _normalize_status(value: str) -> str:
     return str(value or "").strip().lower()
 
 
-def _message_for_status(status: str, *, enabled: bool) -> str:
+def _is_windows_backend(*, backend_id: str = "", backend_family: str = "") -> bool:
+    return _normalize_status(backend_id) == "windows" or _normalize_status(backend_family) == "windows"
+
+
+def _message_for_status(
+    status: str,
+    *,
+    enabled: bool,
+    backend_id: str = "",
+    backend_family: str = "",
+) -> str:
     normalized = _normalize_status(status)
     if not enabled or normalized == "disabled":
         return ""
+    if _is_windows_backend(backend_id=backend_id, backend_family=backend_family):
+        if normalized in {"approval required", "rearm required"}:
+            return "Computer Use is checking Windows desktop access."
     if normalized == "active":
         return "Computer Use is active for this CLI session."
     if normalized == "arming":
@@ -29,8 +42,20 @@ class ComputerUseBanner(Static):
         super().__init__("", id=id)
         self.display = False
 
-    def set_state(self, *, enabled: bool, status: str = "") -> None:
-        message = _message_for_status(status, enabled=enabled)
+    def set_state(
+        self,
+        *,
+        enabled: bool,
+        status: str = "",
+        backend_id: str = "",
+        backend_family: str = "",
+    ) -> None:
+        message = _message_for_status(
+            status,
+            enabled=enabled,
+            backend_id=backend_id,
+            backend_family=backend_family,
+        )
         self.display = bool(message)
         self.update(message)
 

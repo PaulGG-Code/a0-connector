@@ -1156,6 +1156,9 @@ class AgentZeroCLI(App):
         show_composer = self.connected and (
             self.current_context_has_messages or self._splash_state.stage == "ready"
         )
+        metadata = self._computer_use.metadata()
+        backend_id = str(metadata.get("backend_id") or "")
+        backend_family = str(metadata.get("backend_family") or "")
         try:
             self.query_one("#connection-status", ConnectionStatus).set_computer_use_state(
                 _computer_use_label(self._computer_use.status_label),
@@ -1168,6 +1171,8 @@ class AgentZeroCLI(App):
             self.query_one("#computer-use-banner", ComputerUseBanner).set_state(
                 enabled=show_composer and self._computer_use.enabled,
                 status=_computer_use_label(self._computer_use.status_label),
+                backend_id=backend_id,
+                backend_family=backend_family,
             )
         except Exception:
             return
