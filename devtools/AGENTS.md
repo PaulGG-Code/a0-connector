@@ -1,0 +1,35 @@
+# Devtools DOX
+
+## Purpose
+
+- Own local development tools for Textual preview, snapshots, preview process launching, and dependency lock regeneration.
+
+## Ownership
+
+- `serve.py` owns the browser preview server.
+- `preview_launcher.py` owns subprocess launch behavior for the served TUI.
+- `snapshot.py` owns static SVG snapshot generation.
+- `lock_dependencies.py` owns release lock regeneration and pyproject dependency pin sync.
+- `README.md` explains these tools.
+
+## Local Contracts
+
+- Browser preview runs with `./.venv/bin/python devtools/serve.py` and serves `http://localhost:8566` by default.
+- Textual serve does not hot-reload a running TUI process; reload the browser tab after code or TCSS edits.
+- Browser automation against served Textual must target the xterm helper textarea, not normal DOM inputs.
+- Snapshot output defaults to `devtools/snapshots/`, which is generated output.
+- `lock_dependencies.py` uses `uv pip compile`, writes `constraints/a0-runtime.txt` and `constraints/a0-build.txt`, and syncs pinned runtime/build dependencies into `pyproject.toml`.
+
+## Work Guidance
+
+- Keep devtools commands Linux-first unless a section is explicitly platform-specific.
+- Do not add heavyweight runtime dependencies to devtools without updating dependency inputs and locks.
+- Ensure preview subprocess cleanup remains robust on Linux.
+
+## Verification
+
+- `./.venv/bin/python -m pytest tests/test_devtools.py -v`
+- `./.venv/bin/python devtools/snapshot.py`
+- For dependency changes with `uv` available: `./.venv/bin/python devtools/lock_dependencies.py --check`
+
+## Child DOX Index

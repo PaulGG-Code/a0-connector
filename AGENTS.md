@@ -1,446 +1,89 @@
-# Agent Zero Connector — AGENTS.md
-
-[Generated: 2026-04-08]
-
-## Quick Reference
-
-Tech Stack: Python 3.10+ | Textual 8+ | httpx | python-socketio (Engine.IO)
-Run TUI: `a0` (or `python -m agent_zero_cli`)
-**UI preview in browser: `python devtools/serve.py` → http://localhost:8566**
-Run tests: `pytest tests/ -v`
-Docs: `docs/` | Architecture: `docs/architecture.md` | TUI: `docs/tui-frontend.md`
-Workspace root: this repository (`a0-connector`)
-Plugin runtime paths (outside this repo): Agent Zero Core `plugins/_a0_connector` (or `/a0/plugins/_a0_connector` in Docker)
-
----
-
-## Table of Contents
-
-1. [Project Overview](#project-overview)
-2. [Runtime Setup](#runtime-setup)
-3. [Dev Workflow — Browser Preview](#dev-workflow--browser-preview)
-4. [Project Structure & Key Files](#project-structure--key-files)
-5. [TUI Architecture](#tui-architecture)
-6. [Plugin Backend](#plugin-backend)
-7. [Development Patterns & Conventions](#development-patterns--conventions)
-8. [Tests](#tests)
-9. [Safety & Permissions](#safety--permissions)
-10. [Troubleshooting](#troubleshooting)
-
----
-
-## Project Overview
-
-**a0-connector** has two parts that live in the same repo and work together:
-
-1. **`a0` CLI** — a Textual terminal UI that connects to an Agent Zero
-   instance, streams live agent events, and lets the user chat via a WebSocket
-   protocol (`a0-connector.v1`).
-
-2. **`_a0_connector` plugin backend** — this is now a builtin Agent Zero Core
-   plugin. It is **not vendored in this repo**. Edit it directly in Agent Zero
-   Core under `plugins/_a0_connector` (or `/a0/plugins/_a0_connector` for
-   Dockerized deployments).
-
-Both must be running for a live end-to-end session. For **UI-only work** the
-browser preview (see below) launches just the CLI against any available backend
-(or none — the disconnected screen is still fully renderable).
-
----
-
-## Runtime Setup
-
-Use two running pieces:
-- an Agent Zero instance whose Core build includes builtin `_a0_connector` support
-- this connector CLI (`a0`)
-
-Recommended dev flow for backend changes:
-1. Edit the builtin plugin directly in your target Agent Zero Core/runtime copy.
-2. Restart Agent Zero.
-3. Run connector tests from this repo:
-   `./.venv/bin/python -m pytest tests/ -v`
-
-Deployment targets:
-- Local Agent Zero checkout: `<agent-zero>/plugins/_a0_connector`
-- Dockerized Agent Zero: `/a0/plugins/_a0_connector` via your mapped volume
-
----
-
-## Dev Workflow — Browser Preview
-
-> **This is the primary development loop for any UI work.**
-> `textual-serve` and the project are already installed in `.venv`. Just run the
-> server and open the browser.
-
-### Start the preview
-
-```bash
-./.venv/bin/python devtools/serve.py          # http://localhost:8566
-```
-
-The TUI renders live in the browser tab. You can interact with it exactly as in
-a terminal. Screenshots can be taken by the AI assistant at any time to verify
-visual changes.
-
-### Options
-
-```bash
-./.venv/bin/python devtools/serve.py --port 9000          # custom port
-./.venv/bin/python devtools/serve.py --debug               # enable Textual devtools
-```
-
-Append `?fontsize=14` to the URL to adjust the rendered font size.
-
-### Stop the server
-
-`Ctrl+C` in the terminal running `serve.py`, or kill the background process.
-
-### Other devtools scripts
-
-| Script | Purpose | Output |
-|--------|---------|--------|
-| `devtools/snapshot.py` | SVG screenshot without a live backend | `devtools/snapshots/tui_snapshot.svg` |
-| `devtools/activity_demo.py` | Simulate agent activity states (idle / busy / reset) | Three SVGs in `devtools/snapshots/` |
-
-```bash
-./.venv/bin/python devtools/snapshot.py       # quick layout check
-./.venv/bin/python devtools/activity_demo.py  # verify progress indicator
-```
-
-### Typical UI change cycle
-
-1. `python devtools/serve.py` — start the preview server (keep it running).
-2. Edit `.tcss` or widget `.py` files.
-3. Reload the browser tab (Textual hot-reload is *not* active via serve; tab
-   refresh spawns a new process automatically).
-4. Take a screenshot to verify, or ask the AI assistant to do it.
-5. Run `pytest tests/test_app.py` to confirm no regressions.
-
----
-
-## Project Structure & Key Files
-
-```
-a0-connector/
-├── src/agent_zero_cli/          # CLI package
-│   ├── app.py                   # AgentZeroCLI — main App, BINDINGS, compose(), event handlers
-│   ├── client.py                # A0Client — HTTP + Socket.IO transport
-│   ├── config.py                # CLIConfig, load_config(), save_env()
-│   ├── __main__.py              # Entry point (python -m agent_zero_cli)
-│   ├── widgets/
-│   │   ├── chat_input.py        # ChatInput — multi-line TextArea with spinner progress
-│   │   └── splash_view.py       # SplashView — staged connect/login/welcome surface
-│   ├── screens/
-│   │   └── chat_list.py         # ChatListScreen — switch between contexts
-│   └── styles/
-│       └── app.tcss             # All TUI CSS (colors, borders, layout, .progress-active)
-├── devtools/                    # UI development tools (browser preview, snapshots)
-│   ├── serve.py                 # textual-serve wrapper → browser at :8566
-│   ├── snapshot.py              # SVG snapshot capture
-│   ├── activity_demo.py         # Progress state demo
-│   └── README.md                # Devtools usage guide
-├── tests/
-│   ├── test_app.py              # App logic, FakeInput/FakeRichLog stubs, lifecycle tests
-│   ├── test_client.py           # A0Client HTTP + WS tests
-│   └── test_plugin_backend.py   # Plugin import validation
-├── docs/
-│   ├── architecture.md          # Protocol, HTTP routes, WebSocket events, event bridge
-│   ├── configuration.md         # Env vars, resolution order, persisted .env
-│   ├── development.md           # Setup instructions, dev patterns
-│   └── tui-frontend.md          # TUI file map, IDE terminal notes
-├── pyproject.toml               # Package metadata and pinned dependencies
-├── requirements/                # Runtime/build lock inputs
-├── constraints/                 # Generated release dependency locks
-└── requirements.txt             # Compatibility pointer to the runtime lock
-```
-
-The builtin `_a0_connector` plugin is not stored in this repository. For backend
-work, use Agent Zero Core's `plugins/_a0_connector` directory (or
-`/a0/plugins/_a0_connector` in Docker).
-
-Remote tool operation handlers must emit their `connector_*_op_result` event
-before starting follow-up metadata refresh work. Use the client after-result
-callbacks for Browser and computer-use status refreshes so server-side pending
-operations resolve before any nested `connector_hello` round trip.
-
-`/computer-use on` is a human approval command. It must force the platform
-approval/rearm flow immediately through `ComputerUseManager.rearm()` instead of
-silently validating a saved restore token first; the permission portal should
-appear when the user types the command, not only after the first agent action.
-
-Host-browser `open` should reuse an already-open tab with the same normalized
-URL before creating a new tab. Keep `list`/`set_active` available for
-title-based or URL-based tab selection workflows.
-
----
-
-## TUI Architecture
-
-### Screen composition (`app.py:96-99`)
-
-```
-Screen
-├── RichLog       #chat-log     — scrollable chat history
-├── ChatInput     #message-input — multi-line input + progress placeholder
-└── Footer                      — key bindings + command palette slot
-```
-
-### Footer bindings (`app.py:61-79`)
-
-| Footer label | Action | `show` | Why |
-|--------------|--------|--------|-----|
-| `Ctrl+C` | Quit | `False` | Hidden from the footer; use `/quit` for a visible command path |
-| `F5` | clear_chat | `False` | Hidden from the footer; use `/clear` for a visible command path |
-| `F6` | list_chats | `True` | |
-| `F7` | nudge_agent | `True` | Also available as `/nudge` |
-| `F8` | pause_agent | `True` | Also available as `/pause` and `/resume` |
-| `F9` | copy_visible_chat | `False` | Hidden from the footer; use `/copy` for visible transcript copy |
-| `Ctrl+P` | command_palette | **`False`** | Footer appends the palette slot itself; `show=True` duplicates it |
-
-> **Never change `ctrl+p` to `show=True`** — it will produce two `^P Commands`
-> entries in the footer bar.
-
-### In-input progress (`chat_input.py`, `app.tcss:21-24`)
-
-While the agent is busy and the input is empty:
-- `ChatInput.set_activity(label, detail)` sets `_activity_active = True`,
-  adds CSS class `progress-active`, starts a 0.1s spinner tick
-- Placeholder becomes `|>  ⠋ Using tool [web_search]` (WebUI-parity format)
-- Border subtly brightens via `.progress-active { border: round #1886c9; }`
-- `ChatInput.set_idle()` clears all of the above
-
-Routing from the app:
-```python
-# app.py:107-115
-def _set_activity(self, label, detail=""):
-    self.query_one("#message-input", ChatInput).set_activity(label, detail)
-
-def _set_idle(self):
-    self.query_one("#message-input", ChatInput).set_idle()
-```
-
-### CSS (`styles/app.tcss`)
-
-- `#chat-log` — `height: 1fr`, no explicit `#status-bar` (removed)
-- `#message-input` — `border: round #0f6db8`
-- `#message-input.progress-active` — `border: round #1886c9` (brighter while busy)
-- `#message-input:focus` — `border: round #00b4ff`
-- `Footer` — `background: #101a24`
-
-When editing `.tcss`, reload the browser tab to see changes (no hot-reload).
-
-### ChatInput sizing (`chat_input.py:158-163`)
-
-Height auto-adjusts: `styles.height = min(line_count, 4) + 2` (the `+2` is for
-the rounded border). Avoid setting a hard `height` on `#message-input` in
-`.tcss` — it will fight the dynamic sizing and clip content.
-
-### Splash / modal flow
-
-Connection and authentication now live in the staged `SplashView` instead of
-separate modal screens:
-
-| Surface | Returns | When shown |
-|--------|---------|------------|
-| `SplashView` host stage | Posts `SubmitRequested` with host | No host configured or reconnecting |
-| `SplashView` login stage | Posts `SubmitRequested` with credentials | Server advertises `"login"` auth |
-| `ChatListScreen` | `str` (context ID) or `None` | User presses F6 |
-
----
-
-## Plugin Backend
-
-The plugin backend lives in Agent Zero Core at `plugins/_a0_connector` (or
-`/a0/plugins/_a0_connector` in Docker). This repo talks to that builtin plugin;
-it does not carry a separate vendored copy. The plugin provides:
-
-- HTTP handlers under `/api/plugins/_a0_connector/v1/`
-- Socket.IO events on the `/ws` namespace (all prefixed `connector_`)
-- `helpers/event_bridge.py` — maps Agent Zero log types to connector events
-- `helpers/ws_runtime.py` — SID/context subscription state, file-op futures
-
-See `docs/architecture.md` for the full protocol and event tables.
-
-**Import discipline in plugin code:**
-
-```python
-# NEVER at module level — causes deadlocks during Agent Zero init
-from agent import AgentContext   # BAD
-
-# Always inside the handler method
-async def process(self, ...):
-    from agent import AgentContext  # GOOD
-```
-
-### Critical Streaming Invariant (`ws_connector.py`)
-
-In `api/ws_connector.py`, `from_sequence` is a **log-output cursor**
-(`LogOutput.end`), not an event `sequence` id.
-
-Keep cursor and event sequence separate:
-
-```python
-# Correct pattern
-cursor = from_sequence
-events, next_cursor = get_context_log_entries(context_id, after=cursor)
-cursor = max(cursor, next_cursor)
-```
-
-Never do this:
-
-```python
-# Wrong: mixes cursor domain with event sequence domain
-cursor = event["sequence"]
-```
-
-Why this matters:
-- Mixing them replays older status/tool events.
-- Replayed events make the TUI active-step shimmer jump back to previous lines
-  and flash.
-- Large chat history must be replayed as bounded `connector_context_snapshot`
-  pages before live streaming; do not send the whole transcript in one
-  WebSocket frame or turn old history into live `connector_context_event`s.
-
-Quick regression signal:
-- During a single run, streamed `event.sequence` should be non-decreasing
-  (equal values are valid for in-place updates).
-- Backward jumps are a red flag for cursor misuse in the stream loop.
-
----
-
-## Development Patterns & Conventions
-
-### Querying widgets
-
-Always use the typed form to avoid silent `None` issues:
-
-```python
-# Good
-input_widget = self.query_one("#message-input", ChatInput)
-log = self.query_one("#chat-log", RichLog)
-
-# Avoid
-widget = self.query_one("#message-input")  # untyped → no IDE help
-```
-
-### Activity state routing
-
-Always go through the app-level helpers, never call widget methods directly
-from event handlers:
-
-```python
-self._set_activity("Using tool", "web_search")  # correct
-self._set_idle()                                  # correct
-
-# Don't reach into the widget directly from outside _set_activity/_set_idle
-self.query_one("#message-input", ChatInput).set_activity(...)  # avoid
-```
-
-### Textual `Select` guardrails
-
-Textual `Select` widgets can emit duplicate `Changed` events while an overlay
-closes or when the widget is refreshed programmatically. For preset/model
-selectors, treat a change as user intent only when the widget is not busy, the
-event is not suppressed, and the value differs from the last committed
-selection. If you refresh state programmatically, update the cached selection
-inside the suppression window so the handler does not bounce back into another
-render loop.
-
-### Test stubs (`tests/test_app.py`)
-
-`FakeInput` mirrors the `ChatInput` API used by the app:
-```python
-class FakeInput:
-    def focus(self): ...
-    def set_activity(self, label, detail=""): ...
-    def set_idle(self): ...
-```
-
-`dummy_app` replaces `app.query_one` so all widget calls hit fakes — no real
-Textual event loop needed. When adding new widget interactions to `app.py`,
-add the corresponding method to `FakeInput`.
-
-### No `#status-bar`
-
-The `ActivityBar` widget and `#status-bar` were removed. Do not re-introduce
-them. The single source of truth for activity state is `#message-input`.
-
-### aiohttp shim
-
-`client.py` patches `aiohttp.ClientWSTimeout` if missing (older aiohttp
-versions). Do not remove this shim without verifying all supported versions.
-
----
-
-## Tests
-
-```bash
-# Run all tests
-./.venv/bin/python -m pytest tests/ -v
-
-# Scope to TUI logic only
-./.venv/bin/python -m pytest tests/test_app.py -v
-
-# Force asyncio backend if trio errors appear
-./.venv/bin/python -m pytest tests/ -v -p anyio --anyio-backends=asyncio
-```
-
-Tests use `anyio` with the asyncio backend. Async test fixtures use
-`@pytest.mark.asyncio`.
-
----
-
-## Safety & Permissions
-
-### Allowed without asking
-- Read any file.
-- Edit files under `src/`, `tests/`, `devtools/`, `docs/`, `styles/`, `.tcss`.
-- Run `devtools/serve.py`, `snapshot.py`, `activity_demo.py`.
-- Run `pytest`.
-
-### Ask before doing
-- `pip install` (new dependencies not already in `.venv`).
-- Editing backend files under Agent Zero `plugins/_a0_connector` (or
-  `/a0/plugins/_a0_connector` in Docker).
-- Deleting files outside of the above allowed paths.
-- Making git commits or pushes.
-
-### Never do
-- Hardcode API keys, tokens, or secrets.
-- Change `ctrl+p` binding `show=False` → `show=True` (duplicates footer entry).
-- Remove the `aiohttp` compatibility shim from `client.py` without version testing.
-- Import `agent`, `initialize`, or `helpers.projects` at module level in plugin code.
-
----
-
-## Troubleshooting
-
-### Browser preview shows blank / "Application failed to start"
-
-The subprocess launched by `serve.py` failed. Common causes:
-- `.venv` not activated — `serve.py` auto-detects `.venv/bin/python` but check
-  the path printed at startup.
-- Import error in `app.py` or a widget — run `python -m agent_zero_cli` directly
-  in the terminal to see the traceback.
-
-### `No module named textual_serve`
-
-```bash
-./.venv/bin/pip install textual-serve
-```
-
-### Footer shows two `^P Commands` entries
-
-The `ctrl+p` binding has been changed to `show=True`. Revert to `show=False`.
-See `app.py:67-78` and `D3` in the decisions log.
-
-### WebSocket connection fails in tests
-
-```bash
-pytest -p anyio --anyio-backends=asyncio
-```
-
-### `aiohttp.ClientWSTimeout` AttributeError
-
-The compat shim in `client.py` should handle this. If it doesn't, upgrade
-`aiohttp`: `./.venv/bin/pip install "aiohttp>=3.11.0"`.
+# Agent Zero Connector - DOX Rail
+
+## Purpose
+
+- Define the project-wide DOX contract for `a0-connector`.
+- Keep every source file, durable document, workflow, and artifact understandable from this root `AGENTS.md` plus the nearest child `AGENTS.md`.
+- Preserve the connector's two-part product shape: the `a0` Textual CLI in this repo, and the builtin `_a0_connector` Agent Zero Core plugin outside this repo.
+
+## Ownership
+
+- This root doc owns repo-wide behavior, safety, verification, top-level files, packaging metadata, installers, and the Child DOX Index.
+- Top-level files owned here include `README.md`, `pyproject.toml`, `requirements.txt`, `install.sh`, `install.ps1`, `test_context_patch.txt`, `.gitignore`, `LICENSE`, and any future root-level release or packaging files.
+- Child docs own the scoped rules for `src/`, `packages/`, `tests/`, `docs/`, `devtools/`, `requirements/`, and `constraints/`.
+- Generated or local-only artifacts such as `.venv/`, `.pytest_cache/`, `tmp/`, `.tmp-tests/`, `textual.log`, `__pycache__/`, and generated snapshots are not durable DOX scopes.
+
+## Local Contracts
+
+### DOX Framework
+
+- `AGENTS.md` files are binding work contracts for their subtrees.
+- Before editing, read this root doc, identify every path you expect to touch, then read every `AGENTS.md` from the repo root to each target path.
+- Do not rely on memory. Re-read the applicable DOX chain in the current session before editing.
+- If a parent `AGENTS.md` lists a child whose scope contains the path, read that child and continue from there.
+- The nearest `AGENTS.md` controls local details. Child docs may specialize parent rules but may not weaken DOX itself.
+- After every meaningful change, run a DOX pass: re-check changed paths against the DOX chain, update the nearest owning docs and affected parent or child indexes, remove stale or contradictory instructions, and run relevant verification.
+- Update docs when a change affects purpose, ownership, structure, workflow, contracts, inputs, outputs, permissions, constraints, side effects, artifacts, quality standards, communication preferences, or any `AGENTS.md` scope/index.
+- Small edits that do not change behavior or contracts may leave docs unchanged, but the DOX pass still happens.
+
+### Product Contracts
+
+- Tech stack: Python 3.10+, Textual 8+, `httpx`, `aiohttp`, `python-socketio` / Engine.IO.
+- Run the TUI with `a0` or `./.venv/bin/python -m agent_zero_cli`.
+- Use Linux commands and paths by default. Prefer `./.venv/bin/python`, not Windows-only virtualenv paths.
+- UI preview is the primary loop for TUI work: `./.venv/bin/python devtools/serve.py` at `http://localhost:8566`.
+- The CLI talks to Agent Zero through the connector protocol `a0-connector.v1`, HTTP routes under `/api/plugins/_a0_connector/v1/`, and Socket.IO events on namespace `/ws` with `connector_*` event names.
+
+### Plugin Backend
+
+- The builtin `_a0_connector` plugin is not vendored here. It lives in Agent Zero Core under `plugins/_a0_connector`.
+- For this workstation, the real Agent Zero Core plugin repo is `/home/eclypso/a0/agent-zero/plugins`.
+- When testing Dockerized Agent Zero backend behavior, treat the instance exposed at `localhost:32080` as the live runtime.
+- When explicitly asked or approved to change plugin/backend code outside this repo, keep the live runtime copy and `/home/eclypso/a0/agent-zero/plugins` in sync.
+- Plugin code must not import `agent`, `initialize`, or `helpers.projects` at module level. Import Agent Zero internals inside handler methods.
+- In plugin `api/ws_connector.py`, `from_sequence` is a log-output cursor (`LogOutput.end`), not a connector event sequence. Do not mix cursor and event sequence domains.
+- Large chat history must replay through bounded `connector_context_snapshot` pages before live streaming. Do not send full transcripts in a single WebSocket frame or turn old history into live `connector_context_event` messages.
+
+### Safety And Permissions
+
+- Allowed without asking: read files, edit repo source/docs/tests/devtools/requirements/constraints/AGENTS docs, run devtools scripts, and run pytest.
+- Ask before installing new dependencies, editing external Agent Zero plugin/backend files, deleting files outside normal generated outputs, or making git commits/pushes.
+- Never hardcode API keys, tokens, passwords, cookies, or connector secrets.
+- Never use destructive git commands such as `git reset --hard` or `git checkout --` unless the user explicitly asks.
+- Preserve user work. If the worktree contains unrelated changes, leave them alone.
+
+## Work Guidance
+
+- Prefer `rg` and `rg --files` for search.
+- Use `apply_patch` for manual file edits.
+- Keep code enterprise/research quality: minimal, adapted to local style, robust, and testable.
+- Prefer existing project patterns and helper APIs over new abstractions.
+- For structured data, use structured parsers/APIs where available.
+- Keep UI changes visually verified. Text must fit, avoid incoherent overlap, and remain usable in the Textual browser preview.
+- Record durable user behavior preferences in this root doc or the closest relevant child doc.
+
+## User Preferences
+
+- The operating shell is `bash` on Ubuntu Linux.
+- Prefer Linux paths and command examples unless a Windows or macOS-specific file requires platform-specific wording.
+- Treat plugin/backend discussion as connected to the Dockerized Agent Zero runtime at `localhost:32080`.
+- Always mirror live Agent Zero Core plugin runtime changes into `/home/eclypso/a0/agent-zero/plugins` when backend/plugin changes are in scope.
+- Aim for solutions that unite rigor and elegance: concise, technically strong, and beautiful in the small details.
+
+## Verification
+
+- Full test suite: `./.venv/bin/python -m pytest tests/ -v`.
+- If anyio backend issues appear: `./.venv/bin/python -m pytest tests/ -v -p anyio --anyio-backends=asyncio`.
+- UI preview: `./.venv/bin/python devtools/serve.py`.
+- Static TUI snapshot: `./.venv/bin/python devtools/snapshot.py`.
+- Dependency lock check, when dependency files change and `uv` is available: `./.venv/bin/python devtools/lock_dependencies.py --check`.
+
+## Child DOX Index
+
+- `src/AGENTS.md` - Python source tree and package routing.
+- `packages/AGENTS.md` - Platform computer-use backend packages.
+- `tests/AGENTS.md` - Test suite, fixtures, fakes, and async test conventions.
+- `docs/AGENTS.md` - Durable documentation in `docs/`.
+- `devtools/AGENTS.md` - Browser preview, snapshots, and dependency lock tooling.
+- `requirements/AGENTS.md` - Human-edited dependency input files.
+- `constraints/AGENTS.md` - Generated release dependency lock files.
