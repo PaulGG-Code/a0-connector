@@ -6,7 +6,7 @@
 
 ## Ownership
 
-- `README.md` in this folder, architecture, configuration, development, and TUI frontend docs are owned here.
+- `README.md` in this folder, architecture, configuration, development, headless mode, and TUI frontend docs are owned here.
 - Root `README.md` remains root-owned, but docs here must stay consistent with it.
 
 ## Local Contracts

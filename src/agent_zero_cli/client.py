@@ -970,6 +970,17 @@ class A0Client:
         response.raise_for_status()
         return self._json(response)
 
+    async def reset_chat(self, context_id: str) -> dict[str, Any]:
+        response = await self._post(
+            "chat_reset",
+            {"context_id": context_id},
+        )
+        response.raise_for_status()
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
+
     async def get_projects(self, context_id: str) -> dict[str, Any]:
         response = await self._post(
             "projects",

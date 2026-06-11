@@ -6,7 +6,7 @@ Terminal connector for [Agent Zero](https://github.com/frdel/agent-zero). It pai
 
 | Component | Location | Purpose |
 |-----------|----------|---------|
-| CLI (`a0`) | `src/agent_zero_cli/` | Terminal UI and session-aware transport client |
+| CLI (`a0`) | `src/agent_zero_cli/` | Textual UI, headless stdio mode, and session-aware transport client |
 | Plugin (`_a0_connector`) | Agent Zero Core `plugins/_a0_connector` | Builtin plugin that exposes the connector HTTP + Socket.IO surface |
 
 The CLI requires an Agent Zero build that includes the builtin `_a0_connector` plugin.
@@ -110,7 +110,26 @@ a0 --host http://localhost:5080
 
 Use `a0 --no-auto-connect` to keep the picker open even when Docker finds exactly one local instance. Use `a0 --no-docker-discovery` to skip Docker inspection and open manual URL entry immediately, which is useful for remote hosts, HTTPS tunnels such as Cloudflare, or machines without Docker.
 
-You can optionally remember only the chosen host in `~/.agent-zero/.env` from inside the app. The CLI never stores usernames, passwords, session cookies, or connector tokens.
+You can optionally remember the chosen host from inside the app. Protected
+sessions may persist browser-style session cookies for that host so future CLI
+runs can reconnect; the CLI never stores usernames, passwords, or connector
+tokens.
+
+## Headless mode
+
+Use `a0 headless` when you need the connector without the full-screen Textual
+interface. It streams events over stdout and keeps remote file, remote exec,
+and workspace-tree publishing active for the subscribed chat.
+
+```bash
+a0 headless --host http://localhost:32080
+echo "what is 2+2" | a0 headless --host http://localhost:32080 --print --output jsonl
+```
+
+Headless host resolution uses `--host`, then saved/env config, then Docker
+single-instance discovery. Protected instances reuse a persisted web session,
+`A0_USERNAME`/`A0_PASSWORD`, or TTY prompts; non-TTY auth failures exit with
+code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main/docs/headless.md).
 
 ## Usage
 
@@ -196,5 +215,6 @@ Platform caveats:
 
 - [Configuration](https://github.com/agent0ai/a0-connector/blob/main/docs/configuration.md)
 - [Architecture](https://github.com/agent0ai/a0-connector/blob/main/docs/architecture.md)
+- [Headless mode](https://github.com/agent0ai/a0-connector/blob/main/docs/headless.md)
 - [Development](https://github.com/agent0ai/a0-connector/blob/main/docs/development.md)
 - [TUI frontend](https://github.com/agent0ai/a0-connector/blob/main/docs/tui-frontend.md)

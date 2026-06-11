@@ -11,10 +11,15 @@
 +-------------+          connector_* events               +------------------------------+
 ```
 
-- CLI (`a0`): Textual TUI, published as the `a0` package and installed as the `a0` command.
+- CLI (`a0`): Textual TUI plus headless stdin/stdout frontend, published as the `a0` package and installed as the `a0` command.
 - Plugin (`_a0_connector`): builtin Agent Zero Core plugin.
 
 ## Startup flow
+
+Both the Textual TUI and `a0 headless` use the same connector protocol. The
+TUI still owns its historical connection orchestration; headless uses the
+UI-neutral `ConnectorSession` core for transport, context subscription, remote
+file operations, remote exec operations, and workspace-tree publishing.
 
 1. Discover: `POST /api/plugins/_a0_connector/v1/capabilities`
 2. Validate: confirm protocol, `/ws`, handler activation, `auth == ["session"]`, and boolean `auth_required`
@@ -107,6 +112,22 @@ correct chat.
 Both public `capabilities` and `connector_hello` include `agent_zero_version`.
 The CLI compares that value with its own package version and surfaces a warning
 when the connected Agent Zero Core is newer than the installed CLI.
+
+## Headless frontend
+
+`a0 headless` is a plain stdin/stdout connector frontend. It does not import
+Textual, but it still registers as the host-side connector client for the
+subscribed chat.
+
+Headless `connector_hello` metadata advertises remote files and remote exec as
+available, scoped to the selected local workspace. It advertises computer-use
+and host-browser support as unavailable; if the backend sends those operations
+anyway, the client returns structured unsupported operation results instead of
+leaving server-side futures pending.
+
+Text output is append-only and pipe-safe. JSONL output emits connector events
+and synthetic lifecycle records (`ready`, `complete`, `notice`, `error`) as one
+JSON object per stdout line.
 
 ## Host browser operations
 

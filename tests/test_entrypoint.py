@@ -53,6 +53,7 @@ def test_main_help_exits_without_launching_app(
     assert "--no-docker-discovery" in captured.out
     assert "AGENT_ZERO_HOST" in captured.out
     assert "update" in captured.out
+    assert "headless" in captured.out
     assert launched == []
 
 
@@ -126,3 +127,44 @@ def test_main_update_routes_without_launching_app(
     assert exit_code == 0
     assert updated == [True]
     assert launched == []
+
+
+def test_main_headless_routes_to_headless_launcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: list[dict[str, object]] = []
+    monkeypatch.setattr(__main__, "_run_headless", lambda **kwargs: launched.append(dict(kwargs)) or 0)
+
+    exit_code = __main__.main(
+        [
+            "headless",
+            "--host",
+            "http://agent.test:32080",
+            "--chat",
+            "ctx-123",
+            "--output",
+            "jsonl",
+            "--print",
+            "what is 2+2",
+            "--workspace",
+            "/tmp/work",
+            "--timeout",
+            "5",
+            "--no-docker-discovery",
+        ]
+    )
+
+    assert exit_code == 0
+    assert launched == [
+        {
+            "host": "http://agent.test:32080",
+            "chat": "ctx-123",
+            "chat_last": False,
+            "new_chat": False,
+            "output": "jsonl",
+            "print_prompt": "what is 2+2",
+            "workspace": "/tmp/work",
+            "timeout": 5.0,
+            "discover_instances": False,
+        }
+    ]

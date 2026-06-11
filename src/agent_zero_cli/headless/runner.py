@@ -1,0 +1,356 @@
+from __future__ import annotations
+
+import asyncio
+import contextlib
+from dataclasses import dataclass, field
+import getpass
+import os
+import signal
+import sys
+from pathlib import Path
+from typing import TextIO
+
+from agent_zero_cli.client import DEFAULT_HOST
+from agent_zero_cli.config import CLIConfig, load_config
+from agent_zero_cli.headless.commands import (
+    HeadlessCommandResult,
+    dispatch_headless_command,
+    is_headless_command,
+)
+from agent_zero_cli.headless.renderer import HeadlessRenderer, make_renderer
+from agent_zero_cli.instance_discovery import discover_local_instances
+from agent_zero_cli.session import ConnectorSession, SessionError
+
+EXIT_SUCCESS = 0
+EXIT_ERROR = 1
+EXIT_CONNECT_OR_AUTH = 2
+
+
+@dataclass
+class HeadlessOptions:
+    host: str = ""
+    chat: str = ""
+    chat_last: bool = False
+    new_chat: bool = False
+    output: str = "text"
+    print_prompt: str | None = None
+    workspace: Path = field(default_factory=Path.cwd)
+    timeout: float | None = None
+    discover_instances: bool = True
+    config: CLIConfig | None = None
+    stdin: TextIO = field(default_factory=lambda: sys.stdin)
+    stdout: TextIO = field(default_factory=lambda: sys.stdout)
+    stderr: TextIO = field(default_factory=lambda: sys.stderr)
+
+
+class HeadlessRunner:
+    def __init__(self, options: HeadlessOptions) -> None:
+        self.options = options
+        self.config = options.config or load_config()
+        self.renderer: HeadlessRenderer = make_renderer(
+            options.output,
+            color=self._stdout_isatty() and options.output == "text",
+        )
+        self.session: ConnectorSession | None = None
+        self._complete_event = asyncio.Event()
+        self._stop_event = asyncio.Event()
+        self._exit_code = EXIT_SUCCESS
+        self._prompt_visible = False
+        self._waiting_for_line = False
+        self._sigint_count = 0
+        self._signal_installed = False
+
+    async def run(self) -> int:
+        self._install_signal_handlers()
+        try:
+            host = await self._resolve_host()
+            self.session = ConnectorSession(
+                self.config,
+                self,
+                workspace=self.options.workspace,
+                remote_file_write_enabled=True,
+                remote_exec_enabled=True,
+            )
+            connected = await self._connect_with_auth_retry(host)
+            if not connected:
+                return self._exit_code
+
+            if self.options.print_prompt is not None:
+                return await self._run_print_mode()
+            if not self._stdin_isatty():
+                return await self._run_pipe_mode()
+            return await self._run_repl_mode()
+        except SessionError as exc:
+            self._write_error(exc.code, exc.message)
+            return exc.exit_code
+        except Exception as exc:
+            self._write_error("ERROR", str(exc))
+            return EXIT_ERROR
+        finally:
+            self._remove_signal_handlers()
+            if self.session is not None:
+                await self.session.close()
+
+    def on_stage(self, stage: str, message: str, detail: str = "") -> None:
+        self._write_lines(self.renderer.render_stage(stage, message, detail))
+
+    def on_event(self, event: dict) -> None:
+        self._sigint_count = 0
+        self._write_lines(self.renderer.render_event(event))
+
+    def on_snapshot(self, events: list[dict], queue: list[dict]) -> None:
+        self._write_lines(self.renderer.render_snapshot(events, queue))
+
+    def on_complete(self, context_id: str) -> None:
+        self._sigint_count = 0
+        self._complete_event.set()
+        self._write_lines(self.renderer.render_complete(context_id))
+        if self._stdin_isatty() and self._waiting_for_line and not self._stop_event.is_set():
+            self._prompt()
+
+    def on_error(self, code: str, message: str) -> None:
+        self._write_error(code, message)
+        self._exit_code = EXIT_ERROR
+
+    def on_disconnect(self) -> None:
+        if not self._stop_event.is_set():
+            self._write_error("DISCONNECTED", "Connection lost.")
+            self._exit_code = EXIT_ERROR
+            self._stop_event.set()
+
+    async def _connect_with_auth_retry(self, host: str) -> bool:
+        username = os.environ.get("A0_USERNAME", "").strip()
+        password = os.environ.get("A0_PASSWORD", "")
+        prompted = False
+
+        while True:
+            try:
+                await self._require_session().connect(
+                    host,
+                    username=username,
+                    password=password,
+                    context_id=self.options.chat,
+                    chat_last=self.options.chat_last,
+                    new_chat=self.options.new_chat,
+                    restore_session=True,
+                )
+                return True
+            except SessionError as exc:
+                if exc.code != "AUTH_REQUIRED" or prompted or not self._stdin_isatty():
+                    self._write_error(exc.code, exc.message)
+                    self._exit_code = exc.exit_code
+                    return False
+                username, password = await self._prompt_for_credentials()
+                prompted = True
+
+    async def _run_print_mode(self) -> int:
+        text = self.options.print_prompt or ""
+        if not text:
+            text = await self._read_print_stdin()
+        text = text.strip()
+        if not text:
+            return EXIT_SUCCESS
+
+        sent_agent_message = await self._handle_input_line(text)
+        if sent_agent_message:
+            return await self._wait_for_completion(timeout=self.options.timeout)
+        return self._exit_code
+
+    async def _run_pipe_mode(self) -> int:
+        while not self._stop_event.is_set():
+            line = await self._readline()
+            if line == "":
+                break
+            sent_agent_message = await self._handle_input_line(line)
+            if sent_agent_message:
+                self._sigint_count = 0
+
+        session = self._require_session()
+        if session.agent_active:
+            await self._wait_for_completion(timeout=self.options.timeout)
+        return self._exit_code
+
+    async def _run_repl_mode(self) -> int:
+        while not self._stop_event.is_set():
+            line = await self._readline()
+            if line == "":
+                self._stop_event.set()
+                break
+            await self._handle_input_line(line)
+        return self._exit_code
+
+    async def _handle_input_line(self, line: str) -> bool:
+        text = str(line or "").strip()
+        if not text:
+            return False
+
+        if is_headless_command(text):
+            result = await dispatch_headless_command(self._require_session(), text)
+            self._write_command_result(result)
+            if result.exit_requested:
+                self._stop_event.set()
+            if result.error:
+                self._exit_code = EXIT_ERROR
+            return False
+
+        self._complete_event.clear()
+        try:
+            await self._require_session().send_message(text)
+        except Exception as exc:
+            self._write_error("SEND_FAILED", str(exc))
+            self._exit_code = EXIT_ERROR
+            return False
+        return True
+
+    async def _wait_for_completion(self, *, timeout: float | None) -> int:
+        session = self._require_session()
+        if not session.agent_active:
+            return self._exit_code
+        try:
+            if timeout and timeout > 0:
+                await asyncio.wait_for(self._complete_event.wait(), timeout=timeout)
+            else:
+                await self._complete_event.wait()
+        except asyncio.TimeoutError:
+            self._write_error("TIMEOUT", f"Timed out after {timeout:g} seconds waiting for completion.")
+            return EXIT_ERROR
+        return self._exit_code
+
+    async def _resolve_host(self) -> str:
+        explicit = self.options.host.strip()
+        if explicit:
+            return explicit
+        configured = self.config.instance_url.strip()
+        if configured:
+            return configured
+        if not self.options.discover_instances:
+            return DEFAULT_HOST
+
+        result = await discover_local_instances()
+        if result.status == "ready" and len(result.instances) == 1:
+            return result.instances[0].url
+        if result.status == "ready" and len(result.instances) > 1:
+            raise SessionError(
+                "HOST_REQUIRED",
+                "Multiple local Agent Zero instances were found; pass --host URL.",
+                stage="discovery",
+                exit_code=EXIT_CONNECT_OR_AUTH,
+            )
+        detail = result.detail or "No local Agent Zero Docker instance was discovered."
+        raise SessionError(
+            "HOST_REQUIRED",
+            f"{detail} Pass --host URL.",
+            stage="discovery",
+            exit_code=EXIT_CONNECT_OR_AUTH,
+        )
+
+    async def _read_print_stdin(self) -> str:
+        if self._stdin_isatty():
+            self._prompt()
+            line = await self._readline(prompt=False)
+            return line
+        return await asyncio.to_thread(self.options.stdin.read)
+
+    async def _readline(self, *, prompt: bool = True) -> str:
+        session = self.session
+        if prompt and self._stdin_isatty() and (session is None or not session.agent_active):
+            self._prompt()
+
+        self._waiting_for_line = True
+        try:
+            line = await asyncio.to_thread(self.options.stdin.readline)
+        finally:
+            self._waiting_for_line = False
+            self._prompt_visible = False
+        return line
+
+    async def _prompt_for_credentials(self) -> tuple[str, str]:
+        def read_username() -> str:
+            self.options.stderr.write("Username: ")
+            self.options.stderr.flush()
+            return self.options.stdin.readline().rstrip("\n")
+
+        username = await asyncio.to_thread(read_username)
+        password = await asyncio.to_thread(
+            getpass.getpass,
+            "Password: ",
+            self.options.stderr,
+        )
+        return username.strip(), password
+
+    async def _handle_sigint(self) -> None:
+        session = self.session
+        if session is not None and session.agent_active and self._sigint_count == 0:
+            self._sigint_count += 1
+            try:
+                await session.pause()
+                self._write_lines(self.renderer.render_notice("pause requested; press Ctrl+C again to exit."))
+            except Exception as exc:
+                self._write_error("PAUSE_FAILED", str(exc))
+            return
+        self._stop_event.set()
+
+    def _install_signal_handlers(self) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.add_signal_handler(signal.SIGINT, lambda: asyncio.create_task(self._handle_sigint()))
+            self._signal_installed = True
+        except (NotImplementedError, RuntimeError):
+            self._signal_installed = False
+
+    def _remove_signal_handlers(self) -> None:
+        if not self._signal_installed:
+            return
+        with contextlib.suppress(Exception):
+            asyncio.get_running_loop().remove_signal_handler(signal.SIGINT)
+
+    def _write_command_result(self, result: HeadlessCommandResult) -> None:
+        for line in result.lines:
+            self._write_lines(self.renderer.render_notice(line, error=result.error))
+
+    def _write_error(self, code: str, message: str) -> None:
+        lines = self.renderer.render_error(code, message)
+        if self.options.output == "jsonl":
+            self._write_lines(lines)
+            return
+        for line in lines:
+            self.options.stderr.write(line + "\n")
+        self.options.stderr.flush()
+
+    def _write_lines(self, lines: list[str]) -> None:
+        if not lines:
+            return
+        stream = self.options.stdout
+        if self._prompt_visible and self.options.output == "text":
+            stream.write("\n")
+            self._prompt_visible = False
+        for line in lines:
+            if line == "":
+                continue
+            stream.write(line + "\n")
+        stream.flush()
+
+    def _prompt(self) -> None:
+        if self._prompt_visible:
+            return
+        stream = self.options.stderr if self.options.output == "jsonl" else self.options.stdout
+        stream.write("> ")
+        stream.flush()
+        self._prompt_visible = True
+
+    def _require_session(self) -> ConnectorSession:
+        if self.session is None:
+            raise SessionError("NOT_CONNECTED", "Not connected to Agent Zero.", exit_code=EXIT_ERROR)
+        return self.session
+
+    def _stdin_isatty(self) -> bool:
+        isatty = getattr(self.options.stdin, "isatty", None)
+        return bool(isatty and isatty())
+
+    def _stdout_isatty(self) -> bool:
+        isatty = getattr(self.options.stdout, "isatty", None)
+        return bool(isatty and isatty())
+
+
+def run_headless(options: HeadlessOptions) -> int:
+    return asyncio.run(HeadlessRunner(options).run())

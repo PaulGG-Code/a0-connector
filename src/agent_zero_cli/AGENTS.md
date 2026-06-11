@@ -2,11 +2,12 @@
 
 ## Purpose
 
-- Own the `agent_zero_cli` Textual application, connector transport client, slash commands, local state, host browser bridge, remote file/exec tools, model/profile/project commands, and computer-use orchestration.
+- Own the `agent_zero_cli` Textual application, headless frontend, connector transport/session client, slash commands, local state, host browser bridge, remote file/exec tools, model/profile/project commands, and computer-use orchestration.
 
 ## Ownership
 
-- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `event_handlers.py`, `chat_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, and `self_update.py` are owned here.
+- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, and `self_update.py` are owned here.
+- `headless/` is owned here and must remain importable without Textual.
 - UI widgets, screens, and TCSS are owned by child docs in `widgets/`, `screens/`, and `styles/`.
 - `assets/` is currently empty; keep it root-package owned until it becomes a durable asset boundary.
 
@@ -18,7 +19,7 @@
 - Use the client after-result callbacks for browser and computer-use status refreshes so server-side pending operations resolve before any nested `connector_hello` round trip.
 - `/computer-use on` is a human approval command. It must force `ComputerUseManager.rearm()` immediately instead of silently validating a saved restore token first.
 - Host-browser `open` must reuse an already-open tab with the same normalized URL before creating a new tab. Keep `list` and `set_active` workflows available for title-based or URL-based selection.
-- The CLI may remember host/context and computer-use settings, but it must not persist usernames, passwords, session cookies, connector tokens, or other secrets.
+- The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It must not persist usernames, passwords, connector tokens, API keys, or other secrets.
 - Remote workspace tools must respect their write/exec enablement flags and must not widen filesystem access accidentally.
 
 ## Work Guidance

@@ -30,6 +30,8 @@
 
 - Tech stack: Python 3.10+, Textual 8+, `httpx`, `aiohttp`, `python-socketio` / Engine.IO.
 - Run the TUI with `a0` or `./.venv/bin/python -m agent_zero_cli`.
+- Run the plain stdin/stdout connector with `a0 headless`; use
+  `a0 headless --print` for one-shot pipe-friendly runs.
 - Use Linux commands and paths by default. Prefer `./.venv/bin/python`, not Windows-only virtualenv paths.
 - UI preview is the primary loop for TUI work: `./.venv/bin/python devtools/serve.py` at `http://localhost:8566`.
 - The CLI talks to Agent Zero through the connector protocol `a0-connector.v1`, HTTP routes under `/api/plugins/_a0_connector/v1/`, and Socket.IO events on namespace `/ws` with `connector_*` event names.
@@ -49,6 +51,9 @@
 - Allowed without asking: read files, edit repo source/docs/tests/devtools/requirements/constraints/AGENTS docs, run devtools scripts, and run pytest.
 - Ask before installing new dependencies, editing external Agent Zero plugin/backend files, deleting files outside normal generated outputs, or making git commits/pushes.
 - Never hardcode API keys, tokens, passwords, cookies, or connector secrets.
+- Do not persist usernames, passwords, connector tokens, or API keys. Protected
+  Agent Zero web sessions may persist browser-style session cookies only through
+  the existing remembered-host/session flow.
 - Never use destructive git commands such as `git reset --hard` or `git checkout --` unless the user explicitly asks.
 - Preserve user work. If the worktree contains unrelated changes, leave them alone.
 

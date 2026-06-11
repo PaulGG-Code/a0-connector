@@ -1,4 +1,8 @@
+from __future__ import annotations
+
 import re
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from typing import Any
 
 from rich.align import Align
@@ -9,7 +13,9 @@ from rich.padding import Padding
 from rich.text import Text
 
 from agent_zero_cli.icon_text import normalize_icon_text, strip_icon_markers
-from agent_zero_cli.widgets.chat_log import ChatLog
+
+if TYPE_CHECKING:
+    from agent_zero_cli.widgets.chat_log import ChatLog
 
 
 _EVENT_CATEGORY: dict[str, str] = {
@@ -64,6 +70,21 @@ _OSC_CWD_PREFIX_RE = re.compile(
 _PROMPT_LINE_RE = re.compile(
     r"^\s*(?:\([^)\n]+\)\s*)?(?:[\w.-]+@[\w.-]+:)?[/~.\w-]*[#$]\s*$"
 )
+
+
+@dataclass(frozen=True)
+class ConnectorEventParts:
+    event_type: str
+    category: str
+    sequence: int
+    heading: str
+    text: str
+    meta: dict[str, Any]
+    label: str
+    detail: str
+    message: str
+    code: str
+    code_output: str
 
 
 def _plain_text(value: object, *, style: str = "") -> Text:
@@ -172,20 +193,56 @@ def extract_detail(event_type: str, data: dict[str, Any]) -> str:
     return ""
 
 
+def describe_connector_event(event: dict[str, Any]) -> ConnectorEventParts:
+    """Return UI-neutral display parts for a connector context event."""
+    event_type = str(event.get("event") or "")
+    data = event.get("data", {})
+    if not isinstance(data, dict):
+        data = {}
+    text = str(data.get("text") or "")
+    heading = str(data.get("heading") or "")
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    category = _EVENT_CATEGORY.get(event_type, "info")
+    label = _STATUS_LABEL.get(event_type, "")
+    detail = extract_detail(event_type, data)
+    sequence_raw = event.get("sequence", -1)
+    try:
+        sequence = int(sequence_raw)
+    except (TypeError, ValueError):
+        sequence = -1
+
+    code = ""
+    code_output = ""
+    if category == "code":
+        code = str(meta.get("code") or "").rstrip()
+        code_output = _sanitize_code_output(text, code_present=bool(code))
+
+    return ConnectorEventParts(
+        event_type=event_type,
+        category=category,
+        sequence=sequence,
+        heading=heading,
+        text=text,
+        meta=meta,
+        label=label,
+        detail=detail,
+        message=_event_message(heading, text),
+        code=code,
+        code_output=code_output,
+    )
+
+
 def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
     """Render a connector event to the chat log.
     
     Returns:
         bool: True if a static block was rendered, False otherwise.
     """
-    event_type = event.get("event", "")
-    data = event.get("data", {})
-    text = data.get("text", "")
-    heading = data.get("heading", "")
-    meta = data.get("meta", {})
-    seq = event.get("sequence", -1)
-
-    category = _EVENT_CATEGORY.get(event_type, "info")
+    parts = describe_connector_event(event)
+    event_type = parts.event_type
+    text = parts.text
+    seq = parts.sequence
+    category = parts.category
 
     if category == "user":
         if text:
@@ -203,32 +260,32 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
         return False
 
     if category == "warning":
-        msg = _event_message(heading, text)
+        msg = parts.message
         log.append_or_update(seq, _plain_text(msg, style="yellow"))
         return True
 
     if category == "error":
-        msg = _event_message(heading, text)
+        msg = parts.message
         log.append_or_update(seq, _plain_text(msg, style="red"))
         return True
 
     if category == "info":
-        msg = _event_message(heading, text)
+        msg = parts.message
         if msg:
             log.append_or_update(seq, Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)))
             return True
         return False
 
     if category == "util":
-        msg = _event_message(heading, text)
+        msg = parts.message
         if msg:
             log.append_or_update(seq, Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)))
             return True
         return False
 
     if category == "code":
-        code = str(meta.get("code") or "").rstrip()
-        display_text = _sanitize_code_output(text, code_present=bool(code))
+        code = parts.code
+        display_text = parts.code_output
         if code or display_text:
             markdown_parts: list[str] = []
             if code:
@@ -239,8 +296,8 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
 
             log.append_or_update_code(
                 seq,
-                _STATUS_LABEL[event_type],
-                extract_detail(event_type, data),
+                parts.label,
+                parts.detail,
                 Panel(
                     Markdown(md_content),
                     box=box.SIMPLE,

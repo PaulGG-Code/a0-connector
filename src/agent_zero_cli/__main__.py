@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Sequence
+from pathlib import Path
 
 from agent_zero_cli import __version__
 from agent_zero_cli.client import DEFAULT_HOST
@@ -60,6 +61,69 @@ def _build_parser() -> argparse.ArgumentParser:
         "update",
         help="Update the installed a0 tool and exit.",
     )
+    headless = subparsers.add_parser(
+        "headless",
+        help="Run a plain stdin/stdout connector session without the Textual TUI.",
+    )
+    headless_connection = headless.add_argument_group("connection")
+    headless_connection.add_argument(
+        "--host",
+        dest="headless_host",
+        metavar="URL",
+        help="Agent Zero base URL. Defaults to AGENT_ZERO_HOST or single-instance Docker discovery.",
+    )
+    headless_chat = headless_connection.add_mutually_exclusive_group()
+    headless_chat.add_argument(
+        "--chat",
+        dest="headless_chat",
+        metavar="CONTEXT_ID",
+        help="Open a specific chat context after connecting.",
+    )
+    headless_chat.add_argument(
+        "--chat-last",
+        dest="headless_chat_last",
+        action="store_true",
+        help="Restore the last remembered chat for the selected host.",
+    )
+    headless_chat.add_argument(
+        "--new-chat",
+        dest="headless_new_chat",
+        action="store_true",
+        help="Create a new chat context after connecting.",
+    )
+    headless_connection.add_argument(
+        "--no-docker-discovery",
+        dest="headless_no_docker_discovery",
+        action="store_true",
+        help="Skip Docker host discovery when no host is configured.",
+    )
+    headless.add_argument(
+        "--output",
+        choices=("text", "jsonl"),
+        default="text",
+        help="Select human text or machine-readable JSONL output.",
+    )
+    headless.add_argument(
+        "--print",
+        "-p",
+        dest="print_prompt",
+        nargs="?",
+        const="",
+        metavar="PROMPT",
+        help="One-shot mode: send PROMPT or stdin, stream output, and exit on completion.",
+    )
+    headless.add_argument(
+        "--workspace",
+        metavar="DIR",
+        default=".",
+        help="Local workspace root for remote file and exec operations.",
+    )
+    headless.add_argument(
+        "--timeout",
+        type=float,
+        metavar="SECONDS",
+        help="Maximum wait for completion in --print or pipe mode.",
+    )
     return parser
 
 
@@ -95,6 +159,45 @@ def _run_self_update() -> int:
     return run_self_update_handoff()
 
 
+def _run_headless(
+    *,
+    host: str = "",
+    chat: str = "",
+    chat_last: bool = False,
+    new_chat: bool = False,
+    output: str = "text",
+    print_prompt: str | None = None,
+    workspace: str = ".",
+    timeout: float | None = None,
+    discover_instances: bool = True,
+) -> int:
+    from agent_zero_cli.config import load_config
+    from agent_zero_cli.headless.runner import HeadlessOptions, run_headless
+
+    config = load_config()
+    if host:
+        config.instance_url = host
+    if chat:
+        config.default_context_id = chat
+    elif chat_last or new_chat:
+        config.default_context_id = ""
+
+    return run_headless(
+        HeadlessOptions(
+            host=host,
+            chat=chat,
+            chat_last=chat_last,
+            new_chat=new_chat,
+            output=output,
+            print_prompt=print_prompt,
+            workspace=Path(workspace),
+            timeout=timeout,
+            discover_instances=discover_instances,
+            config=config,
+        )
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -105,6 +208,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "update":
         return _run_self_update()
+
+    if args.command == "headless":
+        return _run_headless(
+            host=(args.headless_host or args.host or ""),
+            chat=(args.headless_chat or args.chat or ""),
+            chat_last=bool(args.headless_chat_last or args.chat_last),
+            new_chat=bool(args.headless_new_chat),
+            output=args.output,
+            print_prompt=args.print_prompt,
+            workspace=args.workspace,
+            timeout=args.timeout,
+            discover_instances=not args.headless_no_docker_discovery,
+        )
 
     _run_app(
         host=args.host or "",
