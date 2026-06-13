@@ -982,6 +982,31 @@ def test_start_instance_discovery_can_be_disabled_for_manual_url_testing(
     assert splash.state.manual_entry_expanded is True
 
 
+async def test_startup_direct_connect_skips_instance_discovery(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.config.instance_url = "http://127.0.0.1:5080/"
+    dummy_app._connect_configured_host = True
+    connections: list[str] = []
+    discovery_calls: list[bool] = []
+
+    async def fake_begin_connection(host: str, **_: object) -> None:
+        connections.append(host)
+
+    monkeypatch.setattr(dummy_app, "_begin_connection", fake_begin_connection)
+    monkeypatch.setattr(
+        dummy_app,
+        "_start_instance_discovery",
+        lambda *, auto_connect_single=False: discovery_calls.append(auto_connect_single),
+    )
+
+    await connection.startup(dummy_app)
+
+    assert connections == ["http://127.0.0.1:5080/"]
+    assert discovery_calls == []
+
+
 async def test_begin_connection_to_protected_instance_advances_to_login(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,

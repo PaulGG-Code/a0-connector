@@ -180,6 +180,7 @@ class AgentZeroCLI(App):
         *,
         auto_connect_single_instance: bool = True,
         discover_instances: bool = True,
+        connect_configured_host: bool = False,
     ) -> None:
         super().__init__()
         self.register_theme(
@@ -258,6 +259,7 @@ class AgentZeroCLI(App):
         self._instance_discovery_generation = 0
         self._auto_connect_single_instance = auto_connect_single_instance
         self._discover_instances = discover_instances
+        self._connect_configured_host = connect_configured_host
         self._splash_hidden_commands = _SPLASH_HIDDEN_COMMANDS
         self._cli_update_check_started = False
 

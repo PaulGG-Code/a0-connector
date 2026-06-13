@@ -33,6 +33,9 @@ async def startup(app: AgentZeroCLI) -> None:
     )
     app._sync_connection_status("disconnected", "")
     app._focus_splash_primary()
+    if app._connect_configured_host:
+        await app._begin_connection(host)
+        return
     app._start_instance_discovery(auto_connect_single=app._auto_connect_single_instance)
 
 

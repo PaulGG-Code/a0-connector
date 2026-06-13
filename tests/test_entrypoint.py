@@ -51,6 +51,7 @@ def test_main_help_exits_without_launching_app(
     assert "--chat-last" in captured.out
     assert "--no-auto-connect" in captured.out
     assert "--no-docker-discovery" in captured.out
+    assert "--connect" in captured.out
     assert "AGENT_ZERO_HOST" in captured.out
     assert "update" in captured.out
     assert "headless" in captured.out
@@ -75,6 +76,7 @@ def test_main_connection_flags_route_to_app_launcher(
             "ctx-123",
             "--no-auto-connect",
             "--no-docker-discovery",
+            "--connect",
         ]
     )
 
@@ -86,6 +88,7 @@ def test_main_connection_flags_route_to_app_launcher(
             "chat_last": False,
             "auto_connect_single": False,
             "discover_instances": False,
+            "connect_configured_host": True,
         }
     ]
 
@@ -110,6 +113,7 @@ def test_main_chat_last_flag_routes_to_app_launcher(
             "chat_last": True,
             "auto_connect_single": True,
             "discover_instances": True,
+            "connect_configured_host": False,
         }
     ]
 

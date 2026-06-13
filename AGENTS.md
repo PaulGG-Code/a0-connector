@@ -30,6 +30,7 @@
 
 - Tech stack: Python 3.10+, Textual 8+, `httpx`, `aiohttp`, `python-socketio` / Engine.IO.
 - Run the TUI with `a0` or `./.venv/bin/python -m agent_zero_cli`.
+- Launcher direct-connect path is `a0 --host <local-url> --no-docker-discovery --connect`; `--host` selects the target URL, `--no-docker-discovery` skips Docker discovery, and `--connect` connects immediately instead of opening the host picker.
 - Run the plain stdin/stdout connector with `a0 headless`; use
   `a0 headless --print` for one-shot pipe-friendly runs.
 - Use Linux commands and paths by default. Prefer `./.venv/bin/python`, not Windows-only virtualenv paths.

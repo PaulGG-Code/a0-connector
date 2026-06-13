@@ -41,6 +41,11 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip Docker host discovery and open manual URL entry immediately.",
     )
+    connection_options.add_argument(
+        "--connect",
+        action="store_true",
+        help="Connect to the configured host immediately instead of opening the host picker.",
+    )
     chat_options = connection_options.add_mutually_exclusive_group()
     chat_options.add_argument(
         "--chat",
@@ -134,6 +139,7 @@ def _run_app(
     chat_last: bool = False,
     auto_connect_single: bool = True,
     discover_instances: bool = True,
+    connect_configured_host: bool = False,
 ) -> None:
     from agent_zero_cli.app import AgentZeroCLI
     from agent_zero_cli.config import load_config
@@ -149,6 +155,7 @@ def _run_app(
         config,
         auto_connect_single_instance=auto_connect_single,
         discover_instances=discover_instances,
+        connect_configured_host=connect_configured_host,
     )
     app.run()
 
@@ -228,6 +235,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         chat_last=bool(args.chat_last),
         auto_connect_single=not args.no_auto_connect,
         discover_instances=not args.no_docker_discovery,
+        connect_configured_host=bool(args.connect),
     )
     return 0
 
