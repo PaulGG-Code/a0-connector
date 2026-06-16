@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from http.cookiejar import Cookie
+import json
 import time
 import uuid
 from typing import Any, Callable, Mapping
@@ -46,6 +48,8 @@ _EVENT_BROWSER_OP = "connector_browser_op"
 _EVENT_BROWSER_OP_RESULT = "connector_browser_op_result"
 _EVENT_REMOTE_TREE_UPDATE = "connector_remote_tree_update"
 _EVENT_ERROR = "connector_error"
+_FILE_OP_RESULT_CHUNK_BYTES = 64 * 1024
+_FILE_OP_RESULT_CHUNK_ENCODING = "json+base64"
 
 _SOCKET_IO_PROBE_QUERY = {"transport": "polling", "EIO": "4"}
 _BLANK_SOCKET_IO_REJECTION = "server rejected the Socket.IO connection without an error message"
@@ -520,11 +524,12 @@ class A0Client:
         async def _on_file_op(payload: dict[str, Any]) -> None:
             request = self._unwrap_envelope(payload)
             result = await self._handle_file_op(request)
-            await self.sio.emit(
-                _EVENT_FILE_OP_RESULT,
-                result,
-                namespace=WS_NAMESPACE,
-            )
+            for result_payload in self._file_op_result_payloads(result):
+                await self.sio.emit(
+                    _EVENT_FILE_OP_RESULT,
+                    result_payload,
+                    namespace=WS_NAMESPACE,
+                )
 
         @self.sio.on(_EVENT_EXEC_OP, namespace=WS_NAMESPACE)
         async def _on_exec_op(payload: dict[str, Any]) -> None:
@@ -567,6 +572,29 @@ class A0Client:
             )
 
         self._events_registered = True
+
+    def _file_op_result_payloads(self, result: dict[str, Any]) -> list[dict[str, Any]]:
+        raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        if len(raw) <= _FILE_OP_RESULT_CHUNK_BYTES:
+            return [result]
+
+        op_id = str(result.get("op_id") or "")
+        chunks = [
+            raw[index : index + _FILE_OP_RESULT_CHUNK_BYTES]
+            for index in range(0, len(raw), _FILE_OP_RESULT_CHUNK_BYTES)
+        ]
+        chunk_count = len(chunks)
+        return [
+            {
+                "op_id": op_id,
+                "chunked": True,
+                "chunk_index": index,
+                "chunk_count": chunk_count,
+                "encoding": _FILE_OP_RESULT_CHUNK_ENCODING,
+                "data": base64.b64encode(chunk).decode("ascii"),
+            }
+            for index, chunk in enumerate(chunks)
+        ]
 
     @staticmethod
     async def _notify_op_result_sent(

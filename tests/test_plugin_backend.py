@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import importlib
+import json
 import os
 import sys
 import tempfile
@@ -656,6 +657,54 @@ def _register_remote_file_cli(
             "mode": "read_write" if write_enabled else "read_only",
         },
     )
+
+
+def test_ws_runtime_reassembles_chunked_file_op_results() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+
+    async def run_scenario() -> None:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[dict[str, object]] = loop.create_future()
+        result = {
+            "op_id": "op-large",
+            "ok": True,
+            "result": {
+                "content": "0123456789abcdef\n" * 5000,
+                "total_lines": 5000,
+            },
+        }
+        raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        chunks = [raw[index : index + 4096] for index in range(0, len(raw), 4096)]
+        ws_runtime_mod.store_pending_file_op(
+            "op-large",
+            sid="sid-cli",
+            future=future,
+            loop=loop,
+            context_id="ctx-1",
+        )
+
+        for chunk_index in [1, 0, *range(2, len(chunks))]:
+            accepted = ws_runtime_mod.resolve_pending_file_op(
+                "op-large",
+                sid="sid-cli",
+                payload={
+                    "op_id": "op-large",
+                    "chunked": True,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "encoding": "json+base64",
+                    "data": base64.b64encode(chunks[chunk_index]).decode("ascii"),
+                },
+            )
+            assert accepted is True
+            if chunk_index != len(chunks) - 1:
+                assert not future.done()
+
+        assert await asyncio.wait_for(future, timeout=1.0) == result
+
+    asyncio.run(run_scenario())
 
 
 async def _no_sleep(_delay: float) -> None:
@@ -1690,8 +1739,8 @@ def _install_fake_extension_helper() -> None:
 def _load_remote_tool_stubs_extension():
     _install_fake_extension_helper()
     return _reload(
-        "plugins._a0_connector.extensions.python._functions.extensions.python."
-        "system_prompt._11_tools_prompt.build_prompt.end._70_include_remote_tool_stubs"
+        "plugins._a0_connector.extensions.python._functions._11_tools_prompt."
+        "build_prompt.end._70_include_remote_tool_stubs"
     )
 
 
@@ -2060,6 +2109,55 @@ def test_select_remote_file_target_sid_requires_write_enabled_for_writes() -> No
         ws_runtime_mod.select_remote_file_target_sid("ctx-1", require_writes=True)
         == "sid-read-write"
     )
+
+
+def test_ws_connector_chunked_file_result_resolves_pending_future() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    handler = ws_connector_mod.WsConnector(None, None)
+
+    async def _scenario() -> None:
+        sid = "sid-file"
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        result = {
+            "op_id": "file-1",
+            "ok": True,
+            "result": {"content": "large\n" * 5000, "total_lines": 5000},
+        }
+        raw = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        chunks = [raw[index : index + 4096] for index in range(0, len(raw), 4096)]
+
+        ws_runtime_mod.register_sid(sid)
+        ws_runtime_mod.store_pending_file_op(
+            "file-1",
+            sid=sid,
+            future=future,
+            loop=loop,
+            context_id="ctx-1",
+        )
+
+        for chunk_index, chunk in enumerate(chunks):
+            response = handler._handle_file_op_result(
+                {
+                    "op_id": "file-1",
+                    "chunked": True,
+                    "chunk_index": chunk_index,
+                    "chunk_count": len(chunks),
+                    "encoding": "json+base64",
+                    "data": base64.b64encode(chunk).decode("ascii"),
+                },
+                sid,
+            )
+            assert response == {"op_id": "file-1", "accepted": True}
+            if chunk_index != len(chunks) - 1:
+                assert not future.done()
+
+        assert await asyncio.wait_for(future, timeout=0.25) == result
+
+    asyncio.run(_scenario())
 
 
 def test_ws_connector_exec_result_resolves_pending_future() -> None:

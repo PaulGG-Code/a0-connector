@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 import ssl
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -1144,6 +1146,50 @@ async def test_file_op_requests_are_returned_via_result_event() -> None:
             "/ws",
         )
     ]
+
+
+async def test_large_file_op_results_are_returned_as_chunked_result_events() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(
+            status_code=200,
+            text='0{"sid":"sid-1","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}',
+        )
+    )
+    client.sio = FakeSocketIOClient()
+    expected_result = {
+        "op_id": "op-large",
+        "ok": True,
+        "result": {
+            "content": "0123456789abcdef\n" * 12000,
+            "total_lines": 12000,
+            "line_from": 1,
+            "line_to": 12000,
+        },
+    }
+    client.on_file_op = AsyncMock(return_value=expected_result)
+
+    await client.connect_websocket()
+
+    handler = client.sio.handlers[("/ws", "connector_file_op")]
+    await handler({"data": {"op_id": "op-large", "op": "read", "path": "/tmp/large.txt"}})
+
+    assert len(client.sio.emit_calls) > 1
+    frames = [call[1] for call in client.sio.emit_calls]
+    assert {call[0] for call in client.sio.emit_calls} == {"connector_file_op_result"}
+    assert {call[2] for call in client.sio.emit_calls} == {"/ws"}
+    assert all(frame["op_id"] == "op-large" for frame in frames)
+    assert all(frame["chunked"] is True for frame in frames)
+    assert all(frame["encoding"] == "json+base64" for frame in frames)
+    assert {frame["chunk_count"] for frame in frames} == {len(frames)}
+    assert sorted(frame["chunk_index"] for frame in frames) == list(range(len(frames)))
+
+    assembled = b"".join(
+        base64.b64decode(str(frame["data"]).encode("ascii"))
+        for frame in sorted(frames, key=lambda item: int(item["chunk_index"]))
+    )
+    assert json.loads(assembled.decode("utf-8")) == expected_result
 
 
 async def test_settings_updated_event_unwraps_payload() -> None:

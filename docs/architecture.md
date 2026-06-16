@@ -81,7 +81,7 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 | `connector_subscribe_context` | Subscribe to a context event stream |
 | `connector_unsubscribe_context` | Unsubscribe from a context |
 | `connector_send_message` | Send user message asynchronously |
-| `connector_file_op_result` | Return result of a local file operation |
+| `connector_file_op_result` | Return result of a local file operation; large results may be sent as JSON/base64 chunks |
 | `connector_remote_tree_update` | Publish frontend workspace tree snapshots |
 | `connector_exec_op_result` | Return result of a shell-backed frontend execution operation |
 | `connector_computer_use_op_result` | Return result of a frontend computer-use operation |
@@ -240,6 +240,8 @@ module inside the tool Python.
 ## Remote file operations
 
 The `text_editor_remote` tool emits `connector_file_op` to the subscribed CLI client. The CLI performs the file read, write, or patch on the local machine and returns `connector_file_op_result`.
+
+Large file-operation results are split into multiple `connector_file_op_result` frames before crossing Socket.IO. Each frame includes `chunked: true`, `chunk_index`, `chunk_count`, `encoding: "json+base64"`, and a base64 `data` slice of the original JSON result. The Agent Zero plugin reassembles all chunks by `op_id` before resolving the pending file operation, so tool behavior still receives the same result shape as a small read.
 
 All requested paths are resolved relative to the CLI-advertised local workspace and must remain inside that workspace after canonicalization. Absolute paths, `..` traversal, different Windows drives, and symlinks that escape the workspace are rejected before any read or write occurs.
 
