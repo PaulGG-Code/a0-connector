@@ -13,6 +13,7 @@ from agent_zero_cli.remote_exec import RemoteExecManager
 from agent_zero_cli.remote_files import RemoteFileUtility
 
 _REMOTE_TREE_KEEPALIVE_SECONDS = 60.0
+_RECOVERY_DELAYS_SECONDS = (1.0, 2.0, 5.0, 10.0, 20.0)
 
 
 class SessionObserver(Protocol):
@@ -129,6 +130,7 @@ class ConnectorSession:
         self._last_remote_tree_hash = ""
         self._last_remote_tree_published_at = 0.0
         self._remote_tree_task: asyncio.Task[None] | None = None
+        self._recovery_task: asyncio.Task[None] | None = None
 
     async def connect(
         self,
@@ -331,6 +333,7 @@ class ConnectorSession:
         self._last_remote_tree_published_at = now
 
     async def close(self) -> None:
+        self._stop_recovery()
         self._stop_remote_tree_publisher()
         with contextlib.suppress(Exception):
             await self.remote_exec.close()
@@ -340,6 +343,7 @@ class ConnectorSession:
         self._context_run_complete = True
 
     async def _reset_runtime(self) -> None:
+        self._stop_recovery()
         self._stop_remote_tree_publisher()
         self.connected = False
         self.agent_active = False
@@ -474,8 +478,9 @@ class ConnectorSession:
 
     def _handle_disconnect(self) -> None:
         self.connected = False
-        self.agent_active = False
-        self.observer.on_disconnect()
+        if self._recovery_task is not None and not self._recovery_task.done():
+            return
+        self._recovery_task = asyncio.create_task(self._recover_websocket())
 
     def _handle_context_snapshot(self, data: dict[str, Any]) -> None:
         if data.get("context_id") != self.context_id:
@@ -565,6 +570,65 @@ class ConnectorSession:
         self._remote_tree_task = None
         if task is not None and not task.done():
             task.cancel()
+
+    def _stop_recovery(self) -> None:
+        task = self._recovery_task
+        self._recovery_task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _recover_websocket(self) -> None:
+        client = self.client
+        context_id = self.context_id
+        if client is None or not self.host or not context_id:
+            self._recovery_task = None
+            self.agent_active = False
+            self.observer.on_disconnect()
+            return
+
+        try:
+            self._stop_remote_tree_publisher()
+            for attempt, delay in enumerate(_RECOVERY_DELAYS_SECONDS, start=1):
+                self._stage(
+                    "connecting",
+                    "Connection lost; reconnecting...",
+                    f"{self.host} (attempt {attempt})",
+                )
+                await asyncio.sleep(delay)
+                if self.client is not client or not self.context_id:
+                    return
+                try:
+                    await client.connect_websocket()
+                    hello = await client.send_hello(
+                        context_id=context_id,
+                        computer_use=self._computer_use_metadata(),
+                        host_browser=self._host_browser_metadata(),
+                        remote_files=self._remote_file_metadata(),
+                        remote_exec=self._remote_exec_metadata(),
+                    )
+                    exec_config = hello.get("exec_config") if isinstance(hello, dict) else None
+                    self.remote_exec.set_exec_config(exec_config)
+                    await client.subscribe_context(context_id)
+                    await self.publish_remote_tree_snapshot(force=True)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    last_error = str(exc).strip() or exc.__class__.__name__
+                    if attempt == len(_RECOVERY_DELAYS_SECONDS):
+                        self._stage("error", "Connection lost", last_error)
+                        self.agent_active = False
+                        self.observer.on_disconnect()
+                        return
+                    continue
+
+                self.connected = True
+                self.agent_active = False
+                self._context_run_complete = True
+                self._start_remote_tree_publisher()
+                self._stage("ready", "Reconnected.", self.host)
+                return
+        finally:
+            self._recovery_task = None
 
     async def _remote_tree_publish_loop(self) -> None:
         try:

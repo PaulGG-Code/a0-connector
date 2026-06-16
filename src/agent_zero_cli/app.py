@@ -230,6 +230,7 @@ class AgentZeroCLI(App):
         self._remote_workspace = ""
         self._token_refresh_task: asyncio.Task[None] | None = None
         self._state_sync_task: asyncio.Task[None] | None = None
+        self._websocket_recovery_task: asyncio.Task[None] | None = None
         self._splash_state = SplashState(
             stage="host",
             host=self.config.instance_url or DEFAULT_HOST,

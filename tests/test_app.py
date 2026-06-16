@@ -3942,6 +3942,94 @@ async def test_reset_disconnected_state_disconnects_computer_use_manager(
     assert dummy_app._computer_use.disconnect_calls == 1
 
 
+async def test_recover_websocket_preserves_active_context(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RecoveringClient:
+        def __init__(self) -> None:
+            self.connected = False
+            self.connect_calls = 0
+            self.hello_calls: list[dict[str, object]] = []
+            self.subscribe_calls: list[str] = []
+
+        async def connect_websocket(self) -> None:
+            self.connect_calls += 1
+            self.connected = True
+
+        async def send_hello(self, **payload: object) -> dict[str, object]:
+            self.hello_calls.append(dict(payload))
+            return {"exec_config": {"version": 1}}
+
+        async def subscribe_context(self, context_id: str) -> dict[str, object]:
+            self.subscribe_calls.append(context_id)
+            return {}
+
+    class FakePythonTty:
+        def __init__(self) -> None:
+            self.exec_configs: list[object] = []
+
+        def set_exec_config(self, config: object) -> None:
+            self.exec_configs.append(config)
+
+    client = RecoveringClient()
+    tty = FakePythonTty()
+    stops = 0
+    starts = 0
+    published: list[bool] = []
+
+    async def fake_publish_remote_tree_snapshot(*, force: bool = False) -> None:
+        published.append(force)
+
+    def fake_stop_remote_tree_publisher() -> None:
+        nonlocal stops
+        stops += 1
+
+    def fake_start_remote_tree_publisher() -> None:
+        nonlocal starts
+        starts += 1
+
+    monkeypatch.setattr("agent_zero_cli.connection._RECOVERY_DELAYS_SECONDS", (0.0,))
+    monkeypatch.setattr(dummy_app, "_stop_remote_tree_publisher", fake_stop_remote_tree_publisher)
+    monkeypatch.setattr(dummy_app, "_start_remote_tree_publisher", fake_start_remote_tree_publisher)
+    monkeypatch.setattr(dummy_app, "_publish_remote_tree_snapshot", fake_publish_remote_tree_snapshot)
+
+    dummy_app.config.instance_url = "http://agent.test"
+    dummy_app.client = client  # type: ignore[assignment]
+    dummy_app._python_tty = tty  # type: ignore[assignment]
+    dummy_app.connected = True
+    dummy_app.agent_active = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.current_context_has_messages = True
+    dummy_app._context_run_complete = False
+
+    await connection._recover_websocket(dummy_app)
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    status = dummy_app._test_widgets["#connection-status"]  # type: ignore[index]
+    splash = dummy_app._test_widgets["#splash-view"]  # type: ignore[index]
+
+    assert client.connect_calls == 1
+    assert client.subscribe_calls == ["ctx-1"]
+    assert client.hello_calls[-1]["context_id"] == "ctx-1"
+    assert tty.exec_configs == [{"version": 1}]
+    assert published == [True]
+    assert stops == 1
+    assert starts == 1
+    assert dummy_app.connected is True
+    assert dummy_app.agent_active is False
+    assert dummy_app.current_context == "ctx-1"
+    assert dummy_app.current_context_has_messages is True
+    assert dummy_app._context_run_complete is True
+    assert dummy_app._websocket_recovery_task is None
+    assert input_widget.disabled is False
+    assert log.cleared is False
+    assert status.status == "connected"
+    assert splash.state.stage == "ready"
+    assert splash.state.message == "Reconnected."
+
+
 def test_copy_to_clipboard_mirrors_to_native_windows_clipboard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -221,6 +221,38 @@ async def test_session_connects_and_advertises_headless_metadata(tmp_path: Path)
     await session.close()
 
 
+async def test_session_recovers_websocket_after_transport_drop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_zero_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
+    observer = Observer()
+    session = ConnectorSession(
+        CLIConfig(default_context_id="ctx-default"),
+        observer,
+        workspace=tmp_path,
+        client_factory=FakeClient,
+    )
+    await session.connect("http://agent.test")
+
+    client = FakeClient.instances[-1]
+    client.connected = False
+    session._handle_disconnect()
+    assert session.connected is False
+
+    assert session._recovery_task is not None
+    await session._recovery_task
+
+    assert observer.disconnected == 0
+    assert session.connected is True
+    assert session.context_id == "ctx-default"
+    assert client.subscribe_calls == [("ctx-default", 0), ("ctx-default", 0)]
+    assert client.hello_calls[-1]["context_id"] == "ctx-default"
+    assert observer.stages[-1] == ("ready", "Reconnected.", "http://agent.test")
+
+    await session.close()
+
+
 async def test_session_raises_auth_required_without_credentials(tmp_path: Path) -> None:
     FakeClient.capabilities = _capabilities(auth_required=True)
     FakeClient.verify_session_result = False

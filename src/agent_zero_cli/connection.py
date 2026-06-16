@@ -16,6 +16,8 @@ from agent_zero_cli.widgets.chat_log import ChatLog
 if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
 
+_RECOVERY_DELAYS_SECONDS = (1.0, 2.0, 5.0, 10.0, 20.0)
+
 
 async def startup(app: AgentZeroCLI) -> None:
     host = app.config.instance_url.strip() or DEFAULT_HOST
@@ -229,7 +231,7 @@ async def begin_connection(
             return
 
     app.client.on_connect = lambda: app._run_on_ui(app._set_connected, True)
-    app.client.on_disconnect = lambda: app._run_on_ui(app._set_connected, False)
+    app.client.on_disconnect = lambda: app._run_on_ui(_schedule_websocket_recovery, app)
     app.client.on_context_snapshot = lambda data: app._run_on_ui(app._handle_context_snapshot, data)
     app.client.on_context_event = lambda data: app._run_on_ui(app._handle_context_event, data)
     app.client.on_context_complete = lambda data: app._run_on_ui(app._handle_context_complete, data)
@@ -377,6 +379,90 @@ def _schedule_remote_tool_metadata_refresh(app: AgentZeroCLI) -> None:
     asyncio.create_task(refresh())
 
 
+def _schedule_websocket_recovery(app: AgentZeroCLI) -> None:
+    task = getattr(app, "_websocket_recovery_task", None)
+    if task is not None and not task.done():
+        return
+    app._websocket_recovery_task = asyncio.create_task(_recover_websocket(app))
+
+
+def _mark_reconnecting(app: AgentZeroCLI) -> None:
+    app.connected = False
+    app._sync_connection_status("connecting", app.config.instance_url or app._splash_host())
+    app.query_one("#message-input", ChatInput).disabled = True
+    app._stop_remote_tree_publisher()
+
+
+async def _recover_websocket(app: AgentZeroCLI) -> None:
+    context_id = str(app.current_context or "").strip()
+    if not context_id:
+        app._websocket_recovery_task = None
+        set_connected(app, False)
+        return
+
+    try:
+        _mark_reconnecting(app)
+        last_error = ""
+        for attempt, delay in enumerate(_RECOVERY_DELAYS_SECONDS, start=1):
+            app._set_splash_stage(
+                "connecting",
+                message="Connection lost; reconnecting...",
+                detail=f"{app.config.instance_url or app._splash_host()} (attempt {attempt})",
+                host=app._splash_host(),
+            )
+            await asyncio.sleep(delay)
+            if str(app.current_context or "").strip() != context_id:
+                return
+            try:
+                await app.client.connect_websocket()
+                hello = await app.client.send_hello(
+                    context_id=context_id,
+                    computer_use=app._computer_use_metadata(),
+                    host_browser=app._host_browser_metadata(),
+                    remote_files=app._remote_file_metadata(),
+                    remote_exec=app._remote_exec_metadata(),
+                )
+                exec_config = hello.get("exec_config") if isinstance(hello, dict) else None
+                app._python_tty.set_exec_config(exec_config)
+                await app.client.subscribe_context(context_id)
+                await app._publish_remote_tree_snapshot(force=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                last_error = str(exc).strip() or exc.__class__.__name__
+                if attempt == len(_RECOVERY_DELAYS_SECONDS):
+                    break
+                continue
+
+            app.connected = True
+            app.agent_active = False
+            app._context_run_complete = True
+            app.query_one("#message-input", ChatInput).disabled = False
+            app._sync_connection_status("connected", app.config.instance_url or app._splash_host())
+            app._sync_context_tabs()
+            app._start_remote_tree_publisher()
+            app._set_splash_stage(
+                "ready",
+                message="Reconnected.",
+                detail=app.config.instance_url or app._splash_host(),
+                host=app._splash_host(),
+                actions=app._welcome_actions(),
+            )
+            return
+
+        app._websocket_recovery_task = None
+        set_connected(app, False)
+        if last_error:
+            app._set_splash_stage(
+                "error",
+                message="Connection lost",
+                detail=last_error,
+                host=app._splash_host(),
+            )
+    finally:
+        app._websocket_recovery_task = None
+
+
 def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app.connected = False
     app.agent_active = False
@@ -411,6 +497,10 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._last_remote_tree_hash = ""
     app._last_remote_tree_published_at = 0.0
     app._python_tty.set_exec_config(None)
+    task = getattr(app, "_websocket_recovery_task", None)
+    app._websocket_recovery_task = None
+    if task is not None and not task.done():
+        task.cancel()
     asyncio.create_task(app._python_tty.close())
     asyncio.create_task(app._computer_use.disconnect())
     asyncio.create_task(app._host_browser.disconnect())
