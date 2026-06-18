@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 import tomllib
 
 import pytest
@@ -172,3 +173,36 @@ def test_main_headless_routes_to_headless_launcher(
             "discover_instances": False,
         }
     ]
+
+
+def test_run_app_installs_textual_input_decoder_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from agent_zero_cli import app as app_mod
+    from agent_zero_cli import config as config_mod
+    from agent_zero_cli import textual_compat
+
+    calls: list[str] = []
+
+    class FakeAgentZeroCLI:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            calls.append("app-init")
+
+        def run(self) -> None:
+            calls.append("app-run")
+
+    monkeypatch.setattr(
+        textual_compat,
+        "install_textual_linux_input_decoder_guard",
+        lambda: calls.append("guard"),
+    )
+    monkeypatch.setattr(
+        config_mod,
+        "load_config",
+        lambda: SimpleNamespace(instance_url="", default_context_id=""),
+    )
+    monkeypatch.setattr(app_mod, "AgentZeroCLI", FakeAgentZeroCLI)
+
+    __main__._run_app()
+
+    assert calls == ["guard", "app-init", "app-run"]

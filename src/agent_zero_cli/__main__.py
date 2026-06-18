@@ -141,8 +141,12 @@ def _run_app(
     discover_instances: bool = True,
     connect_configured_host: bool = False,
 ) -> None:
-    from agent_zero_cli.app import AgentZeroCLI
     from agent_zero_cli.config import load_config
+    from agent_zero_cli.textual_compat import install_textual_linux_input_decoder_guard
+
+    install_textual_linux_input_decoder_guard()
+
+    from agent_zero_cli.app import AgentZeroCLI
 
     config = load_config()
     if host:

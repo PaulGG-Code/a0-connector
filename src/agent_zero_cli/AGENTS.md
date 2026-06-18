@@ -6,7 +6,7 @@
 
 ## Ownership
 
-- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, and `self_update.py` are owned here.
+- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, `self_update.py`, and `textual_compat.py` are owned here.
 - `headless/` is owned here and must remain importable without Textual.
 - UI widgets, screens, and TCSS are owned by child docs in `widgets/`, `screens/`, and `styles/`.
 - `assets/` is currently empty; keep it root-package owned until it becomes a durable asset boundary.
@@ -21,6 +21,7 @@
 - Host-browser `open` must reuse an already-open tab with the same normalized URL before creating a new tab. Keep `list` and `set_active` workflows available for title-based or URL-based selection.
 - The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It must not persist usernames, passwords, connector tokens, API keys, or other secrets.
 - Remote workspace tools must respect their write/exec enablement flags and must not widen filesystem access accidentally.
+- Textual compatibility guards live in `textual_compat.py`. Install them only on the interactive TUI startup path so `a0 headless` remains Textual-free.
 
 ## Work Guidance
 
