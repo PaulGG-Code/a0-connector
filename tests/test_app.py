@@ -643,6 +643,125 @@ def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
     assert isinstance(captured[0], ProjectMenuItem.Selected)
 
 
+async def test_escape_dismisses_open_profile_menu_when_focus_is_elsewhere(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dismissed: list[bool] = []
+    key_events: list[str] = []
+    workers: list[tuple[str | None, bool]] = []
+    tasks: list[asyncio.Task[None]] = []
+
+    async def fake_dismiss_profile_menu() -> None:
+        dismissed.append(True)
+
+    def fake_run_worker(coro, *, exclusive: bool = False, name: str | None = None):
+        workers.append((name, exclusive))
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    event = SimpleNamespace(
+        key="escape",
+        prevent_default=lambda: key_events.append("prevent_default"),
+        stop=lambda: key_events.append("stop"),
+    )
+    dummy_app._profile_menu_popover = SimpleNamespace()  # type: ignore[assignment]
+    monkeypatch.setattr(dummy_app, "_dismiss_profile_menu", fake_dismiss_profile_menu)
+    monkeypatch.setattr(dummy_app, "run_worker", fake_run_worker)
+
+    dummy_app.on_key(event)
+    await asyncio.gather(*tasks)
+
+    assert key_events == ["prevent_default", "stop"]
+    assert dismissed == [True]
+    assert workers == [("dismiss-profile-menu", True)]
+
+
+async def test_escape_dismisses_open_project_menu_when_focus_is_elsewhere(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hidden: list[bool] = []
+    key_events: list[str] = []
+    workers: list[tuple[str | None, bool]] = []
+    tasks: list[asyncio.Task[None]] = []
+
+    async def fake_hide_project_menu() -> None:
+        hidden.append(True)
+
+    def fake_run_worker(coro, *, exclusive: bool = False, name: str | None = None):
+        workers.append((name, exclusive))
+        task = asyncio.create_task(coro)
+        tasks.append(task)
+        return task
+
+    event = SimpleNamespace(
+        key="escape",
+        prevent_default=lambda: key_events.append("prevent_default"),
+        stop=lambda: key_events.append("stop"),
+    )
+    dummy_app._project_menu_popover = SimpleNamespace()  # type: ignore[assignment]
+    monkeypatch.setattr(dummy_app, "_hide_project_menu", fake_hide_project_menu)
+    monkeypatch.setattr(dummy_app, "run_worker", fake_run_worker)
+
+    dummy_app.on_key(event)
+    await asyncio.gather(*tasks)
+
+    assert key_events == ["prevent_default", "stop"]
+    assert hidden == [True]
+    assert workers == [("hide-project-menu", True)]
+
+
+async def test_escape_key_closes_profile_menu_from_composer_focus(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = AgentZeroCLI(
+        config=CLIConfig(instance_url="http://example.test"),
+        auto_connect_single_instance=False,
+        discover_instances=False,
+        connect_configured_host=False,
+    )
+
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    async def fake_get_settings() -> dict[str, object]:
+        return {
+            "settings": {"agent_profile": "agent0"},
+            "additional": {
+                "agent_subdirs": [
+                    {"value": "agent0", "label": "Agent 0"},
+                ]
+            },
+        }
+
+    async def fake_get_chat(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return {"agent_profile": "agent0"}
+
+    monkeypatch.setattr(app, "_startup", async_noop)
+    monkeypatch.setattr(app, "_start_cli_update_check", lambda: None)
+    monkeypatch.setattr(app.client, "get_settings", fake_get_settings)
+    monkeypatch.setattr(app.client, "get_chat", fake_get_chat)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.1)
+        app.connected = True
+        app.current_context = "ctx-1"
+        app.connector_features = {"settings_get", "agent_profile_set", "chat_get"}
+
+        await app._open_profile_menu()
+        await pilot.pause(0.1)
+        assert app._profile_menu_popover is not None
+
+        app.query_one("#message-input", ChatInput).focus()
+        await pilot.press("escape")
+        await pilot.pause(0.1)
+
+    assert app._profile_menu_popover is None
+
+
 def test_shortcut_bindings_use_textual_canonical_key_names() -> None:
     bindings = {binding.action: binding for binding in AgentZeroCLI.BINDINGS}
     quit_bindings = [

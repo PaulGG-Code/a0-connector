@@ -820,6 +820,21 @@ class AgentZeroCLI(App):
         await profile_commands.apply_profile_selection(self, profile_key, options=options)
         self._focus_message_input()
 
+    def on_key(self, event: events.Key) -> None:
+        if event.key != "escape":
+            return
+
+        if self._is_profile_menu_open():
+            event.prevent_default()
+            event.stop()
+            self.run_worker(self._dismiss_profile_menu(), exclusive=True, name="dismiss-profile-menu")
+            return
+
+        if self._is_project_menu_open():
+            event.prevent_default()
+            event.stop()
+            self.run_worker(self._hide_project_menu(), exclusive=True, name="hide-project-menu")
+
     def on_resize(self, event: events.Resize) -> None:
         del event
         self._position_project_menu_popover()
