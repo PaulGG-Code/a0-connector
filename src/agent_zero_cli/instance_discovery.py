@@ -11,6 +11,7 @@ DiscoveryStatus: TypeAlias = Literal["loading", "ready", "empty", "unavailable",
 
 _AGENT_ZERO_COMMAND_MARKERS = ("/exe/initialize.sh", "run_ui.py")
 _LOCAL_BINDING_HOSTS = {"", "0.0.0.0", "::", "[::]"}
+_LAUNCHER_INSTANCE_NAME_LABEL = "a0.launcher.instanceName"
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,20 @@ def _container_name(container: Mapping[str, Any]) -> str:
         return name
     config = _mapping(container.get("Config"))
     return _stringify(config.get("Hostname")) or "Agent Zero"
+
+
+def _container_config_labels(container: Mapping[str, Any]) -> Mapping[str, Any]:
+    config = _mapping(container.get("Config"))
+    return _mapping(config.get("Labels"))
+
+
+def _launcher_instance_name(container: Mapping[str, Any]) -> str:
+    config_labels = _container_config_labels(container)
+    top_level_labels = _mapping(container.get("Labels"))
+    return _stringify(
+        config_labels.get(_LAUNCHER_INSTANCE_NAME_LABEL)
+        or top_level_labels.get(_LAUNCHER_INSTANCE_NAME_LABEL)
+    )
 
 
 def _container_image(container: Mapping[str, Any]) -> str:
@@ -198,8 +213,10 @@ def _collect_instances(payload: object) -> tuple[DiscoveredInstance, ...]:
 
         container_id = _stringify(container.get("Id")) or _container_name(container)
         container_name = _container_name(container)
+        friendly_name = _launcher_instance_name(container)
+        display_name = friendly_name or container_name
         image_name = _container_image(container)
-        status_text = container_name if not image_name or image_name == container_name else f"{container_name} | {image_name}"
+        status_text = display_name if friendly_name or not image_name or image_name == container_name else f"{container_name} | {image_name}"
 
         for url, host_port in bindings:
             if url in seen_urls:
@@ -208,7 +225,7 @@ def _collect_instances(payload: object) -> tuple[DiscoveredInstance, ...]:
             discovered.append(
                 DiscoveredInstance(
                     id=f"{container_id}:{host_port}",
-                    name=container_name,
+                    name=display_name,
                     url=url,
                     host_port=host_port,
                     source="docker",

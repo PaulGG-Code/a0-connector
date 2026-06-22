@@ -20,6 +20,9 @@
 - `/computer-use on` is a human approval command. It must force `ComputerUseManager.rearm()` immediately instead of silently validating a saved restore token first.
 - Host-browser `open` must reuse an already-open tab with the same normalized URL before creating a new tab. Keep `list` and `set_active` workflows available for title-based or URL-based selection.
 - The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It must not persist usernames, passwords, connector tokens, API keys, or other secrets.
+- Local Docker instance discovery should prefer launcher-owned friendly names
+  from the `a0.launcher.instanceName` container label over generated Docker
+  container or clone image names in visible picker/login text.
 - Remote workspace tools must respect their write/exec enablement flags and must not widen filesystem access accidentally.
 - Textual compatibility guards live in `textual_compat.py`. Install them only on the interactive TUI startup path so `a0 headless` remains Textual-free.
 
