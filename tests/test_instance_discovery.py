@@ -14,12 +14,120 @@ async def test_discover_local_instances_reports_unavailable_without_docker(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
 
     result = await discovery.discover_local_instances()
 
     assert result.status == "unavailable"
     assert result.instances == ()
-    assert result.detail == "Docker CLI was not found. Enter a URL manually."
+    assert result.detail == "No local Docker runtime responded. Enter a URL manually."
+
+
+async def test_discover_local_instances_uses_local_docker_api_without_windows_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = discovery.DiscoveryResult(
+        status="ready",
+        instances=(
+            discovery.DiscoveredInstance(
+                id="container-a:5080",
+                name="agent-zero",
+                url="http://127.0.0.1:5080",
+                host_port="5080",
+                source="docker-api",
+            ),
+        ),
+        detail="Found 1 local Agent Zero endpoint.",
+    )
+    calls: list[str] = []
+
+    async def fake_discover_with_docker_api(base_url: str) -> discovery.DiscoveryResult:
+        calls.append(base_url)
+        return expected
+
+    monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ("http://127.0.0.1:23750",))
+    monkeypatch.setattr(discovery, "_discover_with_docker_api", fake_discover_with_docker_api)
+
+    result = await discovery.discover_local_instances()
+
+    assert result == expected
+    assert calls == ["http://127.0.0.1:23750"]
+
+
+async def test_discover_local_instances_falls_back_to_wsl_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "Id": "container-a",
+            "Name": "/agent-zero",
+            "Config": {"Image": "agent0ai/agent-zero:latest"},
+            "State": {"Running": True},
+            "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5080"}]}},
+        },
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run_command(*args: str, timeout: float = 8.0) -> discovery._CommandResult:
+        del timeout
+        calls.append(args)
+        if args[-1] == "{{.ID}}":
+            return discovery._CommandResult(returncode=0, stdout="container-a\n", stderr="")
+        return discovery._CommandResult(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: "wsl.exe")
+    monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
+    monkeypatch.setattr(discovery, "_run_command", fake_run_command)
+
+    result = await discovery.discover_local_instances()
+
+    assert result.status == "ready"
+    assert len(result.instances) == 1
+    assert result.instances[0].url == "http://127.0.0.1:5080"
+    assert result.instances[0].source == "wsl-docker"
+    assert calls[0][:3] == ("wsl.exe", "--exec", "docker")
+
+
+async def test_discover_local_instances_continues_after_empty_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    payload = [
+        {
+            "Id": "container-a",
+            "Name": "/agent-zero",
+            "Config": {"Image": "agent0ai/agent-zero:latest"},
+            "State": {"Running": True},
+            "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "5080"}]}},
+        },
+    ]
+    calls: list[tuple[str, ...]] = []
+
+    async def fake_run_command(*args: str, timeout: float = 8.0) -> discovery._CommandResult:
+        del timeout
+        calls.append(args)
+        if args[0] == "docker":
+            return discovery._CommandResult(returncode=0, stdout="", stderr="")
+        if args[-1] == "{{.ID}}":
+            return discovery._CommandResult(returncode=0, stdout="container-a\n", stderr="")
+        return discovery._CommandResult(returncode=0, stdout=json.dumps(payload), stderr="")
+
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    monkeypatch.setattr(discovery, "_find_docker_cli", lambda: "docker")
+    monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: "wsl.exe")
+    monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
+    monkeypatch.setattr(discovery, "_run_command", fake_run_command)
+
+    result = await discovery.discover_local_instances()
+
+    assert result.status == "ready"
+    assert result.instances[0].source == "wsl-docker"
+    assert calls[0][0] == "docker"
+    assert calls[1][:3] == ("wsl.exe", "--exec", "docker")
 
 
 async def test_discover_local_instances_returns_multiple_agent_zero_bindings(

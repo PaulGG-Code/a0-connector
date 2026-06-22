@@ -1026,7 +1026,7 @@ def test_apply_instance_discovery_result_opens_manual_when_docker_unavailable(
     target = dummy_app._apply_instance_discovery_result(
         DiscoveryResult(
             status="unavailable",
-            detail="Docker CLI was not found. Enter a URL manually.",
+            detail="No local Docker runtime responded. Enter a URL manually.",
         ),
         auto_connect_single=True,
     )

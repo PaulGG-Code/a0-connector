@@ -23,6 +23,10 @@
 - Local Docker instance discovery should prefer launcher-owned friendly names
   from the `a0.launcher.instanceName` container label over generated Docker
   container or clone image names in visible picker/login text.
+- On Windows, local Docker instance discovery must not require `docker.exe` on
+  the host PATH. Try reachable local Docker API endpoints such as the
+  launcher/WSL Engine bridge before falling back to WSL-hosted Docker commands
+  through `wsl.exe`.
 - Remote workspace tools must respect their write/exec enablement flags and must not widen filesystem access accidentally.
 - Textual compatibility guards live in `textual_compat.py`. Install them only on the interactive TUI startup path so `a0 headless` remains Textual-free.
 

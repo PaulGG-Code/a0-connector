@@ -47,6 +47,8 @@ For frontend remote execution, the CLI no longer runtime-imports a local Agent Z
 ## Local discovery
 
 - The startup picker only inspects Docker. It does not probe arbitrary localhost ports.
+- On Windows, discovery can use the local Docker API bridge or WSL-hosted
+  `docker` command even when `docker.exe` is not installed on the host PATH.
 - A container is considered an Agent Zero candidate only when it is running, publishes `80/tcp`, and exposes at least one Agent Zero signal such as:
   - an image name containing `agent-zero`
   - a command or entrypoint containing `/exe/initialize.sh` or `run_ui.py`
