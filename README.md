@@ -209,6 +209,7 @@ Platform caveats:
 - `Connector contract mismatch`: the server is advertising an older connector auth contract. Update Agent Zero Core so its builtin `_a0_connector` plugin matches the CLI.
 - WebSocket connection rejected: ensure proxies forward both `/socket.io` and `/api/plugins/` unchanged, and that `AGENT_ZERO_HOST` exactly matches the real host seen by Agent Zero. If Docker discovery shows `localhost`, prefer `localhost` over `127.0.0.1`.
 - `a0 update` says `uv` is required: Install `uv` or rerun the existing installer.
+- `a0` prints `No pyvenv.cfg file`: the uv tool environment is incomplete, often after an interrupted Windows self-update from an older release. Close any still-open A0 CLI terminal windows, then rerun the installer; the installer rebuilds the tool environment with `uv tool install --force`.
 - `A0_PACKAGE_SPEC requires A0_RUNTIME_CONSTRAINTS and A0_BUILD_CONSTRAINTS`: custom package updates must provide matching lock files, or explicitly set `A0_ALLOW_UNPINNED_UPDATE=1` for a development-only unlocked install.
 
 ## Docs

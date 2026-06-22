@@ -143,6 +143,39 @@ function Ensure-UvToolInstallBuildConstraints {
     return (Test-UvToolInstallOption "--build-constraints")
 }
 
+function Test-PathPrefix([string]$PathValue, [string]$Prefix) {
+    if ([string]::IsNullOrWhiteSpace($PathValue) -or [string]::IsNullOrWhiteSpace($Prefix)) {
+        return $false
+    }
+    return $PathValue.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Assert-NoRunningA0ToolProcesses([string]$ToolDir) {
+    if ([string]::IsNullOrWhiteSpace($ToolDir) -or -not (Test-Path -LiteralPath $ToolDir)) {
+        return
+    }
+
+    $toolRoot = [IO.Path]::GetFullPath($ToolDir).TrimEnd('\')
+    $running = @(Get-CimInstance Win32_Process | Where-Object {
+        if ($_.ProcessId -eq $PID) {
+            return $false
+        }
+        $exe = [string]$_.ExecutablePath
+        $cmd = [string]$_.CommandLine
+        (Test-PathPrefix $exe $toolRoot) -or
+            ($cmd.IndexOf($toolRoot, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+    } | Select-Object ProcessId, Name, ExecutablePath, CommandLine)
+
+    if ($running.Count -eq 0) {
+        return
+    }
+
+    $summary = ($running | ForEach-Object {
+        "$($_.Name) pid=$($_.ProcessId)"
+    }) -join ", "
+    throw "A0 CLI is still running from $toolRoot ($summary). Close all A0 CLI terminal windows, then rerun this installer."
+}
+
 Ensure-Uv
 $supportsBuildConstraints = Ensure-UvToolInstallBuildConstraints
 $Target = Resolve-PackageSpec
@@ -157,6 +190,9 @@ try {
 } catch {
 }
 
+$toolDir = Join-Path ((& uv tool dir).Trim()) "a0"
+Assert-NoRunningA0ToolProcesses $toolDir
+
 $lockTempDir = Join-Path ([IO.Path]::GetTempPath()) ("a0-install-locks-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $lockTempDir | Out-Null
 try {
@@ -164,7 +200,7 @@ try {
     $runtimeConstraints = Resolve-ConstraintFile $constraintSpecs.Runtime "a0-runtime.txt" $lockTempDir
     $buildConstraints = Resolve-ConstraintFile $constraintSpecs.Build "a0-build.txt" $lockTempDir
 
-    $installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")
+    $installArgs = @("tool", "install", "--force", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")
     if ($runtimeConstraints) {
         $installArgs += @("--constraints", $runtimeConstraints)
     }

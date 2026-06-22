@@ -168,7 +168,7 @@ main() {
     export PATH="$uv_bin_dir:$PATH"
 
     uv tool update-shell >/dev/null 2>&1 || true
-    set -- uv tool install --python "$PYTHON_SPEC" --managed-python --upgrade-package a0
+    set -- uv tool install --force --python "$PYTHON_SPEC" --managed-python --upgrade-package a0
     if [ -n "$RUNTIME_CONSTRAINTS" ]; then
         set -- "$@" --constraints "$RUNTIME_CONSTRAINTS"
     fi

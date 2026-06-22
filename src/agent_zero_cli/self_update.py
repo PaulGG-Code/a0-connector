@@ -8,7 +8,6 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 from textwrap import dedent
 from typing import Callable, Mapping
@@ -287,15 +286,12 @@ def run_self_update_handoff(
         return 1
 
     script_path = _write_updater_script(temp_dir=temp_dir)
-    argv = [
-        sys.executable,
-        str(script_path),
-        str(os.getpid()),
-        target.package_spec,
-        target.python_spec,
-        target.runtime_constraints or "",
-        target.build_constraints or "",
-    ]
+    argv = _build_updater_argv(
+        uv_executable=uv_executable,
+        script_path=script_path,
+        parent_pid=os.getpid(),
+        target=target,
+    )
     try:
         subprocess.Popen(argv, stdin=subprocess.DEVNULL)
     except OSError as exc:
@@ -305,6 +301,65 @@ def run_self_update_handoff(
 
     print("Handing off update to a separate process. The updater will continue here after a0 exits.")
     return 0
+
+
+def _build_updater_argv(
+    *,
+    uv_executable: str,
+    script_path: Path,
+    parent_pid: int,
+    target: UpdateTarget,
+) -> list[str]:
+    script_args = [
+        str(script_path),
+        str(parent_pid),
+        target.package_spec,
+        target.python_spec,
+        target.runtime_constraints or "",
+        target.build_constraints or "",
+    ]
+    updater_python = _find_uv_managed_python(uv_executable, target.python_spec)
+    if updater_python:
+        return [updater_python, *script_args]
+
+    return [
+        uv_executable,
+        "run",
+        "--no-project",
+        "--python",
+        target.python_spec,
+        "--managed-python",
+        "--script",
+        *script_args,
+    ]
+
+
+def _find_uv_managed_python(uv_executable: str, python_spec: str) -> str | None:
+    try:
+        result = subprocess.run(
+            [
+                uv_executable,
+                "python",
+                "find",
+                python_spec,
+                "--managed-python",
+                "--no-project",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+
+    if result.returncode != 0:
+        return None
+
+    for line in result.stdout.splitlines():
+        candidate = line.strip()
+        if candidate:
+            return candidate
+    return None
 
 
 def _build_updater_script() -> str:
@@ -435,6 +490,7 @@ def _build_updater_script() -> str:
                     uv_executable,
                     "tool",
                     "install",
+                    "--force",
                     "--python",
                     python_spec,
                     "--managed-python",

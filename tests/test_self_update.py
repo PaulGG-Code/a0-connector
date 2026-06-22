@@ -311,11 +311,22 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
             lambda name: _FakeDistribution(direct_url),
         )
         monkeypatch.setattr(self_update.shutil, "which", lambda name: "uv")
+        run_calls: list[list[str]] = []
 
-        calls: list[tuple[list[str], dict[str, object]]] = []
+        def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+            run_calls.append(argv)
+            assert kwargs == {"capture_output": True, "text": True, "check": False}
+            return SimpleNamespace(
+                returncode=0,
+                stdout="C:/Users/example/AppData/Roaming/uv/python/cpython-3.11/python.exe\n",
+                stderr="",
+            )
+
+        monkeypatch.setattr(self_update.subprocess, "run", fake_run)
+        popen_calls: list[tuple[list[str], dict[str, object]]] = []
 
         def fake_popen(argv: list[str], **kwargs: object) -> SimpleNamespace:
-            calls.append((argv, kwargs))
+            popen_calls.append((argv, kwargs))
             return SimpleNamespace(pid=4321)
 
         monkeypatch.setattr(self_update.subprocess, "Popen", fake_popen)
@@ -332,10 +343,20 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert exit_code == 0
         assert "standalone uv-managed tool channel" in captured.out
         assert "Handing off update to a separate process." in captured.out
-        assert len(calls) == 1
+        assert run_calls == [
+            [
+                "uv",
+                "python",
+                "find",
+                env["A0_PYTHON_SPEC"],
+                "--managed-python",
+                "--no-project",
+            ]
+        ]
+        assert len(popen_calls) == 1
 
-        argv, kwargs = calls[0]
-        assert argv[0] == sys.executable
+        argv, kwargs = popen_calls[0]
+        assert argv[0].endswith("python.exe")
         assert argv[2] == str(os.getpid())
         assert argv[3] == env["A0_PACKAGE_SPEC"]
         assert argv[4] == env["A0_PYTHON_SPEC"]
@@ -349,6 +370,7 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert "agent_zero_cli" not in script_text
         assert '"tool"' in script_text
         assert '"--python"' in script_text
+        assert '"--force"' in script_text
         assert "python_spec" in script_text
         assert '"--managed-python"' in script_text
         assert '"--upgrade-package"' in script_text
@@ -358,6 +380,51 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert '"--upgrade"' not in script_text
         assert "package_spec" in script_text
         assert "Update complete. Run a0." in script_text
+
+
+def test_build_updater_argv_uses_uv_run_when_managed_python_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run_calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> SimpleNamespace:
+        del kwargs
+        run_calls.append(argv)
+        return SimpleNamespace(returncode=1, stdout="", stderr="missing")
+
+    monkeypatch.setattr(self_update.subprocess, "run", fake_run)
+    target = self_update.UpdateTarget(
+        package_spec="a0 @ https://example.invalid/build.zip",
+        python_spec="3.12",
+        runtime_constraints=None,
+        build_constraints=None,
+    )
+
+    argv = self_update._build_updater_argv(
+        uv_executable="uv",
+        script_path=Path("a0-update.py"),
+        parent_pid=123,
+        target=target,
+    )
+
+    assert run_calls == [
+        ["uv", "python", "find", "3.12", "--managed-python", "--no-project"]
+    ]
+    assert argv == [
+        "uv",
+        "run",
+        "--no-project",
+        "--python",
+        "3.12",
+        "--managed-python",
+        "--script",
+        "a0-update.py",
+        "123",
+        target.package_spec,
+        "3.12",
+        "",
+        "",
+    ]
 
 
 def test_generated_updater_script_waits_then_runs_uv_on_success(
@@ -424,6 +491,7 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
                 "uv",
                 "tool",
                 "install",
+                "--force",
                 "--python",
                 "3.11",
                 "--managed-python",

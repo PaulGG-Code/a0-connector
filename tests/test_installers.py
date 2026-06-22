@@ -28,6 +28,7 @@ def test_unix_installer_pins_managed_python() -> None:
     assert "constraints/a0-build.txt" in installer
     assert 'archive/refs/tags/$RELEASE_TAG.zip' in installer
     assert 'PYTHON_SPEC="${A0_PYTHON_SPEC:-3.11}"' in installer
+    assert "--force" in installer
     assert '--upgrade-package a0' in installer
     assert '--constraints "$RUNTIME_CONSTRAINTS"' in installer
     assert '--build-constraints "$BUILD_CONSTRAINTS"' in installer
@@ -58,11 +59,13 @@ def test_windows_installer_pins_managed_python() -> None:
     assert "constraints/a0-runtime.txt" in installer
     assert "constraints/a0-build.txt" in installer
     assert '$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.11" }' in installer
-    assert '$installArgs = @("tool", "install", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")' in installer
+    assert '$installArgs = @("tool", "install", "--force", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")' in installer
     assert '"--constraints", $runtimeConstraints' in installer
     assert '"--build-constraints", $buildConstraints' in installer
     assert "Ensure-UvToolInstallBuildConstraints" in installer
     assert "Test-UvToolInstallOption" in installer
+    assert "Assert-NoRunningA0ToolProcesses" in installer
+    assert "Close all A0 CLI terminal windows" in installer
     assert "does not support --build-constraints" in installer
     assert 'if ($LASTEXITCODE -ne 0)' in installer
 
@@ -162,3 +165,4 @@ def test_readme_documents_uv_managed_python_and_git_install() -> None:
     assert "`A0_ALLOW_UNPINNED_UPDATE=1`" in readme
     assert "dependencies pinned to the tested release set" in compact
     assert "Install `uv` or rerun the existing installer." in readme
+    assert "Close any still-open A0 CLI terminal windows" in readme
