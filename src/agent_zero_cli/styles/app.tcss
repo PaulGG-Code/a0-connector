@@ -143,17 +143,47 @@ Screen {
     color: #d9e2ec;
 }
 
+Select > SelectOverlay {
+    border: none;
+    background: #101820;
+    color: #d9e2ec;
+    padding: 0;
+}
+
+Select > SelectOverlay:focus {
+    border: none;
+    background: #101820;
+}
+
+Select > SelectOverlay > .option-list--option {
+    padding: 0 1;
+}
+
+Select > SelectOverlay > .option-list--option-highlighted,
+Select > SelectOverlay:focus > .option-list--option-highlighted,
+Select > SelectOverlay > .option-list--option-hover {
+    background: #0f4d78;
+    color: #f5f7fa;
+    text-style: bold;
+}
+
 ModelPresetsScreen {
-    align: center middle;
+    align: left top;
+    background: $background 60%;
+}
+
+ModelPresetsScreen > Center {
+    align: left top;
 }
 
 #model-presets-box {
-    width: 84%;
-    max-width: 108;
-    max-height: 88%;
-    border: round #0f6db8;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 18;
+    border: none;
     background: #101820;
-    padding: 1 2;
+    padding: 0 1;
 }
 
 #model-presets-title {
@@ -161,7 +191,7 @@ ModelPresetsScreen {
 }
 
 #model-presets-description {
-    margin-bottom: 1;
+    margin-bottom: 0;
     color: #9aa7b4;
 }
 
@@ -169,16 +199,29 @@ ModelPresetsScreen {
     width: 100%;
 }
 
+#model-presets-select > SelectCurrent {
+    border: none;
+    background: #101820;
+    color: #d9e2ec;
+    padding: 0 1;
+}
+
+#model-presets-select:focus > SelectCurrent {
+    border: none;
+    background: #0f4d78;
+    color: #f5f7fa;
+}
+
 #model-presets-details {
-    margin-top: 1;
-    border: round #2a3a4a;
-    background: #111820;
-    padding: 1;
-    min-height: 5;
+    margin-top: 0;
+    border: none;
+    background: #101820;
+    padding: 0 1;
+    min-height: 3;
 }
 
 #model-presets-status {
-    margin-top: 1;
+    margin-top: 0;
     min-height: 1;
     color: #9aa7b4;
 }
@@ -503,17 +546,22 @@ Footer {
 }
 
 ChatListScreen {
-    align: center middle;
-    background: transparent;
+    align: left top;
+    background: $background 60%;
+}
+
+ChatListScreen > Center {
+    align: left top;
 }
 
 #chat-list-box {
-    width: 84%;
-    max-width: 108;
-    max-height: 88%;
-    border: round #0f6db8;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 18;
+    border: none;
     background: #101820;
-    padding: 1 2;
+    padding: 0 1;
 }
 
 #chat-list-title {
@@ -521,7 +569,7 @@ ChatListScreen {
 }
 
 #chat-list-description {
-    margin-bottom: 1;
+    margin-bottom: 0;
     color: #7f8c98;
 }
 
@@ -532,27 +580,28 @@ ChatListScreen {
 }
 
 #chat-list {
-    height: 1fr;
-    border: round #2a3a4a;
-    background: #111820;
-    padding: 0 1;
+    height: auto;
+    max-height: 13;
+    border: none;
+    background: #101820;
+    padding: 0;
 }
 
 #chat-list > ListItem {
     margin: 0;
     padding: 0;
-    border-bottom: solid #1d2a36;
+    border-bottom: none;
 }
 
 #chat-list > ListItem.-highlight,
 #chat-list > ListItem.-hovered {
-    background: #172533;
+    background: #0f4d78;
 }
 
 .chat-list-item-body {
     width: 100%;
     height: auto;
-    padding: 1 1 0 1;
+    padding: 0 1;
     background: transparent;
 }
 
@@ -573,7 +622,6 @@ ChatListScreen {
 
 .chat-list-item-preview {
     width: 100%;
-    margin-bottom: 1;
     color: #b8c4cf;
     overflow-x: hidden;
     text-overflow: ellipsis;
@@ -589,18 +637,22 @@ ChatListScreen {
 }
 
 InstalledPluginsScreen {
-    align: center middle;
-    background: transparent;
+    align: left top;
+    background: $background 60%;
+}
+
+InstalledPluginsScreen > Center {
+    align: left top;
 }
 
 #installed-plugins-box {
-    width: 90%;
-    max-width: 116;
-    height: 22;
-    max-height: 34;
-    border: round #0f6db8;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 20;
+    border: none;
     background: #101820;
-    padding: 0 2;
+    padding: 0 1;
 }
 
 #installed-plugins-title {
@@ -614,33 +666,36 @@ InstalledPluginsScreen {
 }
 
 #installed-plugins-search {
-    margin-top: 1;
-    border: round #2a3a4a;
-    background: #17181a;
+    margin-top: 0;
+    border: none;
+    background: #101820;
     color: #d9e2ec;
+    padding: 0 1;
 }
 
 #installed-plugins-search:focus {
-    border: round #00b4ff;
+    border: none;
+    background: #101820;
 }
 
 #installed-plugins-list {
-    height: 1fr;
-    margin-top: 1;
-    border: round #2a3a4a;
-    background: #111820;
-    padding: 0 1;
+    height: auto;
+    max-height: 12;
+    margin-top: 0;
+    border: none;
+    background: #101820;
+    padding: 0;
 }
 
 #installed-plugins-list > ListItem {
     margin: 0;
     padding: 0;
-    border-bottom: solid #1d2a36;
+    border-bottom: none;
 }
 
 #installed-plugins-list > ListItem.-highlight,
 #installed-plugins-list > ListItem.-hovered {
-    background: #172533;
+    background: #0f4d78;
 }
 
 .installed-plugin-row-line {
@@ -724,9 +779,9 @@ InstalledPluginsScreen {
     height: auto;
     min-height: 0;
     max-height: 16;
-    border: round #0f6db8;
+    border: none;
     background: #101820;
-    padding: 1;
+    padding: 0 1;
 }
 
 .project-menu-item {
@@ -743,11 +798,12 @@ InstalledPluginsScreen {
 
 .project-menu-item:hover,
 .project-menu-item:focus {
-    background: #172533;
+    background: #0f4d78;
+    color: #f5f7fa;
 }
 
 .project-menu-item.-disabled {
-    background: #111820;
+    background: transparent;
     color: #7f8c98;
     opacity: 1;
 }
@@ -778,9 +834,9 @@ InstalledPluginsScreen {
     height: auto;
     min-height: 0;
     max-height: 14;
-    border: round #0f6db8;
+    border: none;
     background: #101820;
-    padding: 1;
+    padding: 0 1;
 }
 
 #profile-menu-title {
@@ -806,11 +862,12 @@ InstalledPluginsScreen {
 
 .profile-menu-item:hover,
 .profile-menu-item:focus {
-    background: #172533;
+    background: #0f4d78;
+    color: #f5f7fa;
 }
 
 .profile-menu-item.-disabled {
-    background: #111820;
+    background: transparent;
     color: #7f8c98;
     opacity: 1;
 }
@@ -935,8 +992,8 @@ SplashStatusPanel {
     width: 100%;
     height: auto;
     min-height: 0;
-    border: round #0f6db8;
-    background: #101820;
+    border: none;
+    background: transparent;
     padding: 1 2;
     margin-top: 1;
 }
