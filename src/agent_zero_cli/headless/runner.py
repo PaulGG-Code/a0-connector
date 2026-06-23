@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 from dataclasses import dataclass, field
 import getpass
+import json
 import os
 import signal
 import sys
@@ -24,6 +25,8 @@ from agent_zero_cli.session import ConnectorSession, SessionError
 EXIT_SUCCESS = 0
 EXIT_ERROR = 1
 EXIT_CONNECT_OR_AUTH = 2
+_COMPLETION_SETTLE_SECONDS = 0.2
+_COMPLETION_SNAPSHOT_TIMEOUT_SECONDS = 1.0
 
 
 @dataclass
@@ -58,6 +61,10 @@ class HeadlessRunner:
         self._waiting_for_line = False
         self._sigint_count = 0
         self._signal_installed = False
+        self._defer_complete_render = False
+        self._deferred_complete_context_id = ""
+        self._snapshot_event = asyncio.Event()
+        self._event_fingerprints: dict[tuple[str, int, str], str] = {}
 
     async def run(self) -> int:
         self._install_signal_handlers()
@@ -95,13 +102,20 @@ class HeadlessRunner:
 
     def on_event(self, event: dict) -> None:
         self._sigint_count = 0
+        self._remember_event(event)
         self._write_lines(self.renderer.render_event(event))
 
     def on_snapshot(self, events: list[dict], queue: list[dict]) -> None:
-        self._write_lines(self.renderer.render_snapshot(events, queue))
+        changed_events = [event for event in events if self._snapshot_event_changed(event)]
+        self._write_lines(self.renderer.render_snapshot(changed_events, queue))
+        self._snapshot_event.set()
 
     def on_complete(self, context_id: str) -> None:
         self._sigint_count = 0
+        if self._defer_complete_render:
+            self._deferred_complete_context_id = context_id
+            self._complete_event.set()
+            return
         self._complete_event.set()
         self._write_lines(self.renderer.render_complete(context_id))
         if self._stdin_isatty() and self._waiting_for_line and not self._stop_event.is_set():
@@ -150,7 +164,7 @@ class HeadlessRunner:
         if not text:
             return EXIT_SUCCESS
 
-        sent_agent_message = await self._handle_input_line(text)
+        sent_agent_message = await self._handle_input_line(text, defer_completion=True)
         if sent_agent_message:
             return await self._wait_for_completion()
         return self._exit_code
@@ -160,12 +174,12 @@ class HeadlessRunner:
             line = await self._readline()
             if line == "":
                 break
-            sent_agent_message = await self._handle_input_line(line)
+            sent_agent_message = await self._handle_input_line(line, defer_completion=True)
             if sent_agent_message:
                 self._sigint_count = 0
 
         session = self._require_session()
-        if session.agent_active:
+        if session.agent_active or self._deferred_complete_context_id:
             await self._wait_for_completion()
         return self._exit_code
 
@@ -178,7 +192,7 @@ class HeadlessRunner:
             await self._handle_input_line(line)
         return self._exit_code
 
-    async def _handle_input_line(self, line: str) -> bool:
+    async def _handle_input_line(self, line: str, *, defer_completion: bool = False) -> bool:
         text = str(line or "").strip()
         if not text:
             return False
@@ -193,9 +207,12 @@ class HeadlessRunner:
             return False
 
         self._complete_event.clear()
+        self._deferred_complete_context_id = ""
+        self._defer_complete_render = defer_completion
         try:
             await self._require_session().send_message(text)
         except Exception as exc:
+            self._defer_complete_render = False
             self._write_error("SEND_FAILED", str(exc))
             self._exit_code = EXIT_ERROR
             return False
@@ -203,12 +220,12 @@ class HeadlessRunner:
 
     async def _wait_for_completion(self) -> int:
         session = self._require_session()
-        if not session.agent_active:
+        if not session.agent_active and not self._deferred_complete_context_id:
             return self._exit_code
 
         complete_task = asyncio.create_task(self._complete_event.wait())
         stop_task = asyncio.create_task(self._stop_event.wait())
-        _, pending = await asyncio.wait(
+        done, pending = await asyncio.wait(
             {complete_task, stop_task},
             return_when=asyncio.FIRST_COMPLETED,
         )
@@ -217,7 +234,78 @@ class HeadlessRunner:
         for task in pending:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
+        if complete_task in done and self._deferred_complete_context_id:
+            await self._drain_completion_events()
+            self._render_deferred_complete()
         return self._exit_code
+
+    async def _drain_completion_events(self) -> None:
+        await asyncio.sleep(_COMPLETION_SETTLE_SECONDS)
+        session = self._require_session()
+        self._snapshot_event.clear()
+        try:
+            await session.refresh_context_snapshot()
+        except Exception:
+            return
+        with contextlib.suppress(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                self._snapshot_event.wait(),
+                timeout=_COMPLETION_SNAPSHOT_TIMEOUT_SECONDS,
+            )
+
+    def _render_deferred_complete(self) -> None:
+        context_id = self._deferred_complete_context_id
+        self._deferred_complete_context_id = ""
+        self._defer_complete_render = False
+        if not context_id:
+            return
+        self._write_lines(self.renderer.render_complete(context_id))
+        if self._stdin_isatty() and self._waiting_for_line and not self._stop_event.is_set():
+            self._prompt()
+
+    def _snapshot_event_changed(self, event: dict) -> bool:
+        key = self._event_key(event)
+        fingerprint = self._event_fingerprint(event)
+        if key is None:
+            return True
+        if self._event_fingerprints.get(key) == fingerprint:
+            return False
+        self._event_fingerprints[key] = fingerprint
+        return True
+
+    def _remember_event(self, event: dict) -> None:
+        key = self._event_key(event)
+        if key is None:
+            return
+        self._event_fingerprints[key] = self._event_fingerprint(event)
+
+    def _event_key(self, event: dict) -> tuple[str, int, str] | None:
+        try:
+            sequence = int(event.get("sequence"))
+        except (TypeError, ValueError):
+            return None
+        return (
+            str(event.get("context_id") or ""),
+            sequence,
+            str(event.get("event") or ""),
+        )
+
+    def _event_fingerprint(self, event: dict) -> str:
+        if str(event.get("event") or "") == "assistant_message":
+            data = event.get("data") if isinstance(event.get("data"), dict) else {}
+            return json.dumps(
+                {
+                    "context_id": event.get("context_id"),
+                    "sequence": event.get("sequence"),
+                    "event": event.get("event"),
+                    "text": data.get("text"),
+                    "heading": data.get("heading"),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+        return json.dumps(event, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
     async def _resolve_host(self) -> str:
         explicit = self.options.host.strip()

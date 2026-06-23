@@ -22,6 +22,8 @@ pytestmark = pytest.mark.anyio
 class FakeSession:
     instances: list["FakeSession"] = []
     connect_error: SessionError | None = None
+    stream_text = "4"
+    final_snapshot_text = "4"
 
     def __init__(
         self,
@@ -74,12 +76,27 @@ class FakeSession:
                 "context_id": self.context_id,
                 "event": "assistant_message",
                 "sequence": 2,
-                "data": {"text": "4"},
+                "data": {"text": self.stream_text},
             }
         )
         self.agent_active = False
         self.observer.on_complete(self.context_id)
         return {}
+
+    async def refresh_context_snapshot(self) -> None:
+        if self.final_snapshot_text is None:
+            return
+        self.observer.on_snapshot(
+            [
+                {
+                    "context_id": self.context_id,
+                    "event": "assistant_message",
+                    "sequence": 2,
+                    "data": {"text": self.final_snapshot_text, "meta": {"finished": True}},
+                }
+            ],
+            [],
+        )
 
     async def pause(self) -> dict[str, Any]:
         return {"ok": True}
@@ -115,10 +132,13 @@ class FakeSession:
 def reset_fake_session(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSession.instances = []
     FakeSession.connect_error = None
+    FakeSession.stream_text = "4"
+    FakeSession.final_snapshot_text = "4"
 
     import agent_zero_cli.headless.runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "ConnectorSession", FakeSession)
+    monkeypatch.setattr(runner_mod, "_COMPLETION_SETTLE_SECONDS", 0.0)
 
 
 def test_text_renderer_deduplicates_status_lines() -> None:
@@ -199,6 +219,31 @@ async def test_print_mode_jsonl_stdout_is_valid(monkeypatch: pytest.MonkeyPatch,
     assert records[1]["data"]["text"] == "4"
     assert FakeSession.instances[-1].sent == ["what is 2+2"]
     assert FakeSession.instances[-1].closed is True
+
+
+async def test_print_mode_renders_final_snapshot_update_before_complete(tmp_path: Path) -> None:
+    FakeSession.stream_text = "HEADLESS_REMOTE_EXEC_SHORT"
+    FakeSession.final_snapshot_text = "HEADLESS_REMOTE_EXEC_SHORT_OK"
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    options = HeadlessOptions(
+        host="http://agent.test",
+        output="jsonl",
+        print_prompt="remote exec check",
+        workspace=tmp_path,
+        config=CLIConfig(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    exit_code = await HeadlessRunner(options).run()
+
+    assert exit_code == 0
+    records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert [record["type"] for record in records] == ["ready", "event", "event", "complete"]
+    assert records[1]["data"]["text"] == "HEADLESS_REMOTE_EXEC_SHORT"
+    assert records[2]["data"]["text"] == "HEADLESS_REMOTE_EXEC_SHORT_OK"
+    assert records[2]["data"]["meta"]["finished"] is True
 
 
 async def test_completion_wait_stops_on_disconnect_without_timeout(tmp_path: Path) -> None:

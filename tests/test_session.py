@@ -346,3 +346,21 @@ async def test_session_queues_messages_while_agent_active(tmp_path: Path) -> Non
     assert session.message_queue == [{"id": "queued-1", "text": "next"}]
 
     await session.close()
+
+
+async def test_session_refresh_context_snapshot_replays_current_context(tmp_path: Path) -> None:
+    session = ConnectorSession(
+        CLIConfig(default_context_id="ctx-default"),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=FakeClient,
+    )
+    await session.connect("http://agent.test")
+
+    client = FakeClient.instances[-1]
+    client.subscribe_calls.clear()
+    await session.refresh_context_snapshot()
+
+    assert client.subscribe_calls == [("ctx-default", 0)]
+
+    await session.close()

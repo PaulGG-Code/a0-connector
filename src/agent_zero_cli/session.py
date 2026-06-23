@@ -293,6 +293,9 @@ class ConnectorSession:
         self._remember_context(normalized_context_id)
         self._stage("ready", "Switched chat.", normalized_context_id)
 
+    async def refresh_context_snapshot(self) -> None:
+        await self._require_client().subscribe_context(self._require_context(), from_seq=0)
+
     async def refresh_remote_tool_metadata(self) -> bool:
         client = self.client
         if client is None or not getattr(client, "connected", False):
