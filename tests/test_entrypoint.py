@@ -153,8 +153,6 @@ def test_main_headless_routes_to_headless_launcher(
             "what is 2+2",
             "--workspace",
             "/tmp/work",
-            "--timeout",
-            "5",
             "--no-docker-discovery",
         ]
     )
@@ -169,7 +167,6 @@ def test_main_headless_routes_to_headless_launcher(
             "output": "jsonl",
             "print_prompt": "what is 2+2",
             "workspace": "/tmp/work",
-            "timeout": 5.0,
             "discover_instances": False,
         }
     ]

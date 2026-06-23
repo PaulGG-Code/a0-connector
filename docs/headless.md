@@ -96,5 +96,5 @@ with a structured unsupported result so the server-side operation does not hang.
 | Code | Meaning |
 |------|---------|
 | `0` | Completed successfully |
-| `1` | Agent, command, timeout, or connector runtime error |
+| `1` | Agent, command, disconnect, or connector runtime error |
 | `2` | Connection, host discovery, capability, or authentication failure |

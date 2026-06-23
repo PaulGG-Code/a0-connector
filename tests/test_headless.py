@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 from pathlib import Path
@@ -198,6 +199,37 @@ async def test_print_mode_jsonl_stdout_is_valid(monkeypatch: pytest.MonkeyPatch,
     assert records[1]["data"]["text"] == "4"
     assert FakeSession.instances[-1].sent == ["what is 2+2"]
     assert FakeSession.instances[-1].closed is True
+
+
+async def test_completion_wait_stops_on_disconnect_without_timeout(tmp_path: Path) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    runner = HeadlessRunner(
+        HeadlessOptions(
+            host="http://agent.test",
+            workspace=tmp_path,
+            config=CLIConfig(),
+            stdout=stdout,
+            stderr=stderr,
+        )
+    )
+    runner.session = FakeSession(
+        CLIConfig(),
+        runner,
+        workspace=tmp_path,
+        remote_file_write_enabled=True,
+        remote_exec_enabled=True,
+    )
+    runner.session.agent_active = True
+
+    wait_task = asyncio.create_task(runner._wait_for_completion())
+    await asyncio.sleep(0)
+    runner.on_disconnect()
+
+    exit_code = await asyncio.wait_for(wait_task, timeout=1.0)
+
+    assert exit_code == 1
+    assert "DISCONNECTED" in stderr.getvalue()
 
 
 async def test_non_tty_auth_failure_exits_two(tmp_path: Path) -> None:

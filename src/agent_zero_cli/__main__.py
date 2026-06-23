@@ -123,12 +123,6 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Local workspace root for remote file and exec operations.",
     )
-    headless.add_argument(
-        "--timeout",
-        type=float,
-        metavar="SECONDS",
-        help="Maximum wait for completion in --print or pipe mode.",
-    )
     return parser
 
 
@@ -179,7 +173,6 @@ def _run_headless(
     output: str = "text",
     print_prompt: str | None = None,
     workspace: str = ".",
-    timeout: float | None = None,
     discover_instances: bool = True,
 ) -> int:
     from agent_zero_cli.config import load_config
@@ -202,7 +195,6 @@ def _run_headless(
             output=output,
             print_prompt=print_prompt,
             workspace=Path(workspace),
-            timeout=timeout,
             discover_instances=discover_instances,
             config=config,
         )
@@ -229,7 +221,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             output=args.output,
             print_prompt=args.print_prompt,
             workspace=args.workspace,
-            timeout=args.timeout,
             discover_instances=not args.headless_no_docker_discovery,
         )
 

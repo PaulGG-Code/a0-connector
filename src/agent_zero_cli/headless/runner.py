@@ -35,7 +35,6 @@ class HeadlessOptions:
     output: str = "text"
     print_prompt: str | None = None
     workspace: Path = field(default_factory=Path.cwd)
-    timeout: float | None = None
     discover_instances: bool = True
     config: CLIConfig | None = None
     stdin: TextIO = field(default_factory=lambda: sys.stdin)
@@ -153,7 +152,7 @@ class HeadlessRunner:
 
         sent_agent_message = await self._handle_input_line(text)
         if sent_agent_message:
-            return await self._wait_for_completion(timeout=self.options.timeout)
+            return await self._wait_for_completion()
         return self._exit_code
 
     async def _run_pipe_mode(self) -> int:
@@ -167,7 +166,7 @@ class HeadlessRunner:
 
         session = self._require_session()
         if session.agent_active:
-            await self._wait_for_completion(timeout=self.options.timeout)
+            await self._wait_for_completion()
         return self._exit_code
 
     async def _run_repl_mode(self) -> int:
@@ -202,18 +201,22 @@ class HeadlessRunner:
             return False
         return True
 
-    async def _wait_for_completion(self, *, timeout: float | None) -> int:
+    async def _wait_for_completion(self) -> int:
         session = self._require_session()
         if not session.agent_active:
             return self._exit_code
-        try:
-            if timeout and timeout > 0:
-                await asyncio.wait_for(self._complete_event.wait(), timeout=timeout)
-            else:
-                await self._complete_event.wait()
-        except asyncio.TimeoutError:
-            self._write_error("TIMEOUT", f"Timed out after {timeout:g} seconds waiting for completion.")
-            return EXIT_ERROR
+
+        complete_task = asyncio.create_task(self._complete_event.wait())
+        stop_task = asyncio.create_task(self._stop_event.wait())
+        _, pending = await asyncio.wait(
+            {complete_task, stop_task},
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
         return self._exit_code
 
     async def _resolve_host(self) -> str:
