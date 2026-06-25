@@ -515,6 +515,7 @@ class ContextTabsRenderApp(App[None]):
     def __init__(self) -> None:
         super().__init__()
         self.close_events: list[tuple[str, str]] = []
+        self.selected_events: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield ContextTabs(id="context-tabs")
@@ -532,6 +533,10 @@ class ContextTabsRenderApp(App[None]):
     def on_context_tabs_close_requested(self, event: ContextTabs.CloseRequested) -> None:
         event.stop()
         self.close_events.append((event.context_id, event.replacement_context_id))
+
+    def on_context_tabs_context_selected(self, event: ContextTabs.ContextSelected) -> None:
+        event.stop()
+        self.selected_events.append(event.context_id)
 
 
 @pytest.fixture
@@ -1692,10 +1697,13 @@ async def test_context_tabs_render_in_textual() -> None:
 
     async with app.run_test(size=(80, 4)) as pilot:
         await pilot.pause(delay=0.1)
+        tab_strip = app.query_one("#context-tabs", ContextTabs)
         screenshot = app.export_screenshot()
 
     assert "Architecture" in screenshot
     assert "Streaming" in screenshot
+    assert "[×]" in screenshot
+    assert len(tab_strip._close_spans) == 2
 
 
 async def test_context_tabs_x_requests_close_for_active_tab() -> None:
@@ -1707,6 +1715,28 @@ async def test_context_tabs_x_requests_close_for_active_tab() -> None:
         await pilot.pause(delay=0.1)
 
     assert app.close_events == [("ctx-alpha", "ctx-beta")]
+
+
+async def test_context_tab_close_glyph_requests_close_for_clicked_tab() -> None:
+    app = ContextTabsRenderApp()
+    stopped: list[bool] = []
+
+    async with app.run_test(size=(80, 4)) as pilot:
+        await pilot.pause(delay=0.1)
+        tab_strip = app.query_one("#context-tabs", ContextTabs)
+        close_start, _, clicked_context = tab_strip._close_spans[1]
+        event = SimpleNamespace(
+            get_content_offset=lambda _: SimpleNamespace(x=close_start, y=0),
+            stop=lambda: stopped.append(True),
+        )
+
+        tab_strip.on_click(event)
+        await pilot.pause(delay=0.1)
+
+    assert clicked_context == "ctx-beta"
+    assert stopped == [True]
+    assert app.selected_events == []
+    assert app.close_events == [("ctx-beta", "ctx-alpha")]
 
 
 async def test_context_tabs_x_ignores_only_visible_tab() -> None:

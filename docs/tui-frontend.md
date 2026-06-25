@@ -12,6 +12,7 @@ Focus the top chat tab strip with `Tab` first, then use:
 
 | Shortcut | Action |
 |----------|--------|
+| Click a tab's `[×]` | Close/hide that visible tab without deleting the chat, when another tab remains. |
 | `Tab`, then `n` | Create a new chat in a new tab. |
 | `Tab`, then `x` | Close/hide the current tab without deleting the chat, when another tab remains. |
 | `Tab`, then `Left` / `Right` | Move between visible chat tabs. |

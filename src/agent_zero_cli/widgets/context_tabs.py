@@ -26,7 +26,10 @@ _ACTIVE_BORDER = "#00b4ff"
 _INACTIVE_BORDER = "#2a3a4a"
 _ACTIVE_LABEL = "bold #f5f7fa"
 _INACTIVE_LABEL = "#9aa7b4"
+_ACTIVE_CLOSE = "bold #f5f7fa on #214459"
+_INACTIVE_CLOSE = "#aab4c0 on #172331"
 _CREATE_LABEL = "bold #79d18a"
+_CLOSE_BUTTON_LABEL = "[×]"
 
 
 @dataclass(frozen=True)
@@ -189,6 +192,7 @@ class ContextTabs(Static):
         self._active_context_id = ""
         self._can_create = False
         self._spans: list[tuple[int, int, str]] = []
+        self._close_spans: list[tuple[int, int, str]] = []
         self._new_span: tuple[int, int] | None = None
         self.display = False
 
@@ -245,13 +249,20 @@ class ContextTabs(Static):
 
     def _fixed_tab_cells(self, index: int, tab: ContextTab) -> int:
         project_width = cell_len(" ●") if tab.project_color.strip() else 0
+        close_width = cell_len(f" {_CLOSE_BUTTON_LABEL}") if self._show_close_buttons else 0
         return (
             cell_len(_TAB_LEFT)
             + cell_len(f" {index}")
             + project_width
-            + cell_len("  ")
+            + cell_len(" ")
+            + close_width
+            + cell_len(" ")
             + cell_len(_TAB_RIGHT)
         )
+
+    @property
+    def _show_close_buttons(self) -> bool:
+        return len(self._tabs) > 1
 
     def _allocate_label_limits(self, desired: list[int], available: int) -> list[int]:
         if not desired:
@@ -318,9 +329,11 @@ class ContextTabs(Static):
     def _render_tabs(self) -> None:
         line = Text()
         self._spans = []
+        self._close_spans = []
         self._new_span = None
         cell_offset = 0
         label_limits = self._label_cell_limits()
+        show_close_buttons = self._show_close_buttons
 
         for index, tab in enumerate(self._tabs, start=1):
             label = _trim_to_cells(
@@ -330,6 +343,7 @@ class ContextTabs(Static):
             active = tab.context_id == self._active_context_id
             border_style = _ACTIVE_BORDER if active else _INACTIVE_BORDER
             label_style = _ACTIVE_LABEL if active else _INACTIVE_LABEL
+            close_style = _ACTIVE_CLOSE if active else _INACTIVE_CLOSE
             start = cell_offset
             project_dot = tab.project_color.strip()
 
@@ -339,14 +353,25 @@ class ContextTabs(Static):
             ]
             if project_dot:
                 segments.append((" ●", project_dot))
-            segments.extend(
-                [
-                    (f" {label} ", label_style),
-                    (_TAB_RIGHT, border_style),
-                ]
-            )
-
             for segment, style in segments:
+                line.append(segment, style=style)
+                cell_offset += cell_len(segment)
+
+            line.append(f" {label}", style=label_style)
+            cell_offset += cell_len(f" {label}")
+
+            if show_close_buttons:
+                line.append(" ", style=label_style)
+                cell_offset += cell_len(" ")
+                close_start = cell_offset
+                line.append(_CLOSE_BUTTON_LABEL, style=close_style)
+                cell_offset += cell_len(_CLOSE_BUTTON_LABEL)
+                self._close_spans.append((close_start, cell_offset, tab.context_id))
+
+            for segment, style in (
+                (" ", label_style),
+                (_TAB_RIGHT, border_style),
+            ):
                 line.append(segment, style=style)
                 cell_offset += cell_len(segment)
             self._spans.append((start, cell_offset, tab.context_id))
@@ -384,6 +409,12 @@ class ContextTabs(Static):
                 self.post_message(self.NewRequested(self))
                 return
 
+        for start, end, context_id in self._close_spans:
+            if start <= x < end:
+                event.stop()
+                self._request_close_context(context_id)
+                return
+
         for start, end, context_id in self._spans:
             if start <= x < end:
                 event.stop()
@@ -408,6 +439,22 @@ class ContextTabs(Static):
             return ""
         replacement_index = min(closed_index, len(remaining) - 1)
         return remaining[replacement_index].context_id
+
+    def _request_close_context(self, context_id: str) -> None:
+        if len(self._tabs) < 2:
+            return
+
+        for index, tab in enumerate(self._tabs):
+            if tab.context_id != context_id:
+                continue
+            self.post_message(
+                self.CloseRequested(
+                    tab.context_id,
+                    self._replacement_after_close(index),
+                    self,
+                )
+            )
+            return
 
     def _select_relative(self, delta: int) -> None:
         if len(self._tabs) < 2:
@@ -434,13 +481,7 @@ class ContextTabs(Static):
             return
 
         tab = self._tabs[index]
-        self.post_message(
-            self.CloseRequested(
-                tab.context_id,
-                self._replacement_after_close(index),
-                self,
-            )
-        )
+        self._request_close_context(tab.context_id)
 
     def action_new_chat(self) -> None:
         if self._can_create:
