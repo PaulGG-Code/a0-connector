@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from typing import TYPE_CHECKING, Any
 
 from agent_zero_cli.client import (
@@ -17,6 +18,20 @@ if TYPE_CHECKING:
     from agent_zero_cli.app import AgentZeroCLI
 
 _RECOVERY_DELAYS_SECONDS = (1.0, 2.0, 5.0, 10.0, 20.0)
+
+
+def _environment_login_credentials() -> tuple[str, str]:
+    username = os.environ.get("A0_USERNAME", "").strip()
+    password = os.environ.get("A0_PASSWORD", "")
+    return username, password
+
+
+def _connection_login_credentials(username: str = "", password: str = "") -> tuple[str, str]:
+    explicit_username = (username or "").strip()
+    explicit_password = password or ""
+    if explicit_username or explicit_password:
+        return explicit_username, explicit_password
+    return _environment_login_credentials()
 
 
 async def startup(app: AgentZeroCLI) -> None:
@@ -105,6 +120,7 @@ async def begin_connection(
     password: str = "",
     remember_host_flag: bool = False,
 ) -> None:
+    username, password = _connection_login_credentials(username, password)
     app._stop_remote_tree_publisher()
     app._stop_token_refresh()
     app._stop_state_sync()
