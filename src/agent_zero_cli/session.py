@@ -240,6 +240,73 @@ class ConnectorSession:
         self.context_has_messages = True
         return await client.send_message(message, context_id, attachments=attachment_paths)
 
+    async def send_message_queue(
+        self,
+        *,
+        item_id: str | None = None,
+        send_all: bool = True,
+    ) -> dict[str, Any]:
+        client = self._require_client()
+        context_id = self._require_context()
+        previous_agent_active = self.agent_active
+        previous_run_complete = self._context_run_complete
+
+        self.agent_active = True
+        self._context_run_complete = False
+        try:
+            response = await client.send_message_queue(
+                context_id,
+                item_id=item_id,
+                send_all=send_all,
+            )
+        except Exception:
+            self.agent_active = previous_agent_active
+            self._context_run_complete = previous_run_complete
+            raise
+
+        queue = response.get("message_queue") if isinstance(response, dict) else None
+        if isinstance(queue, list):
+            self.message_queue = [item for item in queue if isinstance(item, dict)]
+
+        try:
+            sent_count = int(response.get("sent_count", 0) or 0) if isinstance(response, dict) else 0
+        except (TypeError, ValueError):
+            sent_count = 0
+        if sent_count <= 0:
+            self.agent_active = previous_agent_active
+            self._context_run_complete = previous_run_complete
+        else:
+            self.context_has_messages = True
+        return response
+
+    async def clear_message_queue(self) -> dict[str, Any]:
+        response = await self._require_client().remove_message_from_queue(self._require_context())
+        queue = response.get("message_queue") if isinstance(response, dict) else None
+        self.message_queue = (
+            [item for item in queue if isinstance(item, dict)]
+            if isinstance(queue, list)
+            else []
+        )
+        return response
+
+    async def remove_message_from_queue(self, item_id: str) -> dict[str, Any]:
+        normalized_item_id = str(item_id or "").strip()
+        if not normalized_item_id:
+            raise SessionError(
+                "MISSING_QUEUE_ITEM",
+                "Queued message id is required.",
+                stage="queue",
+                exit_code=1,
+            )
+        response = await self._require_client().remove_message_from_queue(
+            self._require_context(),
+            item_id=normalized_item_id,
+        )
+        queue = response.get("message_queue") if isinstance(response, dict) else None
+        if isinstance(queue, list):
+            self.message_queue = [item for item in queue if isinstance(item, dict)]
+        return response
+
     async def pause(self) -> dict[str, Any]:
         client = self._require_client()
         return await client.pause_agent(self._require_context(), paused=True)
@@ -521,7 +588,9 @@ class ConnectorSession:
         if data.get("context_id") != self.context_id:
             return
         queue = data.get("message_queue", data.get("items", []))
-        self.message_queue = [item for item in queue if isinstance(item, dict)] if isinstance(queue, list) else []
+        queue_items = [item for item in queue if isinstance(item, dict)] if isinstance(queue, list) else []
+        self.message_queue = queue_items
+        self.observer.on_snapshot([], queue_items)
 
     def _handle_connector_error(self, data: dict[str, Any]) -> None:
         code = str(data.get("code") or "ERROR")

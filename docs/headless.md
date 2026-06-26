@@ -72,6 +72,11 @@ JSONL stdout.
 | `/new` | Create and switch to a new chat |
 | `/pause` / `/resume` | Pause or resume the active agent run |
 | `/nudge` | Nudge the current context |
+| `/send` | Send all queued messages now |
+| `/queue` | Show queued messages |
+| `/queue send` | Send all queued messages now |
+| `/queue clear` | Clear queued messages |
+| `/queue remove <number\|id>` | Remove one queued message |
 | `/clear` | Reset the current chat through `chat_reset` |
 | `/quit` / `/exit` | Shut down cleanly |
 

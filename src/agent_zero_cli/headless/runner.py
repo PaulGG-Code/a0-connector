@@ -15,6 +15,7 @@ from agent_zero_cli.client import DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig, load_config
 from agent_zero_cli.headless.commands import (
     HeadlessCommandResult,
+    command_may_start_agent,
     dispatch_headless_command,
     is_headless_command,
 )
@@ -198,13 +199,20 @@ class HeadlessRunner:
             return False
 
         if is_headless_command(text):
+            may_start_agent = command_may_start_agent(text)
+            if may_start_agent:
+                self._complete_event.clear()
+                self._deferred_complete_context_id = ""
+                self._defer_complete_render = defer_completion
             result = await dispatch_headless_command(self._require_session(), text)
+            if may_start_agent and not result.await_completion:
+                self._defer_complete_render = False
             self._write_command_result(result)
             if result.exit_requested:
                 self._stop_event.set()
             if result.error:
                 self._exit_code = EXIT_ERROR
-            return False
+            return result.await_completion
 
         self._complete_event.clear()
         self._deferred_complete_context_id = ""

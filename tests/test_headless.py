@@ -10,7 +10,7 @@ from typing import Any
 import pytest
 
 from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.headless.commands import dispatch_headless_command
+from agent_zero_cli.headless.commands import command_may_start_agent, dispatch_headless_command
 from agent_zero_cli.headless.renderer import JsonlRenderer, TextRenderer
 from agent_zero_cli.headless.runner import HeadlessOptions, HeadlessRunner
 from agent_zero_cli.session import SessionError
@@ -24,6 +24,7 @@ class FakeSession:
     connect_error: SessionError | None = None
     stream_text = "4"
     final_snapshot_text = "4"
+    initial_queue: list[dict[str, Any]] = []
 
     def __init__(
         self,
@@ -44,7 +45,10 @@ class FakeSession:
         self.host = ""
         self.context_id = "ctx-1"
         self.agent_active = False
+        self.message_queue = [dict(item) for item in FakeSession.initial_queue]
         self.sent: list[str] = []
+        self.queue_send_calls: list[tuple[str | None, bool]] = []
+        self.queue_remove_calls: list[str | None] = []
         self.closed = False
         FakeSession.instances.append(self)
 
@@ -82,6 +86,37 @@ class FakeSession:
         self.agent_active = False
         self.observer.on_complete(self.context_id)
         return {}
+
+    async def send_message_queue(
+        self,
+        *,
+        item_id: str | None = None,
+        send_all: bool = True,
+    ) -> dict[str, Any]:
+        self.queue_send_calls.append((item_id, send_all))
+        self.message_queue = []
+        self.agent_active = True
+        self.observer.on_event(
+            {
+                "context_id": self.context_id,
+                "event": "assistant_message",
+                "sequence": 2,
+                "data": {"text": self.stream_text},
+            }
+        )
+        self.agent_active = False
+        self.observer.on_complete(self.context_id)
+        return {"sent_count": 1, "message_queue": []}
+
+    async def clear_message_queue(self) -> dict[str, Any]:
+        self.queue_remove_calls.append(None)
+        self.message_queue = []
+        return {"message_queue": []}
+
+    async def remove_message_from_queue(self, item_id: str) -> dict[str, Any]:
+        self.queue_remove_calls.append(item_id)
+        self.message_queue = [item for item in self.message_queue if item.get("id") != item_id]
+        return {"message_queue": self.message_queue}
 
     async def refresh_context_snapshot(self) -> None:
         if self.final_snapshot_text is None:
@@ -134,6 +169,7 @@ def reset_fake_session(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSession.connect_error = None
     FakeSession.stream_text = "4"
     FakeSession.final_snapshot_text = "4"
+    FakeSession.initial_queue = []
 
     import agent_zero_cli.headless.runner as runner_mod
 
@@ -180,7 +216,7 @@ def test_jsonl_renderer_emits_valid_records() -> None:
 async def test_headless_commands_status_and_tui_only(tmp_path: Path) -> None:
     session = FakeSession(
         CLIConfig(),
-        SimpleNamespace(),
+        SimpleNamespace(on_event=lambda event: None, on_complete=lambda context_id: None),
         workspace=tmp_path,
         remote_file_write_enabled=True,
         remote_exec_enabled=True,
@@ -191,8 +227,48 @@ async def test_headless_commands_status_and_tui_only(tmp_path: Path) -> None:
     unavailable = await dispatch_headless_command(session, "/browser host on")
 
     assert any(line == "host: http://agent.test" for line in status.lines)
+    assert any(line == "message queue: empty" for line in status.lines)
     assert unavailable.error is True
     assert unavailable.lines == ["/browser is not available in headless mode."]
+
+
+async def test_headless_queue_commands_send_clear_and_remove(tmp_path: Path) -> None:
+    session = FakeSession(
+        CLIConfig(),
+        SimpleNamespace(on_event=lambda event: None, on_complete=lambda context_id: None),
+        workspace=tmp_path,
+        remote_file_write_enabled=True,
+        remote_exec_enabled=True,
+    )
+    session.message_queue = [
+        {"id": "item-1", "text": "first queued prompt", "attachment_count": 0},
+        {"id": "item-2", "text": "second queued prompt", "attachment_count": 1},
+    ]
+
+    summary = await dispatch_headless_command(session, "/queue")
+    remove = await dispatch_headless_command(session, "/queue remove 2")
+    clear = await dispatch_headless_command(session, "/queue clear")
+    session.message_queue = [{"id": "item-1", "text": "first queued prompt"}]
+    send = await dispatch_headless_command(session, "/send")
+
+    assert summary.lines == [
+        "Queued messages (2):",
+        "1. first queued prompt",
+        "2. second queued prompt [1 files]",
+    ]
+    assert remove.lines == ["Queued message removed."]
+    assert clear.lines == ["Queue cleared."]
+    assert send.lines == ["sent 1 queued message"]
+    assert send.await_completion is True
+    assert session.queue_remove_calls == ["item-2", None]
+    assert session.queue_send_calls == [(None, True)]
+
+
+def test_headless_queue_send_command_is_agent_starting() -> None:
+    assert command_may_start_agent("/send") is True
+    assert command_may_start_agent("/queue send") is True
+    assert command_may_start_agent("/queue") is False
+    assert command_may_start_agent("/status") is False
 
 
 async def test_print_mode_jsonl_stdout_is_valid(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -244,6 +320,30 @@ async def test_print_mode_renders_final_snapshot_update_before_complete(tmp_path
     assert records[1]["data"]["text"] == "HEADLESS_REMOTE_EXEC_SHORT"
     assert records[2]["data"]["text"] == "HEADLESS_REMOTE_EXEC_SHORT_OK"
     assert records[2]["data"]["meta"]["finished"] is True
+
+
+async def test_print_mode_send_command_flushes_queue_and_waits(tmp_path: Path) -> None:
+    FakeSession.initial_queue = [{"id": "queued-1", "text": "queued prompt"}]
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    options = HeadlessOptions(
+        host="http://agent.test",
+        output="jsonl",
+        print_prompt="/send",
+        workspace=tmp_path,
+        config=CLIConfig(),
+        stdout=stdout,
+        stderr=stderr,
+    )
+
+    exit_code = await HeadlessRunner(options).run()
+
+    assert exit_code == 0
+    records = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert [record["type"] for record in records] == ["ready", "event", "notice", "complete"]
+    assert records[1]["data"]["text"] == "4"
+    assert records[2]["message"] == "sent 1 queued message"
+    assert FakeSession.instances[-1].queue_send_calls == [(None, True)]
 
 
 async def test_completion_wait_stops_on_disconnect_without_timeout(tmp_path: Path) -> None:

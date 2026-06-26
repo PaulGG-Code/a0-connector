@@ -71,6 +71,8 @@ class FakeClient:
         self.remote_tree_updates: list[dict[str, Any]] = []
         self.sent_messages: list[tuple[str, str, list[str] | None]] = []
         self.queued_messages: list[tuple[str, str, list[str] | None]] = []
+        self.queue_send_calls: list[tuple[str, str | None, bool]] = []
+        self.queue_remove_calls: list[tuple[str, str | None]] = []
         self.login_calls: list[tuple[str, str]] = []
         self.restore_calls: list[str] = []
         self.clear_session_calls = 0
@@ -162,6 +164,25 @@ class FakeClient:
     ) -> dict[str, Any]:
         self.queued_messages.append((text, context_id, attachments))
         return {"message_queue": [{"id": "queued-1", "text": text}]}
+
+    async def send_message_queue(
+        self,
+        context_id: str,
+        *,
+        item_id: str | None = None,
+        send_all: bool = True,
+    ) -> dict[str, Any]:
+        self.queue_send_calls.append((context_id, item_id, send_all))
+        return {"sent_count": 1, "message_queue": []}
+
+    async def remove_message_from_queue(
+        self,
+        context_id: str,
+        *,
+        item_id: str | None = None,
+    ) -> dict[str, Any]:
+        self.queue_remove_calls.append((context_id, item_id))
+        return {"message_queue": []}
 
     async def pause_agent(self, context_id: str | None, *, paused: bool = True) -> dict[str, Any]:
         return {"ok": True, "paused": paused, "context_id": context_id}
@@ -344,6 +365,31 @@ async def test_session_queues_messages_while_agent_active(tmp_path: Path) -> Non
     assert client.sent_messages == []
     assert client.queued_messages == [("next", "ctx-default", [])]
     assert session.message_queue == [{"id": "queued-1", "text": "next"}]
+
+    await session.close()
+
+
+async def test_session_can_send_and_manage_message_queue(tmp_path: Path) -> None:
+    session = ConnectorSession(
+        CLIConfig(default_context_id="ctx-default"),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=FakeClient,
+    )
+    await session.connect("http://agent.test")
+    session.message_queue = [{"id": "queued-1", "text": "next"}]
+
+    send_response = await session.send_message_queue(send_all=True)
+    remove_response = await session.remove_message_from_queue("queued-1")
+    clear_response = await session.clear_message_queue()
+
+    client = FakeClient.instances[-1]
+    assert send_response["sent_count"] == 1
+    assert client.queue_send_calls == [("ctx-default", None, True)]
+    assert client.queue_remove_calls == [("ctx-default", "queued-1"), ("ctx-default", None)]
+    assert remove_response["message_queue"] == []
+    assert clear_response["message_queue"] == []
+    assert session.message_queue == []
 
     await session.close()
 
