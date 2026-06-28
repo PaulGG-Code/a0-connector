@@ -1791,6 +1791,42 @@ def test_context_tab_metadata_uses_webui_name_rule() -> None:
     assert numbered.has_messages is False
 
 
+async def test_context_complete_refreshes_active_tab_metadata(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refreshed: list[tuple[str, bool]] = []
+
+    async def fake_refresh_token_usage(*args, **kwargs) -> None:
+        del args, kwargs
+
+    async def fake_refresh_context_tab_metadata(
+        context_id: str,
+        *,
+        has_messages_hint: bool = False,
+    ) -> None:
+        refreshed.append((context_id, has_messages_hint))
+        dummy_app._remember_context_tab(
+            context_id,
+            {"id": context_id, "name": "Renamed Chat", "no": 1},
+            has_messages_hint=has_messages_hint,
+        )
+
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-alpha"
+    dummy_app._context_tabs = [ContextTab("ctx-alpha", "Chat #1", True)]
+
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", fake_refresh_token_usage)
+    monkeypatch.setattr(dummy_app, "_refresh_context_tab_metadata", fake_refresh_context_tab_metadata)
+
+    event_handlers.handle_context_complete(dummy_app, {"context_id": "ctx-alpha"})
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+    assert refreshed == [("ctx-alpha", True)]
+    assert dummy_app._context_tabs == [ContextTab("ctx-alpha", "Renamed Chat", True)]
+
+
 async def test_context_tabs_render_in_textual() -> None:
     app = ContextTabsRenderApp()
 
