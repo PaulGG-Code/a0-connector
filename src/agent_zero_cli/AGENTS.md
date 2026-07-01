@@ -24,6 +24,9 @@
 - Local Docker instance discovery should prefer launcher-owned friendly names
   from the `a0.launcher.instanceName` container label over generated Docker
   container or clone image names in visible picker/login text.
+- Local Docker instance discovery should try reachable Unix-socket Docker API
+  endpoints from `DOCKER_HOST`, Docker contexts, and known local runtimes such as
+  Colima profiles before declaring the runtime unavailable.
 - On Windows, local Docker instance discovery must not require `docker.exe` on
   the host PATH. Try reachable local Docker API endpoints such as the
   launcher/WSL Engine bridge before falling back to WSL-hosted Docker commands

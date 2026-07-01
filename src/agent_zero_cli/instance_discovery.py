@@ -6,7 +6,9 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal, Mapping, TypeAlias
+from urllib.parse import unquote
 
 import httpx
 
@@ -17,6 +19,7 @@ _AGENT_ZERO_COMMAND_MARKERS = ("/exe/initialize.sh", "run_ui.py")
 _LOCAL_BINDING_HOSTS = {"", "0.0.0.0", "::", "[::]"}
 _LAUNCHER_INSTANCE_NAME_LABEL = "a0.launcher.instanceName"
 _WINDOWS_WSL_ENGINE_API = "http://127.0.0.1:23750"
+_DOCKER_CONTEXTS_META_DIR = Path(".docker/contexts/meta")
 
 
 @dataclass(frozen=True)
@@ -295,6 +298,78 @@ def _docker_host_api_base_url(value: object) -> str:
     return ""
 
 
+def _docker_host_socket_path(value: object) -> str:
+    text = _stringify(value)
+    if not text.startswith("unix://"):
+        return ""
+    return unquote(text[7:]).strip()
+
+
+def _socket_path_exists(path: str) -> bool:
+    try:
+        candidate = Path(path).expanduser()
+        return candidate.exists()
+    except OSError:
+        return False
+
+
+def _docker_context_socket_paths() -> tuple[str, ...]:
+    meta_root = Path.home() / _DOCKER_CONTEXTS_META_DIR
+    try:
+        meta_files = tuple(meta_root.glob("*/meta.json"))
+    except OSError:
+        return ()
+
+    paths: list[str] = []
+    for meta_file in meta_files:
+        try:
+            payload = json.loads(meta_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        endpoints = _mapping(_mapping(payload).get("Endpoints"))
+        docker_endpoint = _mapping(endpoints.get("docker"))
+        socket_path = _docker_host_socket_path(docker_endpoint.get("Host"))
+        if socket_path:
+            paths.append(socket_path)
+    return tuple(paths)
+
+
+def _known_docker_socket_paths() -> tuple[str, ...]:
+    if os.name == "nt":
+        return ()
+
+    home = Path.home()
+    paths: list[str] = [
+        str(home / ".docker/run/docker.sock"),
+        "/var/run/docker.sock",
+    ]
+
+    colima_root = home / ".colima"
+    paths.append(str(colima_root / "default/docker.sock"))
+    try:
+        paths.extend(str(path) for path in colima_root.glob("*/docker.sock"))
+    except OSError:
+        pass
+
+    return tuple(paths)
+
+
+def _docker_socket_paths() -> tuple[str, ...]:
+    candidates: list[str] = []
+    docker_host = _docker_host_socket_path(os.environ.get("DOCKER_HOST"))
+    if docker_host:
+        candidates.append(docker_host)
+    candidates.extend(_docker_context_socket_paths())
+    candidates.extend(_known_docker_socket_paths())
+    return tuple(
+        dict.fromkeys(
+            str(Path(path).expanduser())
+            for path in candidates
+            if path and _socket_path_exists(path)
+        )
+    )
+
+
 def _docker_api_base_urls() -> tuple[str, ...]:
     urls: list[str] = []
     docker_host = _docker_host_api_base_url(os.environ.get("DOCKER_HOST"))
@@ -305,49 +380,41 @@ def _docker_api_base_urls() -> tuple[str, ...]:
     return tuple(dict.fromkeys(url.rstrip("/") for url in urls if url))
 
 
-async def _discover_with_docker_api(base_url: str) -> DiscoveryResult:
-    base = base_url.rstrip("/")
-    try:
-        async with httpx.AsyncClient(base_url=base, timeout=1.5) as client:
-            listed_response = await client.get("/containers/json", params={"all": "0"})
-            listed_response.raise_for_status()
-            listed_payload = listed_response.json()
-            if not isinstance(listed_payload, list):
-                return DiscoveryResult(
-                    status="error",
-                    detail="Docker returned unexpected discovery data.",
-                )
-
-            container_ids = [
-                _stringify(container.get("Id"))
-                for container in listed_payload
-                if isinstance(container, Mapping) and _stringify(container.get("Id"))
-            ]
-            if not container_ids:
-                return DiscoveryResult(
-                    status="empty",
-                    detail="No running Docker containers were found.",
-                )
-
-            inspected_payload: list[Mapping[str, Any]] = []
-            for container_id in container_ids:
-                inspected_response = await client.get(f"/containers/{container_id}/json")
-                inspected_response.raise_for_status()
-                inspected = inspected_response.json()
-                if not isinstance(inspected, Mapping):
-                    return DiscoveryResult(
-                        status="error",
-                        detail="Docker returned unexpected discovery data.",
-                    )
-                inspected_payload.append(inspected)
-    except (httpx.HTTPError, json.JSONDecodeError, OSError):
+async def _discover_with_docker_client(client: httpx.AsyncClient, *, source: str) -> DiscoveryResult:
+    listed_response = await client.get("/containers/json", params={"all": "0"})
+    listed_response.raise_for_status()
+    listed_payload = listed_response.json()
+    if not isinstance(listed_payload, list):
         return DiscoveryResult(
-            status="unavailable",
-            detail="Docker API endpoint is not reachable.",
+            status="error",
+            detail="Docker returned unexpected discovery data.",
         )
 
+    container_ids = [
+        _stringify(container.get("Id"))
+        for container in listed_payload
+        if isinstance(container, Mapping) and _stringify(container.get("Id"))
+    ]
+    if not container_ids:
+        return DiscoveryResult(
+            status="empty",
+            detail="No running Docker containers were found.",
+        )
+
+    inspected_payload: list[Mapping[str, Any]] = []
+    for container_id in container_ids:
+        inspected_response = await client.get(f"/containers/{container_id}/json")
+        inspected_response.raise_for_status()
+        inspected = inspected_response.json()
+        if not isinstance(inspected, Mapping):
+            return DiscoveryResult(
+                status="error",
+                detail="Docker returned unexpected discovery data.",
+            )
+        inspected_payload.append(inspected)
+
     try:
-        instances = _collect_instances(inspected_payload, source="docker-api")
+        instances = _collect_instances(inspected_payload, source=source)
     except ValueError:
         return DiscoveryResult(
             status="error",
@@ -366,6 +433,30 @@ async def _discover_with_docker_api(base_url: str) -> DiscoveryResult:
         status="empty",
         detail="No running Agent Zero Docker WebUI endpoints were detected.",
     )
+
+
+async def _discover_with_docker_api(base_url: str) -> DiscoveryResult:
+    base = base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(base_url=base, timeout=1.5) as client:
+            return await _discover_with_docker_client(client, source="docker-api")
+    except (httpx.HTTPError, json.JSONDecodeError, OSError):
+        return DiscoveryResult(
+            status="unavailable",
+            detail="Docker API endpoint is not reachable.",
+        )
+
+
+async def _discover_with_docker_socket(socket_path: str) -> DiscoveryResult:
+    try:
+        transport = httpx.AsyncHTTPTransport(uds=socket_path)
+        async with httpx.AsyncClient(transport=transport, base_url="http://docker", timeout=1.5) as client:
+            return await _discover_with_docker_client(client, source="docker-socket")
+    except (httpx.HTTPError, json.JSONDecodeError, OSError):
+        return DiscoveryResult(
+            status="unavailable",
+            detail="Docker socket endpoint is not reachable.",
+        )
 
 
 async def _discover_with_command_backend(backend: _DockerCommandBackend) -> DiscoveryResult:
@@ -428,6 +519,17 @@ async def discover_local_instances() -> DiscoveryResult:
     command_backends = _docker_command_backends(include_wsl=False)
     for backend in command_backends:
         result = await _discover_with_command_backend(backend)
+        if result.status == "ready":
+            return result
+        if result.status == "empty" and empty_result is None:
+            empty_result = result
+        if result.status == "error" and error_result is None:
+            error_result = result
+        if result.detail:
+            unavailable_details.append(result.detail)
+
+    for socket_path in _docker_socket_paths():
+        result = await _discover_with_docker_socket(socket_path)
         if result.status == "ready":
             return result
         if result.status == "empty" and empty_result is None:

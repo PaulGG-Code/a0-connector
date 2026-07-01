@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -55,6 +56,69 @@ async def test_discover_local_instances_uses_local_docker_api_without_windows_cl
 
     assert result == expected
     assert calls == ["http://127.0.0.1:23750"]
+
+
+def test_docker_socket_paths_include_colima_context_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    context_socket = tmp_path / ".colima/a0/docker.sock"
+    context_meta = tmp_path / ".docker/contexts/meta/context-a/meta.json"
+    context_meta.parent.mkdir(parents=True)
+    context_meta.write_text(
+        json.dumps(
+            {
+                "Name": "colima-a0",
+                "Endpoints": {
+                    "docker": {
+                        "Host": f"unix://{context_socket}",
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    context_socket.parent.mkdir(parents=True)
+    context_socket.write_text("", encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(discovery, "_socket_path_exists", lambda path: str(path) == str(context_socket))
+
+    assert discovery._docker_socket_paths() == (str(context_socket),)
+
+
+async def test_discover_local_instances_uses_colima_socket_without_docker_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = discovery.DiscoveryResult(
+        status="ready",
+        instances=(
+            discovery.DiscoveredInstance(
+                id="container-a:32769",
+                name="agent-zero-latest",
+                url="http://127.0.0.1:32769",
+                host_port="32769",
+                source="docker-socket",
+            ),
+        ),
+        detail="Found 1 local Agent Zero endpoint.",
+    )
+    calls: list[str] = []
+
+    async def fake_discover_with_docker_socket(socket_path: str) -> discovery.DiscoveryResult:
+        calls.append(socket_path)
+        return expected
+
+    monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ("/Users/test/.colima/a0/docker.sock",))
+    monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
+    monkeypatch.setattr(discovery, "_discover_with_docker_socket", fake_discover_with_docker_socket)
+
+    result = await discovery.discover_local_instances()
+
+    assert result == expected
+    assert calls == ["/Users/test/.colima/a0/docker.sock"]
 
 
 async def test_discover_local_instances_falls_back_to_wsl_docker(
