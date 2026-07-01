@@ -55,6 +55,14 @@ _AX_DEFAULT_MAX_NODES = 200
 _AX_HARD_MAX_DEPTH = 8
 _AX_HARD_MAX_NODES = 500
 _AX_TEXT_LIMIT = 240
+_MACOS_ACCESSIBILITY_MANUAL_APPROVAL = (
+    "If no prompt appears, open System Settings > Privacy & Security > Accessibility "
+    "and enable the app running a0, such as Terminal, then run /computer-use on again."
+)
+_MACOS_SCREEN_RECORDING_MANUAL_APPROVAL = (
+    "If no prompt appears, open System Settings > Privacy & Security > Screen Recording "
+    "and enable the app running a0, such as Terminal, then run /computer-use on again."
+)
 
 
 def _backend_contract_metadata() -> dict[str, Any]:
@@ -2253,11 +2261,13 @@ class MacOSComputerUseRuntime:
         if allow:
             raise MacOSComputerUseError(
                 "COMPUTER_USE_REARM_REQUIRED",
-                "macOS Accessibility permission is not available. Run /computer-use on and approve the platform permission prompt.",
+                "macOS Accessibility permission is not available. "
+                f"{_MACOS_ACCESSIBILITY_MANUAL_APPROVAL}",
             )
         raise MacOSComputerUseError(
             "COMPUTER_USE_APPROVAL_REQUIRED",
-            "macOS Accessibility permission is required.",
+            "macOS Accessibility permission is required. "
+            f"{_MACOS_ACCESSIBILITY_MANUAL_APPROVAL}",
         )
 
     def _probe_capture_dimensions(
@@ -2303,12 +2313,14 @@ class MacOSComputerUseRuntime:
                 if allow:
                     raise MacOSComputerUseError(
                         "COMPUTER_USE_REARM_REQUIRED",
-                        "Silent screen capture was not available. Run /computer-use on and approve the platform permission prompt.",
+                        "Silent screen capture was not available. "
+                        f"{_MACOS_SCREEN_RECORDING_MANUAL_APPROVAL}",
                     ) from exc
                 if exc.code == "COMPUTER_USE_CAPTURE_UNAVAILABLE":
                     raise MacOSComputerUseError(
                         "COMPUTER_USE_APPROVAL_REQUIRED",
-                        "macOS screen recording permission is required.",
+                        "macOS Screen Recording permission is required. "
+                        f"{_MACOS_SCREEN_RECORDING_MANUAL_APPROVAL}",
                     ) from exc
                 raise
 

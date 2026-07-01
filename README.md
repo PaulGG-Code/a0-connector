@@ -166,6 +166,8 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
 
+Computer Use may need platform approval before the CLI can capture or control the host desktop. `/computer-use on` asks the active backend to start its native approval flow, such as a system permission prompt, portal dialog, or settings page.
+
 ### Skill shortcuts
 
 Type `$` in the composer to browse skills available to the current chat. Selecting a skill, or submitting `$skill-name`, activates it for that chat; `$skill-name your prompt` activates the skill and sends `your prompt` immediately.

@@ -245,10 +245,7 @@ class FakeComputerUseBanner:
         elif status == "Arming":
             self.message = "Computer Use is checking host permissions."
         elif status == "Approval Required":
-            self.message = (
-                "Computer Use is waiting for your platform permission prompt. "
-                "If you already approved it, restart the CLI."
-            )
+            self.message = "Computer Use is enabled; permission may be requested on first use."
         elif status == "Rearm Required":
             self.message = "Computer use needs re-arming before Agent Zero can control your computer again."
         else:
@@ -3888,17 +3885,14 @@ def test_computer_use_banner_uses_windows_checking_copy_for_prompt_states() -> N
     assert "restart the CLI" not in approval_message
 
 
-def test_computer_use_banner_keeps_permission_copy_for_prompt_backends() -> None:
+def test_computer_use_banner_explains_deferred_permission_for_prompt_backends() -> None:
     message = computer_use_banner_mod._message_for_status(
         "Approval Required",
         enabled=True,
         backend_family="linux",
     )
 
-    assert message == (
-        "Computer Use is waiting for your platform permission prompt. "
-        "If you already approved it, restart the CLI."
-    )
+    assert message == "Computer Use is enabled; permission may be requested on first use."
 
 
 async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
@@ -4197,10 +4191,7 @@ def test_sync_computer_use_status_keeps_portal_prompt_copy_for_non_windows(
 
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert banner.display is True
-    assert banner.message == (
-        "Computer Use is waiting for your platform permission prompt. "
-        "If you already approved it, restart the CLI."
-    )
+    assert banner.message == "Computer Use is enabled; permission may be requested on first use."
 
 
 async def test_reset_disconnected_state_disconnects_computer_use_manager(
