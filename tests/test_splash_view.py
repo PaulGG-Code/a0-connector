@@ -67,6 +67,19 @@ def test_manual_host_panel_connect_host_normalizes_url() -> None:
     assert panel.connect_host == "http://localhost:32080"
 
 
+def test_empty_host_panel_mentions_agent_zero_install_url() -> None:
+    panel = SplashHostPanel()
+    panel._state = SplashState(
+        stage="host",
+        discovery_status="empty",
+        discovery_detail="No running Docker containers were found.",
+    )
+
+    message = panel._status_message()
+
+    assert "Install Agent Zero: http://agent-zero.ai" in message.plain
+
+
 def test_error_back_button_requests_navigation_to_host() -> None:
     view = SplashView()
     messages: list[object] = []

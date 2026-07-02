@@ -286,7 +286,8 @@ class SplashHostPanel(Vertical):
             noun = "endpoint" if count == 1 else "endpoints"
             return Text(f"{count} Detected A0 {noun} ready to connect.", style="#79d18a")
         if status == "empty":
-            return Text(detail or "No local Agent Zero Docker instances were found.", style="#9aa7b4")
+            message = detail or "No local Agent Zero Docker instances were found."
+            return Text(f"{message} Install Agent Zero: http://agent-zero.ai", style="#9aa7b4")
         if status == "unavailable":
             return Text(detail or "Docker is unavailable. Enter a URL manually.", style="#f0b54d")
         return Text(detail or "Docker discovery failed. Enter a URL manually.", style="#ff8b6b")
