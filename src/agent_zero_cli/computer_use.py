@@ -952,6 +952,16 @@ class ComputerUseManager:
         else:
             helper_python = HELPER_PYTHON
 
+        helper_path = Path(helper_target).resolve()
+        helper_env = os.environ.copy()
+        pythonpath_entries = [str(Path(__file__).resolve().parents[1])]
+        if (helper_path.parent / "__init__.py").exists():
+            pythonpath_entries.append(str(helper_path.parent.parent))
+        existing_pythonpath = helper_env.get("PYTHONPATH", "")
+        if existing_pythonpath:
+            pythonpath_entries.extend(part for part in existing_pythonpath.split(os.pathsep) if part)
+        helper_env["PYTHONPATH"] = os.pathsep.join(dict.fromkeys(pythonpath_entries))
+
         self._debug(
             "helper.launch",
             context_id=session.context_id,
@@ -967,6 +977,7 @@ class ComputerUseManager:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             limit=_HELPER_STDIO_LIMIT,
+            env=helper_env,
         )
         session.process = process
         session.stderr_task = asyncio.create_task(self._drain_stderr(process))

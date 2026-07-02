@@ -113,6 +113,7 @@ def _backend_spec(
     detected: bool = True,
     features: tuple[str, ...] = ("inline-png-capture",),
     support_reason: str = "backend is available",
+    helper_target: str = "/tmp/computer_use_helper.py",
 ) -> ComputerUseBackendSpec:
     return ComputerUseBackendSpec(
         backend_id=backend_id,
@@ -121,7 +122,7 @@ def _backend_spec(
         detect=lambda: detected,
         features=features,
         interpreter_strategy="system_python",
-        helper_target="/tmp/computer_use_helper.py",
+        helper_target=helper_target,
         trust_mode_support=("interactive", "persistent", "allow"),
         support_reason=lambda: support_reason,
     )
@@ -135,6 +136,7 @@ def _selection(
     detected: bool = True,
     features: tuple[str, ...] = ("inline-png-capture",),
     support_reason: str = "backend is available",
+    helper_target: str = "/tmp/computer_use_helper.py",
 ) -> ComputerUseBackendSelection:
     spec = _backend_spec(
         backend_id=backend_id,
@@ -143,6 +145,7 @@ def _selection(
         detected=detected,
         features=features,
         support_reason=support_reason,
+        helper_target=helper_target,
     )
     return ComputerUseBackendSelection(
         spec=spec,
@@ -1005,8 +1008,17 @@ async def test_helper_request_times_out_when_helper_stops_reading_stdin(
 async def test_ensure_helper_uses_expanded_stdio_limit_for_large_capture_payloads(
     _temp_env: Path,
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    manager = _manager(enabled=True)
+    package_src = tmp_path / "package" / "src"
+    helper_dir = package_src / "a0_computer_use_wayland"
+    helper_dir.mkdir(parents=True)
+    (helper_dir / "__init__.py").write_text("", encoding="utf-8")
+    helper_script = helper_dir / "computer_use_helper.py"
+    manager = _manager(
+        enabled=True,
+        backend_selection=_selection(helper_target=str(helper_script)),
+    )
     session = _HelperSession(context_id="ctx-1")
     calls: list[dict[str, object]] = []
 
@@ -1033,6 +1045,11 @@ async def test_ensure_helper_uses_expanded_stdio_limit_for_large_capture_payload
     assert session.process is not None
     assert calls
     assert calls[0]["kwargs"]["limit"] == _HELPER_STDIO_LIMIT
+    helper_env = calls[0]["kwargs"]["env"]
+    assert isinstance(helper_env, dict)
+    pythonpath = str(helper_env["PYTHONPATH"]).split(computer_use_mod.os.pathsep)
+    assert str(Path(computer_use_mod.__file__).resolve().parents[1]) in pythonpath
+    assert str(package_src) in pythonpath
 
 
 async def test_helper_stderr_is_forwarded_when_debug_is_enabled(
