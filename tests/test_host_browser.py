@@ -506,6 +506,116 @@ def test_saved_default_profile_uses_authorized_remote_debugging(tmp_path: Path) 
     assert selected.cdp_endpoint == "ws://localhost:9222/devtools/browser/test"
 
 
+def test_hello_metadata_advertises_host_browser_inventory(tmp_path: Path) -> None:
+    root = tmp_path / "google-chrome"
+    (root / "Default").mkdir(parents=True)
+    (root / "Profile 1").mkdir()
+    (root / "DevToolsActivePort").write_text("9222\n/devtools/browser/test\n", encoding="utf-8")
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [BrowserCandidate("chrome", "Google Chrome", "/bin/chrome", root)],
+        playwright_available=True,
+    )
+
+    metadata = manager.hello_metadata()
+    advertised = {item["id"]: item for item in metadata["available_browsers"]}
+
+    assert metadata["browser_id"] == "ws://localhost:9222/devtools/browser/test"
+    assert metadata["browser_label"] == "Google Chrome (remote debugging) - Remote debugging allowed"
+    assert "ws://localhost:9222/devtools/browser/test" in advertised
+    assert advertised["chrome:default"]["family"] == "chrome"
+    assert advertised["chrome:profile_1"]["label"] == "Google Chrome - Profile 1"
+
+
+def test_browser_selection_accepts_family_id(tmp_path: Path) -> None:
+    root = tmp_path / "google-chrome"
+    (root / "Default").mkdir(parents=True)
+    (root / "DevToolsActivePort").write_text("9222\n/devtools/browser/test\n", encoding="utf-8")
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [BrowserCandidate("chrome", "Google Chrome", "/bin/chrome", root)],
+        playwright_available=False,
+    )
+
+    selected = manager.selected_profile(profile_mode="existing", browser_selection="chrome")
+
+    assert selected is not None
+    assert selected.family == "chrome-cdp"
+    assert selected.cdp_endpoint == "ws://localhost:9222/devtools/browser/test"
+
+
+async def test_browser_selection_uses_advertised_profile_id(tmp_path: Path) -> None:
+    root = tmp_path / "google-chrome"
+    (root / "Default").mkdir(parents=True)
+    (root / "Profile 1").mkdir()
+    executable = tmp_path / "chrome"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [BrowserCandidate("chrome", "Google Chrome", str(executable), root)],
+        playwright_available=True,
+        playwright_starter=lambda: FakeStarter(FakePlaywright()),
+    )
+
+    result = await manager.handle_op(
+        {
+            "op_id": "op-open",
+            "context_id": "ctx-1",
+            "action": "open",
+            "url": "https://example.com/",
+            "browser_selection": "chrome:profile_1",
+        }
+    )
+
+    assert result["ok"] is True
+    assert manager._sessions["ctx-1"].profile.profile_label == "Profile 1"
+
+
+def test_browser_selection_accepts_explicit_cdp_endpoint() -> None:
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [],
+        playwright_available=False,
+    )
+
+    selected = manager.selected_profile(
+        profile_mode="existing",
+        browser_selection="ws://127.0.0.1:9333/devtools/browser/test",
+    )
+
+    assert selected is not None
+    assert selected.family == "chrome-cdp"
+    assert selected.cdp_endpoint == "ws://127.0.0.1:9333/devtools/browser/test"
+    assert manager.status_snapshot(profile=selected)["supported"] is True
+
+
+async def test_unknown_browser_selection_does_not_fall_back_to_first_profile(tmp_path: Path) -> None:
+    root = tmp_path / "google-chrome"
+    (root / "Default").mkdir(parents=True)
+    executable = tmp_path / "chrome"
+    executable.write_text("#!/bin/sh\n", encoding="utf-8")
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [BrowserCandidate("chrome", "Google Chrome", str(executable), root)],
+        playwright_available=True,
+        playwright_starter=lambda: FakeStarter(FakePlaywright()),
+    )
+
+    result = await manager.handle_op(
+        {
+            "op_id": "op-ensure",
+            "context_id": "ctx-1",
+            "action": "ensure",
+            "profile_mode": "existing",
+            "browser_selection": "edge",
+        }
+    )
+
+    assert result["ok"] is False
+    assert "selection 'edge'" in result["error"]
+    assert manager._sessions == {}
+
+
 def test_profile_lock_detection_reports_singleton_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

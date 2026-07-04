@@ -1109,14 +1109,22 @@ class A0Client:
         self,
         context_id: str | None,
         runtime_backend: str,
+        *,
+        host_browser_selection: str | None = None,
+        profile_mode: str | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "action": "set",
+            "context_id": context_id or "",
+            "runtime_backend": runtime_backend,
+        }
+        if host_browser_selection is not None:
+            payload["host_browser_selection"] = host_browser_selection
+        if profile_mode is not None:
+            payload["profile_mode"] = profile_mode
         response = await self._post(
             "browser_runtime",
-            {
-                "action": "set",
-                "context_id": context_id or "",
-                "runtime_backend": runtime_backend,
-            },
+            payload,
         )
         response.raise_for_status()
         return self._json(response)

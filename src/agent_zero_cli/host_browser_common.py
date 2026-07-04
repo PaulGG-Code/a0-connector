@@ -113,6 +113,7 @@ BROWSER_REEXPORTS = [
     "remote_debugging_endpoint_from_active_port_file",
     "remote_debugging_profile_from_candidate",
     "remote_debugging_endpoint_label",
+    "normalize_host_browser_selection",
     "profile_lock_state",
     "profile_lock_state_for_profile",
     "is_profile_locked",
@@ -255,8 +256,22 @@ class BrowserProfile:
     def is_remote_debugging(self) -> bool:
         return bool(self.cdp_endpoint)
 
+    @property
+    def browser_id(self) -> str:
+        if self.cdp_endpoint:
+            return normalize_host_browser_selection(self.cdp_endpoint)
+        label = normalize_host_browser_selection(self.profile_label)
+        family = normalize_host_browser_selection(self.family)
+        return f"{family}:{label or 'default'}"
+
+    @property
+    def browser_label(self) -> str:
+        return f"{self.family_label} - {self.display_name}"
+
     def as_dict(self) -> dict[str, Any]:
         return {
+            "browser_id": self.browser_id,
+            "browser_label": self.browser_label,
             "family": self.family,
             "family_label": self.family_label,
             "executable_path": self.executable_path,
@@ -560,6 +575,11 @@ def remote_debugging_endpoint_label(endpoint: str) -> str:
     normalized = normalize_remote_debugging_endpoint(endpoint) or str(endpoint or "")
     parsed = urlsplit(normalized if "://" in normalized else f"ws://{normalized}")
     return parsed.netloc or "remote debugging"
+
+
+def normalize_host_browser_selection(value: object) -> str:
+    raw = re.sub(r"\s+", "_", str(value or "").strip().lower())
+    return "".join(ch for ch in raw if ch.isalnum() or ch in {"_", "-", ":", ".", "/"})[:200]
 
 
 def _profile_directories(user_data_dir: Path) -> list[Path]:

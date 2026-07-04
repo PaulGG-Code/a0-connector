@@ -1119,6 +1119,31 @@ async def test_set_agent_profile_posts_context_scoped_payload() -> None:
     }
 
 
+async def test_set_browser_runtime_posts_host_browser_selection() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.post = AsyncMock(return_value=FakeResponse(json_data={"ok": True}))
+
+    result = await client.set_browser_runtime(
+        "ctx-1",
+        "host_required",
+        host_browser_selection="chrome:default",
+        profile_mode="existing",
+    )
+
+    client.http.post.assert_awaited_once_with(
+        "http://localhost:5080/api/plugins/_a0_connector/v1/browser_runtime",
+        json={
+            "action": "set",
+            "context_id": "ctx-1",
+            "runtime_backend": "host_required",
+            "host_browser_selection": "chrome:default",
+            "profile_mode": "existing",
+        },
+    )
+    assert result == {"ok": True}
+
+
 async def test_file_op_requests_are_returned_via_result_event() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.http = Mock()

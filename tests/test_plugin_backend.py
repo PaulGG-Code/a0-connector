@@ -1012,10 +1012,12 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
                 "extension_paths": [os.path.normpath("/tmp/ext")],
                 "default_homepage": "https://example.com",
                 "autofocus_active_page": False,
+                "browser_tab_scope": "per_context",
                 "max_open_tabs": 32,
                 "runtime_backend": "host_required",
                 "host_browser_privacy_policy": "warn",
                 "host_browser_profile_mode": "existing",
+                "host_browser_selection": "",
                 "model_preset": "Research",
             },
         )
@@ -1047,6 +1049,7 @@ def test_browser_runtime_endpoint_defaults_missing_profile_mode() -> None:
     assert payload["ok"] is True
     assert payload["runtime_backend"] == "host_required"
     assert payload["host_browser_profile_mode"] == "existing"
+    assert payload["host_browser_selection"] == ""
 
 
 def test_capabilities_reflect_core_login_requirement() -> None:
