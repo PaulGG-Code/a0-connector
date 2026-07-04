@@ -265,6 +265,30 @@ def test_a0_managed_user_data_dir_is_separate_from_default_chrome_dir(
     assert path != tmp_path / "config" / "google-chrome"
 
 
+def test_linux_candidate_detection_includes_major_chromium_browsers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    config_root = tmp_path / "config"
+    executables = {
+        "google-chrome": "/bin/google-chrome",
+        "brave-browser": "/bin/brave-browser",
+        "opera": "/bin/opera",
+        "vivaldi": "/bin/vivaldi",
+    }
+    monkeypatch.setattr(host_browser_common.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
+    monkeypatch.setattr(host_browser_common.shutil, "which", lambda name: executables.get(name))
+
+    candidates = {candidate.family: candidate for candidate in host_browser_common.detect_browser_candidates()}
+
+    assert candidates["chrome"].user_data_dir == config_root / "google-chrome"
+    assert candidates["brave"].user_data_dir == config_root / "BraveSoftware/Brave-Browser"
+    assert candidates["opera"].user_data_dir == config_root / "opera"
+    assert candidates["vivaldi"].user_data_dir == config_root / "vivaldi"
+    assert {"chrome-a0", "brave-a0", "opera-a0", "vivaldi-a0"} <= set(candidates)
+
+
 def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
     assert not CONTENT_HELPER_PATH.exists()
 
@@ -372,6 +396,23 @@ def test_remote_debugging_profile_is_discovered_when_chrome_allows_it(
     assert profiles[0].profile_label == "localhost:9222"
     assert profiles[0].cdp_endpoint == "ws://localhost:9222/devtools/browser/test"
     assert profiles[0].as_dict()["locked"] is False
+
+
+def test_remote_debugging_profile_is_discovered_when_opera_allows_it(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "opera"
+    root.mkdir()
+    (root / "DevToolsActivePort").write_text("34535\n/devtools/browser/test\n", encoding="utf-8")
+
+    profiles = discover_remote_debugging_profiles(
+        [BrowserCandidate("opera", "Opera", "/bin/opera", root)]
+    )
+
+    assert len(profiles) == 1
+    assert profiles[0].family == "opera-cdp"
+    assert profiles[0].family_label == "Opera (remote debugging)"
+    assert profiles[0].cdp_endpoint == "ws://localhost:34535/devtools/browser/test"
 
 
 def test_remote_debugging_discovery_reads_active_port_without_network_probe(

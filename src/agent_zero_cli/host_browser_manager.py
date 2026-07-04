@@ -197,7 +197,7 @@ class HostBrowserManager:
         if status["status"] == "relaunch_required":
             return (
                 f"Host browser needs relaunch consent for {profile_text}. "
-                "Close that Chrome-family browser, then run /browser relaunch."
+                "Close that Chromium-family browser, then run /browser relaunch."
             )
         return f"Host browser {status['status']}: {profile_text}."
 
@@ -442,7 +442,7 @@ class HostBrowserManager:
                 continue
             self._persist_selected_profile(profile)
             return profile
-        raise ValueError("No matching Chrome-family profile was found.")
+        raise ValueError("No matching Chromium-family profile was found.")
 
     async def relaunch(self) -> dict[str, Any]:
         return await self.ensure_available()
@@ -458,8 +458,8 @@ class HostBrowserManager:
         profile = self._auto_start_profile(profile_mode=mode, browser_selection=selection)
         if profile is None:
             if selection:
-                raise RuntimeError(f"No Chrome-family browser matched selection {selection!r}.")
-            raise RuntimeError("No Chrome-family browser profile was found.")
+                raise RuntimeError(f"No Chromium-family browser matched selection {selection!r}.")
+            raise RuntimeError("No Chromium-family browser profile was found.")
         if not profile.is_remote_debugging and not self._has_playwright():
             await self.ensure_playwright_dependency()
         support_reason = self._support_reason(profile)
@@ -565,13 +565,13 @@ class HostBrowserManager:
             return self._error(
                 op_id,
                 "HOST_BROWSER_NO_PROFILE",
-                f"No Chrome-family browser matched selection {browser_selection!r}.",
+                f"No Chromium-family browser matched selection {browser_selection!r}.",
             )
         support_reason = self._support_reason(profile)
         if support_reason:
             return self._error(op_id, "HOST_BROWSER_UNSUPPORTED", support_reason)
         if profile is None:
-            return self._error(op_id, "HOST_BROWSER_NO_PROFILE", "No Chrome-family browser profile was found.")
+            return self._error(op_id, "HOST_BROWSER_NO_PROFILE", "No Chromium-family browser profile was found.")
 
         lock = profile_lock_state_for_profile(profile)
         active_context = self._active_context_for_profile(profile)
@@ -590,7 +590,7 @@ class HostBrowserManager:
                 op_id,
                 "HOST_BROWSER_RELAUNCH_REQUIRED",
                 (
-                    "The selected Chrome-family profile is already open. "
+                    "The selected Chromium-family profile is already open. "
                     "Run /browser relaunch after closing that browser to give A0 explicit control."
                 ),
                 result={"lock": lock.as_dict(), "profile": profile.as_dict()},
@@ -732,7 +732,7 @@ class HostBrowserManager:
         if endpoint:
             return BrowserProfile(
                 family="chrome-cdp",
-                family_label="Chrome-family browser (remote debugging)",
+                family_label="Chromium-family browser (remote debugging)",
                 executable_path="",
                 user_data_dir=Path(),
                 profile_directory=remote_debugging_endpoint_label(endpoint),
@@ -831,17 +831,17 @@ class HostBrowserManager:
                 "Run /browser repair in the A0 CLI, or install it with: "
                 f"{' '.join(self.playwright_install_command())}. "
                 "The Playwright runtime inside the Agent Zero Docker container is used by the "
-                "container browser backend and cannot control host Chrome-family profiles."
+                "container browser backend and cannot control host Chromium-family profiles."
             )
         return self._profile_support_reason(profile)
 
     def _profile_support_reason(self, profile: BrowserProfile | None) -> str:
         if profile is None:
-            return "No installed Chrome-family browser profile was detected."
+            return "No installed Chromium-family browser profile was detected."
         if profile.is_remote_debugging:
             return ""
         if not profile.executable_path or not Path(profile.executable_path).exists():
-            return "Selected Chrome-family browser executable was not found."
+            return "Selected Chromium-family browser executable was not found."
         restriction_reason = remote_debugging_restriction_reason(profile)
         if restriction_reason:
             return restriction_reason

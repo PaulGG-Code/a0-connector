@@ -21,6 +21,7 @@
 - `/computer-use on` is a human approval command. It must force `ComputerUseManager.rearm()` immediately instead of silently validating a saved restore token first.
 - Host-browser `open` must reuse an already-open tab with the same normalized URL before creating a new tab. Keep `list` and `set_active` workflows available for title-based or URL-based selection.
 - Host-browser metadata must advertise stable browser choices, and incoming `browser_selection` / `host_browser_selection` values must select that browser instead of falling back to the automatic profile picker.
+- Host-browser discovery covers major Chromium-family browsers with CDP-compatible profiles, including Chrome, Chromium, Edge, Brave, Opera, and Vivaldi.
 - The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It may consume ephemeral `A0_USERNAME` and `A0_PASSWORD` environment variables for non-interactive login, but it must not persist usernames, passwords, connector tokens, API keys, or other secrets.
 - Local Docker instance discovery should prefer launcher-owned friendly names
   from the `a0.launcher.instanceName` container label over generated Docker

@@ -345,7 +345,7 @@ class AgentZeroCLI(App):
             )
         yield SystemCommand(
             "Browser: Use Host",
-            "Run Browser through A0 CLI against your Chrome or Chromium-family browser.",
+            "Run Browser through A0 CLI against your Chromium-family browser.",
             lambda: self.run_worker(
                 browser_commands.cmd_browser(self, query="host"),
                 exclusive=True,

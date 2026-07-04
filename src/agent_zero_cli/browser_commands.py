@@ -197,7 +197,7 @@ async def _cmd_browser_profile(app: "AgentZeroCLI", args: list[str]) -> None:
     if not args:
         rows = format_profile_rows(profiles)
         if not rows:
-            app._show_notice("No installed Chrome-family profiles were detected.", error=True)
+            app._show_notice("No installed Chromium-family profiles were detected.", error=True)
             return
         selected = app._host_browser.selected_profile()
         selected_text = ""
@@ -280,7 +280,7 @@ async def _ensure_playwright_dependency(app: "AgentZeroCLI") -> bool:
     if result.get("installed"):
         app._show_notice(
             "Python Playwright installed for host browser control. "
-            "A0 will use your installed Chrome-family browser; no bundled browser was installed."
+            "A0 will use your installed Chromium-family browser; no bundled browser was installed."
         )
     else:
         app._show_notice("Python Playwright is already installed for host browser control.")

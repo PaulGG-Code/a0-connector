@@ -350,6 +350,9 @@ def _detect_macos_candidates() -> list[BrowserCandidate]:
         ("chrome", "Google Chrome", Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"), home / "Library/Application Support/Google/Chrome"),
         ("chromium", "Chromium", Path("/Applications/Chromium.app/Contents/MacOS/Chromium"), home / "Library/Application Support/Chromium"),
         ("edge", "Microsoft Edge", Path("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"), home / "Library/Application Support/Microsoft Edge"),
+        ("brave", "Brave", Path("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"), home / "Library/Application Support/BraveSoftware/Brave-Browser"),
+        ("opera", "Opera", Path("/Applications/Opera.app/Contents/MacOS/Opera"), home / "Library/Application Support/com.operasoftware.Opera"),
+        ("vivaldi", "Vivaldi", Path("/Applications/Vivaldi.app/Contents/MacOS/Vivaldi"), home / "Library/Application Support/Vivaldi"),
     ]
     candidates = [
         BrowserCandidate(f, label, str(exe), profile)
@@ -361,6 +364,7 @@ def _detect_macos_candidates() -> list[BrowserCandidate]:
 
 def _detect_windows_candidates() -> list[BrowserCandidate]:
     local_app_data = Path(os.environ.get("LOCALAPPDATA", ""))
+    roaming_app_data = Path(os.environ.get("APPDATA", ""))
     program_files = [Path(os.environ.get("PROGRAMFILES", "")), Path(os.environ.get("PROGRAMFILES(X86)", ""))]
     specs: list[tuple[str, str, list[Path], Path]] = [
         (
@@ -381,6 +385,27 @@ def _detect_windows_candidates() -> list[BrowserCandidate]:
             [base / "Microsoft/Edge/Application/msedge.exe" for base in program_files if str(base)],
             local_app_data / "Microsoft/Edge/User Data",
         ),
+        (
+            "brave",
+            "Brave",
+            [local_app_data / "BraveSoftware/Brave-Browser/Application/brave.exe"],
+            local_app_data / "BraveSoftware/Brave-Browser/User Data",
+        ),
+        (
+            "opera",
+            "Opera",
+            [
+                local_app_data / "Programs/Opera/opera.exe",
+                *[base / "Opera/opera.exe" for base in program_files if str(base)],
+            ],
+            roaming_app_data / "Opera Software/Opera Stable",
+        ),
+        (
+            "vivaldi",
+            "Vivaldi",
+            [local_app_data / "Vivaldi/Application/vivaldi.exe"],
+            local_app_data / "Vivaldi/User Data",
+        ),
     ]
     candidates: list[BrowserCandidate] = []
     for family, label, executables, profile in specs:
@@ -397,6 +422,9 @@ def _detect_linux_candidates() -> list[BrowserCandidate]:
         ("chromium", "Chromium", ("chromium", "chromium-browser"), home_config / "chromium"),
         ("edge", "Microsoft Edge", ("microsoft-edge", "microsoft-edge-stable"), home_config / "microsoft-edge"),
         ("edge-dev", "Microsoft Edge Dev", ("microsoft-edge-dev",), home_config / "microsoft-edge-dev"),
+        ("brave", "Brave", ("brave-browser", "brave-browser-stable", "brave"), home_config / "BraveSoftware/Brave-Browser"),
+        ("opera", "Opera", ("opera", "opera-stable"), home_config / "opera"),
+        ("vivaldi", "Vivaldi", ("vivaldi", "vivaldi-stable"), home_config / "vivaldi"),
     ]
     candidates: list[BrowserCandidate] = []
     for family, label, names, profile in specs:
@@ -502,7 +530,7 @@ def discover_remote_debugging_profiles(candidates: Iterable[BrowserCandidate] | 
         profiles.append(
             BrowserProfile(
                 family="chrome-cdp",
-                family_label="Chrome-family browser (remote debugging)",
+                family_label="Chromium-family browser (remote debugging)",
                 executable_path="",
                 user_data_dir=Path(),
                 profile_directory=remote_debugging_endpoint_label(endpoint),
@@ -687,7 +715,7 @@ def remote_debugging_restriction_reason(profile: BrowserProfile) -> str:
     ):
         managed_family = f"{profile.family}-a0"
         return (
-            "This Chrome-family browser blocks Playwright remote debugging for its default "
+            "This Chromium-family browser blocks Playwright remote debugging for its default "
             f"data directory in version {major}+. {remote_debugging_enable_hint()} "
             "Or choose Clean Agent profile in Browser settings, or select the "
             f"A0-controlled local profile with /browser profile "
