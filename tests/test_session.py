@@ -369,6 +369,36 @@ async def test_session_queues_messages_while_agent_active(tmp_path: Path) -> Non
     await session.close()
 
 
+async def test_session_does_not_queue_after_post_complete_status_event(tmp_path: Path) -> None:
+    session = ConnectorSession(
+        CLIConfig(default_context_id="ctx-default"),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=FakeClient,
+    )
+    await session.connect("http://agent.test")
+    session.agent_active = True
+    session._context_run_complete = False
+
+    session._handle_context_complete({"context_id": "ctx-default"})
+    session._handle_context_event(
+        {
+            "context_id": "ctx-default",
+            "event": "status",
+            "sequence": 2,
+            "data": {"meta": {"step": "Memorizing results"}},
+        }
+    )
+    await session.send_message("new task")
+
+    client = FakeClient.instances[-1]
+    assert session.agent_active is True
+    assert client.sent_messages == [("new task", "ctx-default", [])]
+    assert client.queued_messages == []
+
+    await session.close()
+
+
 async def test_session_can_send_and_manage_message_queue(tmp_path: Path) -> None:
     session = ConnectorSession(
         CLIConfig(default_context_id="ctx-default"),

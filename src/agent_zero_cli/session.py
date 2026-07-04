@@ -571,7 +571,7 @@ class ConnectorSession:
         event_type = str(data.get("event") or "")
         if event_type in {"user_message", "assistant_message", "assistant_delta"}:
             self.context_has_messages = True
-        if event_type != "message_complete":
+        if event_type != "message_complete" and not self._context_run_complete:
             self.agent_active = True
             self._context_run_complete = False
         self.observer.on_event(data)
