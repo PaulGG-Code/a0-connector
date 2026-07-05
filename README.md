@@ -158,7 +158,9 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/computer-use on` / `/computer-use off` | Advertise or disable local Computer Use from this CLI; enabling arms the platform permission flow when needed |
 | `/browser status` | Show host-browser connector status |
 | `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |
-| `/browser profile` | List detected Chrome-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
+| `/browser profile` | List detected Chromium-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
+| `/browser list` | List host-browser targets |
+| `/browser auto` / `/browser <number>` / `/browser <id>` / `/browser ws://...` | Choose the current Agent Zero Browser host target |
 | `/browser relaunch` | Prepare the host browser now, either by attaching to allowed Chrome remote debugging or by starting the selected local profile |
 | `/browser repair` | Install missing Python Playwright for the local-profile launch path |
 | `/browser privacy` | Show where host-browser content policy is configured |
@@ -174,20 +176,20 @@ Type `$` in the composer to browse skills available to the current chat. Selecti
 
 ### Host browser mode
 
-Agent Zero can route its existing `browser` tool through A0 CLI so the CLI controls a real Chrome-family browser on the host machine while the Agent Zero server still runs in Docker or another remote runtime.
+Agent Zero can route its existing `browser` tool through A0 CLI so the CLI controls a real Chromium-family browser on the host machine while the Agent Zero server still runs in Docker or another remote runtime.
 
 Happy path:
 
 1. Keep A0 CLI connected to the Agent Zero chat.
-2. If you want Agent Zero to use your already-open personal Chrome, visit `chrome://inspect/#remote-debugging` and click **Allow**.
+2. If you want Agent Zero to use your already-open personal browser, visit its remote debugging page, such as `chrome://inspect/#remote-debugging` or `opera://inspect/#remote-debugging`, and click **Allow**.
 3. In Agent Zero Browser settings, choose `host_when_available` or `host_required`.
 4. Ask the agent to use the browser.
 
 When a subscribed CLI supports host-browser control, the first browser action can enable and prepare the local browser automatically. The CLI slash commands remain available for diagnostics and manual override.
 
-The CLI does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If Chrome's Remote debugging page has been allowed, A0 reads Chrome's local `DevToolsActivePort` file and keeps one DevTools Protocol connection open for browser actions. Status checks and profile listing do not connect to Chrome, so they should not create repeated **Allow** prompts.
+The CLI does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If the browser's Remote debugging page has been allowed, A0 reads the local `DevToolsActivePort` file and keeps one DevTools Protocol connection open for browser actions. Status checks and profile listing do not connect to the browser, so they should not create repeated **Allow** prompts.
 
-If the selected profile must be launched by A0 and is already locked by normal Chrome, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses Python Playwright in the A0 CLI host environment against an installed Chrome, Chromium, or Edge executable.
+If the selected profile must be launched by A0 and is already locked by a normal browser window, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses Python Playwright in the A0 CLI host environment against an installed Chromium-family executable.
 
 Chrome 136+ blocks Playwright remote debugging against the default personal Chrome data directory. If Chrome's own Remote debugging consent path is not available, A0 exposes and auto-selects a separate local profile such as `chrome-a0 Default` under the user's data directory. Site data stays in that local browser profile, and the user may need to sign in once there. You can still select it manually with `/browser profile chrome-a0 Default`.
 
@@ -200,9 +202,9 @@ When automatic host-browser preparation, `/browser host on`, or `/browser relaun
 ```
 
 Platform caveats:
-- macOS: detects Chrome, Chromium, and Edge apps in `/Applications` and profile data in `~/Library/Application Support`.
-- Windows: detects Chrome, Chromium, and Edge under `%LOCALAPPDATA%`/Program Files profile conventions.
-- Linux: detects `google-chrome`, `chromium`, `chromium-browser`, and Edge variants on `PATH`; X11 and Wayland are both supported by the underlying system browser.
+- macOS: detects Chrome, Chromium, Edge, Brave, Opera, and Vivaldi apps in `/Applications` and profile data in `~/Library/Application Support`.
+- Windows: detects Chrome, Chromium, Edge, Brave, Opera, and Vivaldi under `%LOCALAPPDATA%`/Program Files profile conventions.
+- Linux: detects Chrome, Chromium, Edge, Brave, Opera, and Vivaldi variants on `PATH`; X11 and Wayland are both supported by the underlying system browser.
 
 ## Troubleshooting
 

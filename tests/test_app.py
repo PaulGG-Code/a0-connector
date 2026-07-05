@@ -414,6 +414,7 @@ class FakeHostBrowserManager:
         self.playwright_available = True
         self.install_calls = 0
         self.remote_debugging = False
+        self.profile_selections: list[tuple[str, str]] = []
 
     def metadata(self) -> dict[str, object]:
         supported = self.playwright_available or self.remote_debugging
@@ -439,8 +440,37 @@ class FakeHostBrowserManager:
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = enabled
 
-    def selected_profile(self) -> SimpleNamespace:
-        return SimpleNamespace(is_remote_debugging=self.remote_debugging)
+    def selected_profile(
+        self,
+        profile_mode: object = "",
+        *,
+        browser_selection: object = "",
+    ) -> SimpleNamespace:
+        self.profile_selections.append((str(profile_mode or ""), str(browser_selection or "")))
+        return SimpleNamespace(
+            is_remote_debugging=self.remote_debugging
+            or str(browser_selection or "").startswith("ws://")
+        )
+
+    def available_browser_metadata(self) -> list[dict[str, object]]:
+        return [
+            {
+                "id": "ws://localhost:9222/devtools/browser/test",
+                "family": "chrome-cdp",
+                "label": "Chrome (allowed) - localhost:9222",
+                "cdp_endpoint": "ws://localhost:9222/devtools/browser/test",
+                "status": "ready",
+                "enabled": True,
+            },
+            {
+                "id": "chrome:default",
+                "family": "chrome",
+                "label": "Chrome - Default",
+                "cdp_endpoint": "",
+                "status": "ready",
+                "enabled": True,
+            },
+        ]
 
     def has_playwright_dependency(self) -> bool:
         return self.playwright_available
@@ -3640,6 +3670,68 @@ async def test_browser_runtime_commands_update_agent_zero_config(
     assert "Browser set to Bring Your Own Browser for project Research." in notices[0][0]
     assert "Browser set to Docker browser for project Research." in notices[1][0]
     assert all("Browser model-use settings" in notice[0] for notice in notices)
+
+
+async def test_browser_direct_command_sets_host_browser_selection(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[str | None, str, str | None, str | None]] = []
+    notices: list[tuple[str, bool]] = []
+
+    async def fake_set_browser_runtime(
+        context_id: str | None,
+        runtime_backend: str,
+        *,
+        host_browser_selection: str | None = None,
+        profile_mode: str | None = None,
+    ) -> dict[str, object]:
+        calls.append((context_id, runtime_backend, host_browser_selection, profile_mode))
+        return {
+            "ok": True,
+            "runtime_backend": runtime_backend,
+            "host_browser_selection": host_browser_selection,
+            "project_name": "Research",
+        }
+
+    dummy_app.connector_features = {"browser_runtime_config"}
+    dummy_app.current_context = "ctx-browser"
+    dummy_app._host_browser.playwright_available = False
+    dummy_app.client.set_browser_runtime = fake_set_browser_runtime  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        dummy_app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    await dummy_app._dispatch_command("/browser list")
+    await dummy_app._dispatch_command("/browser 1")
+    dummy_app._host_browser.playwright_available = True
+    await dummy_app._dispatch_command("/browser auto")
+
+    assert "0 auto - Automatic" in notices[0][0]
+    assert "1 ws://localhost:9222/devtools/browser/test" in notices[0][0]
+    assert calls == [
+        (
+            "ctx-browser",
+            "host_required",
+            "ws://localhost:9222/devtools/browser/test",
+            "existing",
+        ),
+        (
+            "ctx-browser",
+            "host_required",
+            "",
+            "existing",
+        ),
+    ]
+    assert dummy_app._host_browser.enabled is True
+    assert dummy_app._host_browser.install_calls == 0
+    assert any(
+        "Browser host target set to Chrome (allowed) - localhost:9222 for project Research." in notice[0]
+        for notice in notices
+    )
+    assert "Browser host target set to Automatic (A0 CLI chooses) for project Research." in notices[-1][0]
 
 
 def test_system_commands_include_computer_use_without_experimental_menu(

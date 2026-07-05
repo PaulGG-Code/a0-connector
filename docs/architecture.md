@@ -174,19 +174,22 @@ host artifacts.
 - `can_prepare` when the CLI can repair or launch host control on first use
 - `browser_family`
 - `profile_label` and `profile_path`
-- `cdp_endpoint` when Chrome has exposed a user-authorized DevTools endpoint
+- `cdp_endpoint` when a browser has exposed a user-authorized DevTools endpoint
+- `browser_id`, `browser_label`, and `available_browsers` for explicit Browser target selection
 - `features`
 - `support_reason`
 
-The CLI detects installed Chrome-family browsers and profile roots per OS, but
-it never silently seizes a locked profile. If Chrome is already using the
+The CLI detects installed Chromium-family browsers and profile roots per OS, but
+it never silently seizes a locked profile. If a browser is already using the
 selected profile, operations fail with `HOST_BROWSER_RELAUNCH_REQUIRED` until
 the user explicitly closes that browser. When Browser settings request host
 mode, Agent Zero may send an idempotent `ensure` browser operation before the
 first user-facing browser action; the CLI then enables host browser control and
 launches the selected profile when it is not locked. `/browser host on` and
 `/browser relaunch` remain manual diagnostics rather than required happy-path
-steps.
+steps; `/browser list` shows advertised targets, while `/browser auto`,
+`/browser <number>`, `/browser <id>`, and `/browser ws://...` sync the selected
+target to the current Agent Zero project.
 
 Chrome 136+ does not allow `--remote-debugging-port` or
 `--remote-debugging-pipe` against the default personal Chrome data directory.
@@ -194,14 +197,14 @@ For those browsers, the CLI advertises an A0-controlled local profile such as
 `chrome-a0 Default` under the user's data directory. Cookies and site data stay
 inside that separate browser profile on the host; A0 does not copy them out.
 
-When Chrome itself exposes a user-authorized debugging server, the CLI prefers
-that explicit consent path. The user opens
-Chrome's Remote debugging page (`chrome://inspect/#remote-debugging`, or
-`chrome://inspect/#devices` on older Chrome builds) and allows remote debugging
-for the current browser instance. Chrome writes `DevToolsActivePort` in its user
-data directory; the CLI reads that file, advertises a `chrome-cdp` profile, and
-uses a built-in DevTools Protocol WebSocket helper. Discovery never opens a
-probe connection, so status/profile checks do not trigger extra Chrome **Allow**
+When the browser itself exposes a user-authorized debugging server, the CLI
+prefers that explicit consent path. The user opens the browser's Remote
+debugging page, such as `chrome://inspect/#remote-debugging` or
+`opera://inspect/#remote-debugging`, and allows remote debugging for the current
+browser instance. The browser writes `DevToolsActivePort` in its user data
+directory; the CLI reads that file, advertises a `*-cdp` profile, and uses a
+built-in DevTools Protocol WebSocket helper. Discovery never opens a probe
+connection, so status/profile checks do not trigger extra browser **Allow**
 prompts. The first real Browser operation opens one long-lived connection for
 that chat. A0 disconnect does not close the user's browser tabs; explicit
 Browser close actions still act on tabs the agent can see.
@@ -209,7 +212,7 @@ Browser close actions still act on tabs the agent can see.
 The local-profile launch path requires Python Playwright in the A0 CLI host
 environment. The Playwright runtime under the Agent Zero Docker container,
 including `/a0/tmp/playwright`, powers the container browser backend and cannot
-control a host Chrome-family profile from inside Docker. User-authorized Chrome
+control a host Chromium-family profile from inside Docker. User-authorized
 remote debugging does not require the Chrome DevTools MCP package or Playwright
 CDP attach; the connector carries the small CDP helper directly. If the host
 Python dependency is missing for the launch path, `/browser host on`,
