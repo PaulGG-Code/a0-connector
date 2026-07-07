@@ -21,6 +21,7 @@ from agent_zero_cli.widgets.shimmer import build_dim_status, build_shimmer_text
 
 _STATUS_HISTORY_PADDING = (0, 0, 0, 2)
 _STATUS_BODY_PADDING = (1, 0, 0, 4)
+_CODE_BODY_PADDING = (0, 0, 0, 2)
 _STATUS_THOUGHT_LIMIT = 6
 _REDACTED_ARG_KEYS = {
     "code",
@@ -519,7 +520,7 @@ class CodeEntry(SelectableStatic):
 
         renderables: list[RenderableType] = [header]
         if self._expanded and self._body is not None:
-            renderables.append(Padding(self._body, _STATUS_BODY_PADDING))
+            renderables.append(Padding(self._body, _CODE_BODY_PADDING))
 
         self.update(Padding(Group(*renderables), _STATUS_HISTORY_PADDING), layout=layout)
 

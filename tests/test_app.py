@@ -4596,6 +4596,35 @@ async def test_connector_events_render_markup_sensitive_text_literally() -> None
     assert "[dim]" not in transcript
 
 
+async def test_connector_code_event_renders_compact_details() -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test(size=(88, 20)) as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        rendered = render_connector_event(
+            log,
+            {
+                "event": "code_output",
+                "sequence": 1,
+                "data": {
+                    "heading": "icon://terminal [0] sed -n",
+                    "text": '<div align="center">',
+                    "meta": {"code": "sed -n '1,2p' /a0/README.md"},
+                },
+            },
+        )
+        assert rendered is True
+        await pilot.pause()
+
+        widget = log._seq_to_widget[1]
+        transcript = widget.render().plain
+
+    assert "Running code" in transcript
+    assert "sed -n '1,2p' /a0/README.md" in transcript
+    assert '<div align="center">' in transcript
+    assert len(transcript.splitlines()) <= 5
+
+
 async def test_chat_log_render_width_respects_scrollbar_gutter() -> None:
     app = TranscriptSelectionApp()
 

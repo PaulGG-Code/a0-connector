@@ -7,6 +7,7 @@ from typing import Any
 
 from rich.align import Align
 from rich import box
+from rich.console import Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.padding import Padding
@@ -287,22 +288,22 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
         code = parts.code
         display_text = parts.code_output
         if code or display_text:
-            markdown_parts: list[str] = []
+            blocks: list[Text] = []
             if code:
-                markdown_parts.append(f"```python\n{code}\n```")
+                blocks.append(Text(code, style="#f2f5f7"))
             if display_text:
-                markdown_parts.append(f"```text\n{display_text}\n```")
-            md_content = "\n\n".join(markdown_parts)
+                blocks.append(Text(display_text, style="#b8c2cc"))
 
             log.append_or_update_code(
                 seq,
                 parts.label,
                 parts.detail,
                 Panel(
-                    Markdown(md_content),
+                    Group(*blocks),
                     box=box.SIMPLE,
-                    padding=(1, 1),
+                    padding=(0, 1),
                     style="on #202124",
+                    expand=False,
                 ),
             )
             return True
