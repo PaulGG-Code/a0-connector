@@ -42,6 +42,8 @@ def command_may_start_agent(text: str) -> bool:
     stripped = str(text or "").strip()
     token, _, remainder = stripped.partition(" ")
     command = token.lower()
+    if command == "/goal":
+        return _goal_may_start_agent(remainder.strip())
     if command == "/send":
         return True
     if command != "/queue":
@@ -87,7 +89,10 @@ async def dispatch_headless_command(session: ConnectorSession, text: str) -> Hea
         return await _cmd_queue_send(session)
     if command == "/queue":
         return await _cmd_queue(session, argument)
+    if command == "/goal":
+        return await _cmd_goal(session, argument)
     if command == "/status":
+        await _refresh_goal(session)
         return HeadlessCommandResult(_status_lines(session))
     if command in {"/help", "/?"}:
         return HeadlessCommandResult(_help_lines())
@@ -129,6 +134,119 @@ def _response_result(response: dict[str, Any], success_message: str) -> Headless
         return HeadlessCommandResult([message])
     message = str(response.get("message") or response.get("error") or "command failed")
     return HeadlessCommandResult([message], error=True)
+
+
+async def _cmd_goal(session: ConnectorSession, argument: str) -> HeadlessCommandResult:
+    if not session.context_id:
+        return HeadlessCommandResult(["Open or create a chat context first."], error=True)
+
+    action, remainder = _goal_action(argument)
+    if action in {"", "status", "show"}:
+        await _refresh_goal(session)
+        return HeadlessCommandResult(_goal_summary_lines(session.goal))
+    if action in {"pause", "paused"}:
+        return _goal_result(await session.goal_action("pause"), "Goal paused.")
+    if action in {"resume", "start", "active"}:
+        return _goal_result(await session.goal_action("resume"), "Goal resumed.")
+    if action in {"delete", "clear", "remove"}:
+        return _goal_result(await session.goal_action("delete"), "Goal deleted.")
+    if action in {"complete", "done"}:
+        return _goal_result(await session.goal_action("update", status="complete"), "Goal marked complete.")
+    if action == "blocked":
+        return _goal_result(
+            await session.goal_action("update", status="blocked", note=remainder),
+            "Goal marked blocked.",
+        )
+    if action in {"update", "edit"}:
+        if not remainder:
+            return HeadlessCommandResult(["usage: /goal update <goal>"], error=True)
+        return _goal_result(
+            await session.goal_action("update", objective=remainder, status="active"),
+            "Goal updated.",
+        )
+    if action in {"auto", "ask", "model"}:
+        prompt = _auto_goal_prompt(remainder)
+        await session.send_message(prompt)
+        return HeadlessCommandResult(["Goal request sent."], await_completion=True)
+
+    objective = argument.strip()
+    response = await session.goal_action("create", objective=objective, created_by="user")
+    result = _goal_result(response, "Goal set.")
+    if result.error:
+        return result
+    await session.send_message(objective)
+    return HeadlessCommandResult(result.lines, await_completion=True)
+
+
+def _goal_result(response: dict[str, Any], success_message: str) -> HeadlessCommandResult:
+    if response.get("ok", True):
+        return HeadlessCommandResult([success_message])
+    return HeadlessCommandResult(
+        [str(response.get("message") or response.get("error") or "Goal command failed.")],
+        error=True,
+    )
+
+
+async def _refresh_goal(session: ConnectorSession) -> None:
+    try:
+        await session.refresh_goal()
+    except Exception:
+        session.goal = None
+
+
+def _goal_action(argument: str) -> tuple[str, str]:
+    raw = str(argument or "").strip()
+    if not raw:
+        return "", ""
+    try:
+        tokens = shlex.split(raw)
+    except ValueError:
+        token, _, remainder = raw.partition(" ")
+        return token.lower(), remainder.strip()
+    if not tokens:
+        return "", ""
+    _, _, remainder = raw.partition(" ")
+    return tokens[0].lower(), remainder.strip()
+
+
+def _goal_may_start_agent(argument: str) -> bool:
+    action, _ = _goal_action(argument)
+    return bool(action and action not in {
+        "active",
+        "blocked",
+        "clear",
+        "complete",
+        "delete",
+        "done",
+        "edit",
+        "pause",
+        "paused",
+        "remove",
+        "resume",
+        "show",
+        "start",
+        "status",
+        "update",
+    })
+
+
+def _auto_goal_prompt(hint: str) -> str:
+    prompt = (
+        "Please create and manage a goal for this chat. Use the goal tools to inspect "
+        "any current goal, create a concise goal objective, and update it when the work "
+        "is complete or genuinely blocked."
+    )
+    return f"{prompt}\n\nUser hint: {hint}" if hint else prompt
+
+
+def _goal_summary_lines(goal: Mapping[str, Any] | None) -> list[str]:
+    if not goal:
+        return ["No goal is set for this chat."]
+    objective = str(goal.get("objective") or "").strip()
+    status = str(goal.get("status") or "active").strip() or "active"
+    if not objective:
+        return ["No goal is set for this chat."]
+    return [f"goal: {status} - {objective}"]
 
 
 async def _cmd_queue(session: ConnectorSession, argument: str) -> HeadlessCommandResult:
@@ -252,6 +370,11 @@ def _queue_selector_to_item_id(session: ConnectorSession, selector: str) -> str:
 def _status_lines(session: ConnectorSession) -> list[str]:
     features = ", ".join(sorted(session.connector_features)) or "none"
     queue_label = f"{len(session.message_queue)} queued" if session.message_queue else "empty"
+    goal_label = "none"
+    if session.goal:
+        objective = str(session.goal.get("objective") or "").strip()
+        status = str(session.goal.get("status") or "active").strip() or "active"
+        goal_label = f"{status} - {objective}" if objective else "none"
     return [
         f"host: {session.host or '(not connected)'}",
         f"context: {session.context_id or '(none)'}",
@@ -259,6 +382,7 @@ def _status_lines(session: ConnectorSession) -> list[str]:
         f"remote files: {'read/write' if session.remote_file_write_enabled else 'read only'}",
         f"remote exec: {'enabled' if session.remote_exec_enabled else 'disabled'}",
         f"message queue: {queue_label}",
+        f"goal: {goal_label}",
         "computer use: unavailable in headless mode",
         "host browser: unavailable in headless mode",
         f"features: {features}",
@@ -268,7 +392,8 @@ def _status_lines(session: ConnectorSession) -> list[str]:
 def _help_lines() -> list[str]:
     return [
         "commands: /status, /chats, /chat <id>, /new, /pause, /resume, "
-        "/nudge, /send, /queue [send|clear|remove <number|id>], /clear, /quit",
+        "/nudge, /send, /queue [send|clear|remove <number|id>], "
+        "/goal [update <text>|delete|pause|resume], /clear, /quit",
     ]
 
 

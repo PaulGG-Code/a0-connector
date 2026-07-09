@@ -77,6 +77,9 @@ JSONL stdout.
 | `/queue send` | Send all queued messages now |
 | `/queue clear` | Clear queued messages |
 | `/queue remove <number\|id>` | Remove one queued message |
+| `/goal <objective>` | Set the active chat goal and send the objective to the agent |
+| `/goal update <text>` | Update the active chat goal without sending a message |
+| `/goal delete` | Delete the active chat goal |
 | `/clear` | Reset the current chat through `chat_reset` |
 | `/quit` / `/exit` | Shut down cleanly |
 

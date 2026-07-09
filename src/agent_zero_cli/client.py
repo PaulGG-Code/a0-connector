@@ -974,6 +974,47 @@ class A0Client:
             )
         return refs
 
+    async def goal_action(
+        self,
+        action: str,
+        context_id: str,
+        **payload: Any,
+    ) -> dict[str, Any]:
+        body = {
+            "action": action,
+            "context_id": context_id,
+            **payload,
+        }
+        response = await self.http.post(
+            f"{self.base_url}/api/plugins/_goal/goal",
+            json=body,
+            headers=await self._csrf_headers(),
+        )
+        if response.status_code == 403:
+            self._csrf_token = None
+            response = await self.http.post(
+                f"{self.base_url}/api/plugins/_goal/goal",
+                json=body,
+                headers=await self._csrf_headers(),
+            )
+        if self._is_login_redirect(response):
+            return {
+                "ok": False,
+                "message": "Goal API requires an authenticated Agent Zero session.",
+                "status_code": 401,
+            }
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "message": self._response_message(response),
+                "status_code": response.status_code,
+            }
+
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
+
     async def create_chat(self, *, current_context_id: str | None = None) -> str:
         payload = {}
         if current_context_id:

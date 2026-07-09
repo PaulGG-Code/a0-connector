@@ -29,6 +29,7 @@ from agent_zero_cli.widgets import (
     ConnectionStatus,
     ContextTab,
     ContextTabs,
+    GoalBar,
     MessageQueueBar,
     ModelSwitcherBar,
     ProfileMenuItem,
@@ -286,6 +287,23 @@ class FakeMessageQueueBar:
 
     def clear(self) -> None:
         self.items = []
+        self.display = False
+        self.cleared = True
+
+
+class FakeGoalBar:
+    def __init__(self) -> None:
+        self.display = False
+        self.goal: dict[str, object] | None = None
+        self.cleared = False
+
+    def set_goal(self, goal: dict[str, object] | None) -> None:
+        self.goal = dict(goal) if goal else None
+        self.display = bool(self.goal and self.goal.get("status") != "complete")
+        self.cleared = False
+
+    def clear(self) -> None:
+        self.goal = None
         self.display = False
         self.cleared = True
 
@@ -580,6 +598,7 @@ def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
         "#body-switcher": FakeBodySwitcher(),
         "#splash-view": FakeSplash(),
         "#computer-use-banner": FakeComputerUseBanner(),
+        "#goal-bar": FakeGoalBar(),
         "#model-switcher-bar": FakeModelSwitcher(),
         "#message-queue-bar": FakeMessageQueueBar(),
         "#connection-status": FakeConnectionStatus(),
@@ -1296,6 +1315,7 @@ async def test_begin_connection_to_protected_instance_uses_environment_credentia
     monkeypatch.setattr(dummy_app, "_hide_profile_menu", async_noop)
     monkeypatch.setattr(dummy_app, "_clear_project_state", lambda: None)
     monkeypatch.setattr(dummy_app, "_refresh_remote_tool_metadata", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_model_switcher", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_settings_snapshot", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_projects", async_noop)
@@ -1396,6 +1416,7 @@ async def test_begin_connection_to_protected_instance_reuses_remembered_session(
     monkeypatch.setattr(dummy_app, "_hide_profile_menu", async_noop)
     monkeypatch.setattr(dummy_app, "_clear_project_state", lambda: None)
     monkeypatch.setattr(dummy_app, "_refresh_remote_tool_metadata", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_model_switcher", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_settings_snapshot", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_projects", async_noop)
@@ -1599,6 +1620,30 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
         assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
+async def test_goal_bar_sits_above_model_switcher() -> None:
+    app = AgentZeroCLI(config=CLIConfig(instance_url="http://127.0.0.1:19999"), discover_instances=False)
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause(0.5)
+        app.connected = True
+        app.current_context_has_messages = True
+        app.current_context = "ctx-1"
+        app._sync_body_mode()
+        app._set_goal({"objective": "Ship goal support", "status": "active", "elapsed_seconds": 0})
+        goal_bar = app.query_one("#goal-bar", GoalBar)
+        model_bar = app.query_one("#model-switcher-bar", ModelSwitcherBar)
+        model_bar.set_state(
+            main_model={"provider": "codex", "name": "gpt-5.5"},
+            utility_model={"provider": "codex", "name": "gpt-5.4-mini"},
+            presets=[],
+            allowed=False,
+        )
+        await pilot.pause(0.5)
+
+        assert goal_bar.region.height == 2
+        assert model_bar.region.y == goal_bar.region.y + goal_bar.region.height
+
+
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:
     input_widget = ChatInput()
 
@@ -1767,6 +1812,7 @@ async def test_switch_context_persists_last_context(
     monkeypatch.setattr(dummy_app, "_remember_context", lambda context_id: remembered.append(context_id))
     monkeypatch.setattr(dummy_app, "_publish_remote_tree_snapshot", fake_publish_remote_tree_snapshot)
     monkeypatch.setattr(dummy_app, "_refresh_projects", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_model_switcher", async_noop)
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
     monkeypatch.setattr(dummy_app, "_start_token_refresh", lambda: None)
@@ -1847,6 +1893,7 @@ async def test_context_complete_refreshes_active_tab_metadata(
     dummy_app._context_tabs = [ContextTab("ctx-alpha", "Chat #1", True)]
 
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", fake_refresh_token_usage)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", fake_refresh_token_usage)
     monkeypatch.setattr(dummy_app, "_refresh_context_tab_metadata", fake_refresh_context_tab_metadata)
 
     event_handlers.handle_context_complete(dummy_app, {"context_id": "ctx-alpha"})
@@ -2499,6 +2546,81 @@ async def test_clear_command_clears_visible_chat_log(
     assert input_widget.activity_idle is True
 
 
+async def test_goal_command_sets_goal_and_sends_objective(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    calls: list[tuple[str, str, dict[str, object]]] = []
+    sent: list[str] = []
+
+    async def fake_goal_action(action: str, context_id: str, **payload: object) -> dict[str, object]:
+        calls.append((action, context_id, dict(payload)))
+        return {
+            "ok": True,
+            "goal": {"objective": str(payload.get("objective") or ""), "status": "active"},
+        }
+
+    async def fake_send_chat_text(text: str, **kwargs: object) -> None:
+        del kwargs
+        sent.append(text)
+
+    monkeypatch.setattr(dummy_app.client, "goal_action", fake_goal_action)
+    monkeypatch.setattr(dummy_app, "_send_chat_text", fake_send_chat_text)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda *args, **kwargs: None)
+
+    await dummy_app._dispatch_command("/goal Find the weak spots")
+
+    assert calls == [("create", "ctx-1", {"objective": "Find the weak spots", "created_by": "user"})]
+    assert sent == ["Find the weak spots"]
+    assert dummy_app.goal == {"objective": "Find the weak spots", "status": "active"}
+
+
+async def test_goal_command_update_and_delete_do_not_send_message(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    calls: list[tuple[str, dict[str, object]]] = []
+    sent: list[str] = []
+
+    async def fake_goal_action(action: str, context_id: str, **payload: object) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        calls.append((action, dict(payload)))
+        goal = None if action == "delete" else {"objective": payload.get("objective"), "status": "active"}
+        return {"ok": True, "goal": goal}
+
+    async def fake_send_chat_text(text: str, **kwargs: object) -> None:
+        del kwargs
+        sent.append(text)
+
+    monkeypatch.setattr(dummy_app.client, "goal_action", fake_goal_action)
+    monkeypatch.setattr(dummy_app, "_send_chat_text", fake_send_chat_text)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda *args, **kwargs: None)
+
+    await dummy_app._dispatch_command("/goal update Ship the CLI row")
+    await dummy_app._dispatch_command("/goal delete")
+
+    assert calls == [
+        ("update", {"objective": "Ship the CLI row", "status": "active"}),
+        ("delete", {}),
+    ]
+    assert sent == []
+    assert dummy_app.goal is None
+
+
+def test_goal_bar_update_button_prefills_update_command(dummy_app: DummyAgentZeroCLI) -> None:
+    dummy_app._set_goal({"objective": "Ship the CLI row", "status": "active"})
+
+    dummy_app.on_goal_bar_update_requested(GoalBar.UpdateRequested(GoalBar()))
+
+    input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
+    assert input_widget.value == "/goal update Ship the CLI row"
+    assert input_widget.focused is True
+
+
 def test_attach_command_token_does_not_auto_open_slash_palette(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
@@ -3012,8 +3134,13 @@ async def test_state_snapshot_applies_changed_model_switcher_state(
         del args, kwargs
         token_refreshes += 1
 
+    async def fake_refresh_goal_bar(*args, **kwargs) -> bool:
+        del args, kwargs
+        return False
+
     monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", fake_refresh_token_usage)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", fake_refresh_goal_bar)
 
     await dummy_app._refresh_state_snapshot()
     await dummy_app._refresh_state_snapshot()
@@ -4307,6 +4434,7 @@ async def test_reset_disconnected_state_disconnects_computer_use_manager(
     monkeypatch.setattr(dummy_app, "_stop_token_refresh", lambda: None)
     monkeypatch.setattr(dummy_app, "_clear_token_usage", lambda: None)
     monkeypatch.setattr(dummy_app, "_clear_project_state", lambda: None)
+    monkeypatch.setattr(dummy_app, "_clear_goal_bar", lambda: None)
     monkeypatch.setattr(dummy_app, "_set_workspace_context", lambda remote_workspace="": None)
     monkeypatch.setattr(dummy_app, "_clear_model_switcher", lambda: None)
     monkeypatch.setattr(dummy_app, "_sync_body_mode", lambda: None)

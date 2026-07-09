@@ -359,6 +359,7 @@ async def begin_connection(
     )
     if warning := connector_version_warning(capabilities):
         app._show_notice(warning, error=True)
+    await app._refresh_goal_bar()
     await app._refresh_model_switcher()
     await app._refresh_settings_snapshot()
     await app._refresh_projects(context_id=context_id)
@@ -510,6 +511,7 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._set_workspace_context(remote_workspace="")
     app._settings_snapshot_signature = ""
     app._model_switcher_signature = ""
+    app._clear_goal_bar()
     app._last_remote_tree_hash = ""
     app._last_remote_tree_published_at = 0.0
     app._python_tty.set_exec_config(None)

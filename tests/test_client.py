@@ -947,6 +947,39 @@ async def test_upload_attachments_refreshes_csrf_after_forbidden_response() -> N
     assert client.http.post.await_args_list[1].kwargs["headers"]["X-CSRF-Token"] == "csrf-new"
 
 
+async def test_goal_action_posts_to_goal_plugin_api_with_csrf() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(json_data={"ok": True, "token": "csrf-1"})
+    )
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(
+            json_data={
+                "ok": True,
+                "goal": {"objective": "Ship CLI goal support", "status": "active"},
+            }
+        )
+    )
+
+    result = await client.goal_action("update", "ctx-1", objective="Ship CLI goal support")
+
+    assert result["goal"]["objective"] == "Ship CLI goal support"
+    client.http.post.assert_awaited_once_with(
+        "http://localhost:5080/api/plugins/_goal/goal",
+        json={
+            "action": "update",
+            "context_id": "ctx-1",
+            "objective": "Ship CLI goal support",
+        },
+        headers={
+            "Origin": "http://localhost:5080",
+            "Referer": "http://localhost:5080/",
+            "X-CSRF-Token": "csrf-1",
+        },
+    )
+
+
 async def test_upload_attachments_rejects_invalid_response() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()

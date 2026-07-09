@@ -2,7 +2,7 @@
 
 ## Purpose
 
-- Own reusable Textual widgets used by the CLI shell: composer, chat log, splash view, command palette, footer, context tabs, status bars, banners, popovers, and model/message queue controls.
+- Own reusable Textual widgets used by the CLI shell: composer, chat log, splash view, command palette, footer, context tabs, status bars, banners, popovers, goal controls, and model/message queue controls.
 
 ## Ownership
 

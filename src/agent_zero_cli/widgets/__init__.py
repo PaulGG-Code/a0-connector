@@ -3,6 +3,7 @@ from agent_zero_cli.widgets.computer_use_banner import ComputerUseBanner
 from agent_zero_cli.widgets.connection_status import ConnectionStatus
 from agent_zero_cli.widgets.context_tabs import ContextTab, ContextTabs, context_tab_from_metadata
 from agent_zero_cli.widgets.dynamic_footer import DynamicFooter
+from agent_zero_cli.widgets.goal_bar import GoalBar
 from agent_zero_cli.widgets.model_switcher_bar import (
     ModelIdentity,
     ModelPreset,
@@ -27,6 +28,7 @@ __all__ = [
     "ContextTab",
     "ContextTabs",
     "DynamicFooter",
+    "GoalBar",
     "ModelIdentity",
     "ModelPreset",
     "ModelSwitcherBar",

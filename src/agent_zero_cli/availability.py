@@ -95,6 +95,15 @@ def attachments_availability(app: AgentZeroCLI) -> CommandAvailability:
     return CommandAvailability(True)
 
 
+def goal_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = require_connection(app)
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
 def installed_plugins_availability(app: AgentZeroCLI) -> CommandAvailability:
     return app._require_features("installed_plugins")
 

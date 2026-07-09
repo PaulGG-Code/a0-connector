@@ -126,6 +126,7 @@ class ConnectorSession:
         self.connected = False
         self.agent_active = False
         self.message_queue: list[dict[str, Any]] = []
+        self.goal: dict[str, Any] | None = None
         self._context_run_complete = True
         self._last_remote_tree_hash = ""
         self._last_remote_tree_published_at = 0.0
@@ -195,6 +196,7 @@ class ConnectorSession:
             self.context_id = resolved_context_id
             self.context_has_messages = has_messages_hint
             self.message_queue = []
+            self.goal = None
             self.agent_active = False
             self._context_run_complete = True
             await client.subscribe_context(resolved_context_id)
@@ -307,6 +309,17 @@ class ConnectorSession:
             self.message_queue = [item for item in queue if isinstance(item, dict)]
         return response
 
+    async def goal_action(self, action: str, **payload: Any) -> dict[str, Any]:
+        client = self._require_client()
+        response = await client.goal_action(action, self._require_context(), **payload)
+        if response.get("ok", True):
+            goal = response.get("goal") if isinstance(response, dict) else None
+            self.goal = dict(goal) if isinstance(goal, dict) else None
+        return response
+
+    async def refresh_goal(self) -> dict[str, Any]:
+        return await self.goal_action("get")
+
     async def pause(self) -> dict[str, Any]:
         client = self._require_client()
         return await client.pause_agent(self._require_context(), paused=True)
@@ -328,6 +341,7 @@ class ConnectorSession:
         self._context_run_complete = True
         self.context_has_messages = False
         self.message_queue = []
+        self.goal = None
         return response
 
     async def list_chats(self) -> list[dict[str, Any]]:
@@ -354,6 +368,7 @@ class ConnectorSession:
         self.agent_active = False
         self._context_run_complete = True
         self.message_queue = []
+        self.goal = None
         await client.subscribe_context(normalized_context_id, from_seq=0)
         await self.refresh_remote_tool_metadata()
         await self.publish_remote_tree_snapshot(force=True)
@@ -425,6 +440,7 @@ class ConnectorSession:
         self.connector_features = set()
         self._last_remote_tree_hash = ""
         self._last_remote_tree_published_at = 0.0
+        self.goal = None
         with contextlib.suppress(Exception):
             await self.remote_exec.close()
         await self._disconnect_client(close_http=True)

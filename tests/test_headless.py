@@ -46,9 +46,11 @@ class FakeSession:
         self.context_id = "ctx-1"
         self.agent_active = False
         self.message_queue = [dict(item) for item in FakeSession.initial_queue]
+        self.goal: dict[str, Any] | None = None
         self.sent: list[str] = []
         self.queue_send_calls: list[tuple[str | None, bool]] = []
         self.queue_remove_calls: list[str | None] = []
+        self.goal_calls: list[tuple[str, dict[str, Any]]] = []
         self.closed = False
         FakeSession.instances.append(self)
 
@@ -117,6 +119,24 @@ class FakeSession:
         self.queue_remove_calls.append(item_id)
         self.message_queue = [item for item in self.message_queue if item.get("id") != item_id]
         return {"message_queue": self.message_queue}
+
+    async def goal_action(self, action: str, **payload: Any) -> dict[str, Any]:
+        self.goal_calls.append((action, dict(payload)))
+        if action in {"create", "update"}:
+            objective = str(payload.get("objective") or (self.goal or {}).get("objective") or "")
+            status = str(payload.get("status") or (self.goal or {}).get("status") or "active")
+            self.goal = {"objective": objective, "status": status}
+        elif action == "pause":
+            self.goal = {**(self.goal or {"objective": "current"}), "status": "paused"}
+        elif action == "resume":
+            self.goal = {**(self.goal or {"objective": "current"}), "status": "active"}
+        elif action == "delete":
+            self.goal = None
+        return {"ok": True, "goal": self.goal}
+
+    async def refresh_goal(self) -> dict[str, Any]:
+        self.goal_calls.append(("get", {}))
+        return {"ok": True, "goal": self.goal}
 
     async def refresh_context_snapshot(self) -> None:
         if self.final_snapshot_text is None:
@@ -264,9 +284,40 @@ async def test_headless_queue_commands_send_clear_and_remove(tmp_path: Path) -> 
     assert session.queue_send_calls == [(None, True)]
 
 
+async def test_headless_goal_commands_set_update_and_delete(tmp_path: Path) -> None:
+    session = FakeSession(
+        CLIConfig(),
+        SimpleNamespace(on_event=lambda event: None, on_complete=lambda context_id: None),
+        workspace=tmp_path,
+        remote_file_write_enabled=True,
+        remote_exec_enabled=True,
+    )
+
+    created = await dispatch_headless_command(session, "/goal Find weak spots")
+    updated = await dispatch_headless_command(session, "/goal update Ship CLI row")
+    status = await dispatch_headless_command(session, "/goal")
+    deleted = await dispatch_headless_command(session, "/goal delete")
+
+    assert created.lines == ["Goal set."]
+    assert created.await_completion is True
+    assert updated.lines == ["Goal updated."]
+    assert status.lines == ["goal: active - Ship CLI row"]
+    assert deleted.lines == ["Goal deleted."]
+    assert session.sent == ["Find weak spots"]
+    assert session.goal_calls == [
+        ("create", {"objective": "Find weak spots", "created_by": "user"}),
+        ("update", {"objective": "Ship CLI row", "status": "active"}),
+        ("get", {}),
+        ("delete", {}),
+    ]
+
+
 def test_headless_queue_send_command_is_agent_starting() -> None:
     assert command_may_start_agent("/send") is True
     assert command_may_start_agent("/queue send") is True
+    assert command_may_start_agent("/goal Find weak spots") is True
+    assert command_may_start_agent("/goal update Ship CLI row") is False
+    assert command_may_start_agent("/goal delete") is False
     assert command_may_start_agent("/queue") is False
     assert command_may_start_agent("/status") is False
 

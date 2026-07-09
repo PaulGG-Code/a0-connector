@@ -187,6 +187,7 @@ def handle_context_complete(app: AgentZeroCLI, data: dict[str, Any]) -> None:
     app._focus_message_input()
     app._set_idle()
     asyncio.create_task(app._refresh_token_usage(context_id=context_id))
+    asyncio.create_task(app._refresh_goal_bar())
     asyncio.create_task(app._refresh_context_tab_metadata(context_id, has_messages_hint=True))
     if app._compaction_refresh_context == context_id:
         app._compaction_refresh_context = None

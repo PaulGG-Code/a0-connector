@@ -23,6 +23,7 @@ from agent_zero_cli import (
     compaction,
     connection,
     event_handlers,
+    goal_commands,
     plugin_commands,
     profile_commands,
     project_commands,
@@ -64,6 +65,7 @@ from agent_zero_cli.widgets import (
     ContextTab,
     ContextTabs,
     DynamicFooter,
+    GoalBar,
     MessageQueueBar,
     ModelSwitcherBar,
     ProfileMenuItem,
@@ -205,6 +207,7 @@ class AgentZeroCLI(App):
         self.current_context_has_messages = False
         self._context_tabs: list[ContextTab] = []
         self.message_queue: list[dict[str, Any]] = []
+        self.goal: dict[str, Any] | None = None
         self.show_utility_messages = False
         self._response_delivered = False
         self._context_run_complete = False
@@ -271,6 +274,7 @@ class AgentZeroCLI(App):
             yield SplashView()
             yield ChatLog(id="chat-log")
         yield ComputerUseBanner(id="computer-use-banner")
+        yield GoalBar(id="goal-bar")
         yield ModelSwitcherBar(id="model-switcher-bar")
         yield MessageQueueBar(id="message-queue-bar")
         yield ChatInput(id="message-input")
@@ -312,6 +316,7 @@ class AgentZeroCLI(App):
     async def on_mount(self) -> None:
         input_widget = self.query_one("#message-input", ChatInput)
         input_widget.disabled = True
+        self.query_one("#goal-bar", GoalBar).clear()
         self.query_one("#model-switcher-bar", ModelSwitcherBar).clear()
         self.query_one("#message-queue-bar", MessageQueueBar).clear()
         self._sync_context_tabs()
@@ -447,6 +452,13 @@ class AgentZeroCLI(App):
                 "Show, send, clear, or remove queued messages.",
                 lambda app: availability.message_queue_availability(app),
                 lambda app: chat_commands.cmd_queue(app),
+            ),
+            CommandSpec(
+                "/goal",
+                (),
+                "Create, inspect, update, pause, resume, or delete this chat goal.",
+                lambda app: availability.goal_availability(app),
+                lambda app: goal_commands.cmd_goal(app),
             ),
             CommandSpec(
                 "/presets",
@@ -1221,6 +1233,58 @@ class AgentZeroCLI(App):
     def _has_message_queue(self) -> bool:
         return bool(self.message_queue)
 
+    def _set_goal(self, goal: Mapping[str, Any] | None) -> None:
+        self.goal = dict(goal) if isinstance(goal, Mapping) else None
+        visible = False
+        try:
+            bar = self.query_one("#goal-bar", GoalBar)
+            bar.set_goal(self.goal)
+            visible = bool(bar.display)
+        except Exception:
+            pass
+        self._sync_goal_model_spacing(visible)
+
+    def _clear_goal_bar(self) -> None:
+        self.goal = None
+        try:
+            self.query_one("#goal-bar", GoalBar).clear()
+        except Exception:
+            pass
+        self._sync_goal_model_spacing(False)
+
+    def _sync_goal_model_spacing(self, visible: bool) -> None:
+        try:
+            model_bar = self.query_one("#model-switcher-bar", ModelSwitcherBar)
+            if visible:
+                model_bar.add_class("goal-following")
+            else:
+                model_bar.remove_class("goal-following")
+        except Exception:
+            pass
+
+    async def _refresh_goal_bar(self, *, silent: bool = True) -> bool:
+        if not self.connected or not self.current_context:
+            self._clear_goal_bar()
+            return False
+        try:
+            response = await self.client.goal_action("get", self.current_context)
+        except Exception as exc:
+            self._clear_goal_bar()
+            if not silent:
+                self._show_notice(f"Failed to refresh goal: {exc}", error=True)
+            return False
+        if not response.get("ok"):
+            self._clear_goal_bar()
+            if not silent and int(response.get("status_code") or 0) != 404:
+                message = str(response.get("message") or "Goal state unavailable.")
+                self._show_notice(message, error=True)
+            return False
+
+        before = state_sync.snapshot_signature(self.goal)
+        goal = response.get("goal") if isinstance(response, Mapping) else None
+        self._set_goal(goal if isinstance(goal, Mapping) else None)
+        return before != state_sync.snapshot_signature(self.goal)
+
     def _focus_splash_primary(self) -> None:
         splash_helpers.focus_splash_primary(self)
 
@@ -1883,6 +1947,12 @@ class AgentZeroCLI(App):
             self._sync_ready_actions()
             return
 
+        if token == "/goal":
+            _, _, query = text.partition(" ")
+            await goal_commands.cmd_goal(self, query=query.strip())
+            self._sync_ready_actions()
+            return
+
         if token == "/send":
             await chat_commands.cmd_queue_send(self)
             self._sync_ready_actions()
@@ -2102,6 +2172,30 @@ class AgentZeroCLI(App):
 
     async def on_model_switcher_bar_preset_changed(self, event: ModelSwitcherBar.PresetChanged) -> None:
         await self._set_model_preset(event.value or None, bar=event.bar)
+
+    def on_goal_bar_update_requested(self, event: GoalBar.UpdateRequested) -> None:
+        event.stop()
+        objective = str((self.goal or {}).get("objective") or "").strip()
+        input_widget = self.query_one("#message-input", ChatInput)
+        input_widget.value = f"/goal update {objective}".rstrip()
+        input_widget.focus()
+
+    def on_goal_bar_pause_resume_requested(self, event: GoalBar.PauseResumeRequested) -> None:
+        event.stop()
+        action = "pause" if str((self.goal or {}).get("status") or "") == "active" else "resume"
+        self.run_worker(
+            goal_commands.cmd_goal(self, query=action),
+            exclusive=True,
+            name=f"goal-{action}",
+        )
+
+    def on_goal_bar_delete_requested(self, event: GoalBar.DeleteRequested) -> None:
+        event.stop()
+        self.run_worker(
+            goal_commands.cmd_goal(self, query="delete"),
+            exclusive=True,
+            name="goal-delete",
+        )
 
     def on_model_switcher_bar_model_config_requested(
         self,
