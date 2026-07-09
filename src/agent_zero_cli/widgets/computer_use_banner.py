@@ -29,7 +29,10 @@ def _message_for_status(
     if normalized == "arming":
         return "Computer Use is checking host permissions."
     if normalized == "approval required":
-        return "Computer Use is enabled; permission may be requested on first use."
+        return (
+            "Computer Use is enabled. Ask Agent Zero to perform the desktop task; "
+            "the system permission portal will appear."
+        )
     if normalized == "rearm required":
         return "Computer use needs re-arming before Agent Zero can control your computer again."
     return "Agent Zero CLI can control your computer in this session."

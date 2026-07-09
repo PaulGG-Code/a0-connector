@@ -168,7 +168,7 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
 
-Computer Use may need platform approval before the CLI can capture or control the host desktop. `/computer-use on` asks the active backend to start its native approval flow, such as a system permission prompt, portal dialog, or settings page.
+Computer Use may need platform approval before the CLI can capture or control the host desktop. `/computer-use on` enables the active backend; if the system portal does not appear immediately, ask Agent Zero to perform the desktop task and the portal will appear for that task.
 
 ### Skill shortcuts
 
