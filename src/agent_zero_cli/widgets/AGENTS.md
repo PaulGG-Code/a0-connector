@@ -12,7 +12,8 @@
 
 ## Local Contracts
 
-- `ChatInput` is the single source for composer behavior: Enter submits, `Ctrl+J` inserts a newline, history is scoped by chat context, and content grows to four lines before internal scrolling.
+- `ChatInput` is the single source for composer behavior: Enter submits, `Ctrl+J` inserts a newline, `Ctrl+A` selects the full draft, history is scoped by chat context, and content grows to four lines before internal scrolling.
+- Discovered host rows use Up/Down to move the active selection and Enter or Space to connect.
 - In-input activity must use the WebUI-style `|>  ` placeholder prefix, add the `progress-active` class, and escape detail text before putting it into Rich/Textual markup.
 - `ChatInput.set_idle()` must clear activity state and restore the normal placeholder without losing attachment or queue placeholder state.
 - Do not reintroduce `ActivityBar` or `#status-bar`. Activity belongs in `#message-input`.

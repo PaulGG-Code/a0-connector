@@ -171,6 +171,15 @@ class SplashHostRow(Vertical):
         event.stop()
 
     def on_key(self, event: events.Key) -> None:
+        if event.key in {"up", "down"} and self.parent is not None:
+            rows = [row for row in self.parent.children if isinstance(row, SplashHostRow)]
+            index = rows.index(self)
+            next_index = max(0, min(index + (-1 if event.key == "up" else 1), len(rows) - 1))
+            rows[next_index].focus()
+            event.prevent_default()
+            event.stop()
+            return
+
         if event.key in {"enter", "space"}:
             self.post_message(self.Selected(host=self.host))
             event.stop()

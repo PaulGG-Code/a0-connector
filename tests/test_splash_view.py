@@ -3,13 +3,21 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from textual.app import App, ComposeResult
 
+from agent_zero_cli.instance_discovery import DiscoveredInstance
 from agent_zero_cli.widgets import SplashState, SplashView
 from agent_zero_cli.widgets.splash_view import (
     SplashHostPanel,
+    SplashHostRow,
     _normalize_connection_target,
     _validate_connection_target,
 )
+
+
+class SplashViewHarness(App[None]):
+    def compose(self) -> ComposeResult:
+        yield SplashView()
 
 
 @pytest.mark.parametrize(
@@ -78,6 +86,36 @@ def test_empty_host_panel_mentions_agent_zero_install_url() -> None:
     message = panel._status_message()
 
     assert "Install Agent Zero: http://agent-zero.ai" in message.plain
+
+
+@pytest.mark.anyio
+async def test_host_rows_select_with_arrow_keys() -> None:
+    app = SplashViewHarness()
+    first = DiscoveredInstance("first", "First", "http://localhost:5080", "5080")
+    second = DiscoveredInstance("second", "Second", "http://localhost:5081", "5081")
+
+    async with app.run_test(size=(100, 30)) as pilot:
+        view = app.query_one(SplashView)
+        view.set_state(
+            SplashState(
+                stage="host",
+                discovered_instances=(first, second),
+                discovery_status="ready",
+                selected_host_url=first.url,
+            )
+        )
+        await pilot.pause()
+
+        rows = list(view.query(SplashHostRow))
+        assert app.focused is rows[0]
+
+        await pilot.press("down")
+        assert app.focused is rows[1]
+        assert view._state.selected_host_url == second.url
+
+        await pilot.press("up")
+        assert app.focused is rows[0]
+        assert view._state.selected_host_url == first.url
 
 
 def test_error_back_button_requests_navigation_to_host() -> None:

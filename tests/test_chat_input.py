@@ -63,6 +63,20 @@ async def test_chat_input_shift_enter_inserts_newline_and_grows() -> None:
     assert input_widget.styles.height.cells == 4
 
 
+async def test_chat_input_ctrl_a_selects_all_composer_text() -> None:
+    app = ChatInputHarness()
+
+    async with app.run_test(size=(80, 20)) as pilot:
+        input_widget = app.query_one("#message-input", ChatInput)
+        input_widget.value = "Select this entire\ncomposer draft"
+        input_widget.focus()
+
+        await pilot.press("ctrl+a")
+
+        assert input_widget.selection.start == (0, 0)
+        assert input_widget.selection.end == (1, len("composer draft"))
+
+
 async def test_chat_input_history_recalls_at_text_boundaries() -> None:
     input_widget = ChatInput()
     input_widget.set_history_context("ctx-1")

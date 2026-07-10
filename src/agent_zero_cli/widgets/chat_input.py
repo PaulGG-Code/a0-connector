@@ -111,6 +111,12 @@ class ChatInput(TextArea):
     # ---- key handling ------------------------------------------------
 
     async def _on_key(self, event: events.Key) -> None:
+        if event.key in {"ctrl+a", "cmd+a"}:
+            self.select_all()
+            event.prevent_default()
+            event.stop()
+            return
+
         if event.key in {"ctrl+v", "cmd+v"}:
             attach_clipboard_image = getattr(self.app, "attach_clipboard_image", None)
             if attach_clipboard_image is not None and await attach_clipboard_image():
