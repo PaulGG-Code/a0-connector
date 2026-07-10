@@ -6,6 +6,10 @@ This note lists files that define the **Textual** terminal UI (layout, widgets, 
 
 When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline, and `Ctrl+A` selects the full draft; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, top chat tabs, and a compact footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F6` Chats, `F7` Nudge, `F8` Pause or Resume, and `^P` Commands). In the local instance picker, use Up/Down to change the selected endpoint and Enter or Space to connect.
 
+Clipboard images use Pillow's native reader on macOS and Windows. Linux uses
+`wl-paste` from `wl-clipboard` on Wayland or `xclip` on X11; the Unix installer
+prints the matching package commands when neither helper is available.
+
 ## Chat Tab Shortcuts
 
 Focus the top chat tab strip with `Tab` first, then use:

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from agent_zero_cli import attachments as attachments_mod
 
@@ -44,6 +46,42 @@ def test_create_clipboard_image_upload_reads_exact_bytes(monkeypatch) -> None:
     assert upload.filename.endswith(".webp")
     assert upload.mime_type == "image/webp"
     assert upload.content == b"webp-bytes"
+
+
+def test_read_clipboard_image_uses_pillow_on_macos_and_windows(monkeypatch) -> None:
+    expected = ("image/png", b"png-bytes")
+    monkeypatch.setattr(attachments_mod, "_read_pillow_clipboard_image", lambda: expected)
+
+    for platform in ("darwin", "win32"):
+        monkeypatch.setattr(attachments_mod.sys, "platform", platform)
+        assert attachments_mod.read_clipboard_image_bytes() == expected
+
+
+def test_pillow_clipboard_image_is_encoded_as_png(monkeypatch) -> None:
+    class FakeImage:
+        def save(self, output, *, format: str) -> None:
+            assert format == "PNG"
+            output.write(b"png-bytes")
+
+    monkeypatch.setitem(
+        sys.modules,
+        "PIL",
+        SimpleNamespace(ImageGrab=SimpleNamespace(grabclipboard=lambda: FakeImage())),
+    )
+
+    assert attachments_mod._read_pillow_clipboard_image() == ("image/png", b"png-bytes")
+
+
+def test_pillow_clipboard_image_reads_copied_image_file(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "copied.webp"
+    source.write_bytes(b"webp-bytes")
+    monkeypatch.setitem(
+        sys.modules,
+        "PIL",
+        SimpleNamespace(ImageGrab=SimpleNamespace(grabclipboard=lambda: [str(source)])),
+    )
+
+    assert attachments_mod._read_pillow_clipboard_image() == ("image/webp", b"webp-bytes")
 
 
 def test_create_image_file_upload_reads_supported_image(tmp_path: Path) -> None:

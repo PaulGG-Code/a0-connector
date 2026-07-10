@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 import os
 import re
 from dataclasses import dataclass
@@ -116,12 +117,14 @@ def save_clipboard_image_attachment() -> AttachmentRef:
 def read_clipboard_image_bytes() -> tuple[str, bytes]:
     if sys.platform.startswith("linux"):
         result = _read_linux_clipboard_image()
-        if result is not None:
-            return result
-        raise AttachmentError(
-            "Clipboard does not currently expose a supported image MIME type."
-        )
-    raise AttachmentError("Clipboard image paste is not supported on this platform yet.")
+    elif sys.platform in {"darwin", "win32"}:
+        result = _read_pillow_clipboard_image()
+    else:
+        raise AttachmentError("Clipboard image paste is not supported on this platform yet.")
+
+    if result is not None:
+        return result
+    raise AttachmentError("Clipboard does not currently expose a supported image MIME type.")
 
 
 def _read_linux_clipboard_image() -> tuple[str, bytes] | None:
@@ -136,6 +139,33 @@ def _read_linux_clipboard_image() -> tuple[str, bytes] | None:
             return result
 
     return None
+
+
+def _read_pillow_clipboard_image() -> tuple[str, bytes] | None:
+    try:
+        from PIL import ImageGrab
+    except ImportError as exc:
+        raise AttachmentError("Clipboard image paste requires Pillow on this platform.") from exc
+
+    try:
+        contents = ImageGrab.grabclipboard()
+    except Exception:
+        return None
+
+    if isinstance(contents, list):
+        for value in contents:
+            path = Path(value)
+            mime_type = _mime_type_for_image_path(path)
+            if mime_type and path.is_file():
+                return mime_type, path.read_bytes()
+        return None
+
+    if contents is None or not callable(getattr(contents, "save", None)):
+        return None
+
+    image_bytes = BytesIO()
+    contents.save(image_bytes, format="PNG")
+    return "image/png", image_bytes.getvalue()
 
 
 def _read_wl_paste_image() -> tuple[str, bytes] | None:

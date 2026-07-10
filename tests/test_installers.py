@@ -30,6 +30,8 @@ def test_unix_installer_pins_managed_python() -> None:
     assert 'PYTHON_SPEC="${A0_PYTHON_SPEC:-3.11}"' in installer
     assert "--force" in installer
     assert '--upgrade-package a0' in installer
+    assert "wl-clipboard" in installer
+    assert "xclip" in installer
     assert '--constraints "$RUNTIME_CONSTRAINTS"' in installer
     assert '--build-constraints "$BUILD_CONSTRAINTS"' in installer
     assert '--upgrade "$PACKAGE_SPEC"' not in installer
@@ -100,10 +102,10 @@ def test_root_package_embeds_platform_backends() -> None:
 
     assert "mss==10.2.0 ; sys_platform == 'linux'" not in dependencies
     assert "python-xlib==0.33 ; sys_platform == 'linux'" not in dependencies
-    assert "pyobjc-framework-applicationservices==12.1 ; sys_platform == 'darwin'" in dependencies
-    assert "pyobjc-framework-quartz==12.1 ; sys_platform == 'darwin'" in dependencies
+    assert "pyobjc-framework-applicationservices==12.2.1 ; sys_platform == 'darwin'" in dependencies
+    assert "pyobjc-framework-quartz==12.2.1 ; sys_platform == 'darwin'" in dependencies
     assert "dxcam==0.3.0 ; sys_platform == 'win32'" in dependencies
-    assert "pillow==12.2.0 ; sys_platform == 'win32'" in dependencies
+    assert "pillow==12.3.0 ; sys_platform == 'darwin' or sys_platform == 'win32'" in dependencies
     assert "pywinauto==0.6.9 ; sys_platform == 'win32'" in dependencies
     assert "textual-serve==1.1.3" in dependencies
 

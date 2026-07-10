@@ -31,6 +31,10 @@ irm https://raw.githubusercontent.com/agent0ai/a0-connector/main/install.ps1 | i
 a0
 ```
 
+Clipboard image paste works natively on macOS and Windows. Linux needs one
+small system clipboard helper: install `wl-clipboard` on Wayland or `xclip` on
+X11 (for Ubuntu, `sudo apt install wl-clipboard` or `sudo apt install xclip`).
+
 Computer-use backends are embedded in the `a0` wheel, so the CLI and local computer-use support install and update together. Linux host computer use uses the Wayland portal backend; X11/Xpra control belongs to Agent Zero's internal Docker Desktop tooling rather than the remote host connector.
 
 ## Manual install

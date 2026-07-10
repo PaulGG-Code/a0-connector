@@ -152,6 +152,19 @@ EOF
     fi
 }
 
+print_clipboard_dependency_hint() {
+    if [ "$(uname -s 2>/dev/null || true)" != "Linux" ] || have_cmd wl-paste || have_cmd xclip; then
+        return
+    fi
+
+    cat <<'EOF'
+
+Linux clipboard image paste needs one native helper:
+  Wayland: sudo apt install wl-clipboard
+  X11:     sudo apt install xclip
+EOF
+}
+
 main() {
     ensure_uv
     LOCK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/a0-install-locks.XXXXXX")"
@@ -179,6 +192,8 @@ main() {
         echo "Warning: installing a0 without dependency locks." >&2
     fi
     "$@" "$PACKAGE_SPEC"
+
+    print_clipboard_dependency_hint
 
     cat <<EOF
 
