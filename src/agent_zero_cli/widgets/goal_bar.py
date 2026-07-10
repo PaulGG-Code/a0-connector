@@ -34,9 +34,9 @@ class GoalBar(Vertical):
         self._header = Horizontal(id="goal-bar-header")
         self._summary = Static("", id="goal-bar-summary")
         self._objective = Static("", id="goal-bar-objective")
-        self._update = Button("Update", id="goal-bar-update", classes="goal-bar-action")
-        self._pause_resume = Button("Pause", id="goal-bar-pause-resume", classes="goal-bar-action")
-        self._delete = Button("Delete", id="goal-bar-delete", classes="goal-bar-action")
+        self._update = Button("✎ Edit", id="goal-bar-update", classes="goal-bar-action")
+        self._pause_resume = Button("Ⅱ Pause", id="goal-bar-pause-resume", classes="goal-bar-action")
+        self._delete = Button("× Delete", id="goal-bar-delete", classes="goal-bar-action")
         self.display = False
 
     def compose(self) -> ComposeResult:
@@ -64,7 +64,7 @@ class GoalBar(Vertical):
             self._objective.update("")
             return
 
-        self._pause_resume.label = "Pause" if status == "active" else "Resume"
+        self._pause_resume.label = "Ⅱ Pause" if status == "active" else "▶ Resume"
         self._summary.update(self._render_summary())
         self._objective.update(self._render_objective())
 
@@ -74,15 +74,20 @@ class GoalBar(Vertical):
         label = {
             "paused": "Goal paused",
             "blocked": "Goal blocked",
-        }.get(status, "Pursuing goal")
+        }.get(status, "Goal")
+        marker_color = {
+            "paused": "#f5c35a",
+            "blocked": "#ef767a",
+        }.get(status, "#00b4ff")
 
-        text = Text(label, style="bold #d9e2ec")
-        text.append(f" - {_format_elapsed(_elapsed_seconds(goal))}", style="#7f8c98")
+        text = Text("●", style=marker_color)
+        text.append(f" {label}", style="bold #d9e2ec")
+        text.append(f" · {_format_elapsed(_elapsed_seconds(goal))}", style="#7f8c98")
         return text
 
     def _render_objective(self) -> Text:
         objective = str((self.goal or {}).get("objective") or "").strip()
-        return Text(objective, style="#c9d3dd")
+        return Text(objective, style="#929fac")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id or ""

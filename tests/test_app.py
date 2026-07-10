@@ -1620,7 +1620,7 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
         assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
-async def test_goal_bar_sits_above_model_switcher() -> None:
+async def test_goal_bar_sits_above_model_switcher_with_compact_controls() -> None:
     app = AgentZeroCLI(config=CLIConfig(instance_url="http://127.0.0.1:19999"), discover_instances=False)
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -1642,6 +1642,14 @@ async def test_goal_bar_sits_above_model_switcher() -> None:
 
         assert goal_bar.region.height == 2
         assert model_bar.region.y == goal_bar.region.y + goal_bar.region.height
+        assert str(goal_bar._update.label) == "✎ Edit"
+        assert str(goal_bar._pause_resume.label) == "Ⅱ Pause"
+        assert str(goal_bar._delete.label) == "× Delete"
+        assert goal_bar._summary.render().plain.startswith("● Goal · ")
+
+        goal_bar.set_goal({"objective": "Ship goal support", "status": "paused"})
+        assert str(goal_bar._pause_resume.label) == "▶ Resume"
+        assert goal_bar._summary.render().plain.startswith("● Goal paused · ")
 
 
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:

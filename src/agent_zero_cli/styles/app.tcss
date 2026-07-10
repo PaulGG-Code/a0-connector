@@ -96,7 +96,7 @@ Screen {
     min-height: 2;
     margin-top: 1;
     padding: 0 1;
-    background: #101820;
+    background: #14212b;
 }
 
 #goal-bar-header {
@@ -113,7 +113,7 @@ Screen {
 #goal-bar-objective {
     height: 1;
     padding-left: 2;
-    color: #c9d3dd;
+    color: #929fac;
 }
 
 .goal-bar-action {
