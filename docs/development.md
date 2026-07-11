@@ -80,7 +80,7 @@ The published `a0` wheel embeds the Wayland, macOS, and Windows remote computer-
 
 The sibling `packages/a0-computer-use-*` manifests remain useful for isolated backend package development, but end-user installs should use the root `a0` package.
 
-The standalone installers and `a0 update` default to a managed CPython 3.11
+The standalone installers and `a0 update` default to a managed CPython 3.12
 runtime via `uv`, so end users do not need a preinstalled Python 3.10+ on the
 host to get a consistent tool environment. The updater resolves the latest
 published GitHub release at runtime instead of baking the current tag into the

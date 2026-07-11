@@ -3,7 +3,7 @@
 set -eu
 
 LATEST_RELEASE_API_URL="${A0_LATEST_RELEASE_API_URL:-https://api.github.com/repos/agent0ai/a0-connector/releases/latest}"
-PYTHON_SPEC="${A0_PYTHON_SPEC:-3.11}"
+PYTHON_SPEC="${A0_PYTHON_SPEC:-3.12}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
 RUNTIME_CONSTRAINTS_PATH="constraints/a0-runtime.txt"
 BUILD_CONSTRAINTS_PATH="constraints/a0-build.txt"

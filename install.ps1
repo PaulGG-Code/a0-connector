@@ -1,7 +1,7 @@
 $ErrorActionPreference = "Stop"
 
 $LatestReleaseApiUrl = if ($env:A0_LATEST_RELEASE_API_URL) { $env:A0_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/agent0ai/a0-connector/releases/latest" }
-$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.11" }
+$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.12" }
 $UvInstallUrl = if ($env:UV_INSTALL_URL) { $env:UV_INSTALL_URL } else { "https://astral.sh/uv/install.ps1" }
 $RuntimeConstraintsPath = "constraints/a0-runtime.txt"
 $BuildConstraintsPath = "constraints/a0-build.txt"

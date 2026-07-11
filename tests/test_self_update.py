@@ -98,6 +98,7 @@ def test_fetch_latest_release_tag_rejects_missing_tag(
 
 
 def test_resolve_python_spec_defaults_to_managed_python_release() -> None:
+    assert self_update.DEFAULT_PYTHON_SPEC == "3.12"
     assert self_update.resolve_python_spec({}) == self_update.DEFAULT_PYTHON_SPEC
 
 

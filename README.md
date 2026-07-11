@@ -40,7 +40,7 @@ Computer-use backends are embedded in the `a0` wheel, so the CLI and local compu
 ## Manual install
 
 If you already use `uv`, the installer and update flow resolve the latest
-published GitHub release at runtime. They default to a managed CPython 3.11
+published GitHub release at runtime. They default to a managed CPython 3.12
 tool environment across macOS, Linux, and Windows, and install with the
 dependency locks committed to the same A0 release. `uv` can download the
 managed Python automatically without requiring `git` to be installed:
@@ -66,7 +66,7 @@ a0 update
 
 By default `a0 update` resolves the latest published GitHub release at runtime,
 downloads that release's runtime and build constraints, and installs it into
-the managed CPython 3.11 tool runtime used by the installer. The updater
+the managed CPython 3.12 tool runtime used by the installer. The updater
 upgrades A0 itself while keeping dependencies pinned to the tested release set.
 For advanced cases you can override the interpreter request with
 `A0_PYTHON_SPEC`, or provide `A0_PACKAGE_SPEC` together with

@@ -26,7 +26,7 @@ RELEASE_RAW_FILE_URL_TEMPLATE = (
 )
 RUNTIME_CONSTRAINTS_PATH = "constraints/a0-runtime.txt"
 BUILD_CONSTRAINTS_PATH = "constraints/a0-build.txt"
-DEFAULT_PYTHON_SPEC = "3.11"
+DEFAULT_PYTHON_SPEC = "3.12"
 _GITHUB_API_TIMEOUT = 10.0
 _DISABLED_ENV_VALUES = frozenset({"0", "false", "no", "off", "disabled"})
 _ENABLED_ENV_VALUES = frozenset({"1", "true", "yes", "on", "enabled"})
