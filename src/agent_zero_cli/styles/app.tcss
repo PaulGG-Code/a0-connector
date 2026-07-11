@@ -87,7 +87,8 @@ Screen {
     background: #101820;
 }
 
-#model-switcher-bar.goal-following {
+#goal-bar.bar-following,
+#model-switcher-bar.bar-following {
     margin-top: 0;
 }
 

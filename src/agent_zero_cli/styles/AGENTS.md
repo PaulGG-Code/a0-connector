@@ -16,6 +16,7 @@
 - Preserve `#message-input:focus` as the focused composer border.
 - Do not reintroduce `#status-bar`; the status-bar surface was removed.
 - Footer styling must not depend on duplicate command palette bindings.
+- Visible composer bars and anchored popovers must not leave blank rows between adjoining surfaces.
 - Keep UI text and controls from overlapping in browser preview and terminal-size snapshots.
 
 ## Work Guidance

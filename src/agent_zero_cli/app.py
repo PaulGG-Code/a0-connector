@@ -789,7 +789,7 @@ class AgentZeroCLI(App):
         menu_width = popover.region.width or popover.outer_size.width or 44
         menu_height = popover.region.height or popover.outer_size.height or 10
         x = max(1, min(input_region.x, max(1, screen_width - menu_width - 1)))
-        y_above = input_region.y - menu_height - 1
+        y_above = input_region.y - menu_height
         if y_above >= 1:
             y = y_above
         else:
@@ -1198,7 +1198,8 @@ class AgentZeroCLI(App):
             pass
 
         try:
-            self.query_one("#computer-use-banner", ComputerUseBanner).set_state(
+            banner = self.query_one("#computer-use-banner", ComputerUseBanner)
+            banner.set_state(
                 enabled=show_composer and self._computer_use.enabled,
                 status=_computer_use_label(self._computer_use.status_label),
                 backend_id=backend_id,
@@ -1206,6 +1207,7 @@ class AgentZeroCLI(App):
             )
         except Exception:
             return
+        self._sync_composer_bar_spacing()
 
     def _set_activity(self, label: str, detail: str = "") -> None:
         self.query_one("#message-input", ChatInput).set_activity(label, detail)
@@ -1235,14 +1237,12 @@ class AgentZeroCLI(App):
 
     def _set_goal(self, goal: Mapping[str, Any] | None) -> None:
         self.goal = dict(goal) if isinstance(goal, Mapping) else None
-        visible = False
         try:
             bar = self.query_one("#goal-bar", GoalBar)
             bar.set_goal(self.goal)
-            visible = bool(bar.display)
         except Exception:
             pass
-        self._sync_goal_model_spacing(visible)
+        self._sync_composer_bar_spacing()
 
     def _clear_goal_bar(self) -> None:
         self.goal = None
@@ -1250,15 +1250,15 @@ class AgentZeroCLI(App):
             self.query_one("#goal-bar", GoalBar).clear()
         except Exception:
             pass
-        self._sync_goal_model_spacing(False)
+        self._sync_composer_bar_spacing()
 
-    def _sync_goal_model_spacing(self, visible: bool) -> None:
+    def _sync_composer_bar_spacing(self) -> None:
         try:
+            banner = self.query_one("#computer-use-banner", ComputerUseBanner)
+            goal_bar = self.query_one("#goal-bar", GoalBar)
             model_bar = self.query_one("#model-switcher-bar", ModelSwitcherBar)
-            if visible:
-                model_bar.add_class("goal-following")
-            else:
-                model_bar.remove_class("goal-following")
+            goal_bar.set_class(bool(banner.display), "bar-following")
+            model_bar.set_class(bool(banner.display or goal_bar.display), "bar-following")
         except Exception:
             pass
 

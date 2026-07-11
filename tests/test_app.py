@@ -26,6 +26,7 @@ from agent_zero_cli.widgets.command_palette import is_raw_skill_command, is_raw_
 from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic
 from agent_zero_cli.widgets import (
     ChatInput,
+    ComputerUseBanner,
     ConnectionStatus,
     ContextTab,
     ContextTabs,
@@ -261,6 +262,7 @@ class FakeModelSwitcher:
     def __init__(self) -> None:
         self.busy = False
         self.cleared = False
+        self.classes: set[str] = set()
         self.state_calls: list[dict[str, object]] = []
 
     def clear(self) -> None:
@@ -272,6 +274,12 @@ class FakeModelSwitcher:
     def set_state(self, **kwargs: object) -> None:
         self.state_calls.append(dict(kwargs))
         self.cleared = False
+
+    def set_class(self, add: bool, class_name: str) -> None:
+        if add:
+            self.classes.add(class_name)
+        else:
+            self.classes.discard(class_name)
 
 
 class FakeMessageQueueBar:
@@ -296,6 +304,7 @@ class FakeGoalBar:
         self.display = False
         self.goal: dict[str, object] | None = None
         self.cleared = False
+        self.classes: set[str] = set()
 
     def set_goal(self, goal: dict[str, object] | None) -> None:
         self.goal = dict(goal) if goal else None
@@ -306,6 +315,12 @@ class FakeGoalBar:
         self.goal = None
         self.display = False
         self.cleared = True
+
+    def set_class(self, add: bool, class_name: str) -> None:
+        if add:
+            self.classes.add(class_name)
+        else:
+            self.classes.discard(class_name)
 
 
 class FakeComputerUseManager:
@@ -803,11 +818,15 @@ async def test_escape_key_closes_profile_menu_from_composer_focus(
         await pilot.pause(0.1)
         app.connected = True
         app.current_context = "ctx-1"
+        app.current_context_has_messages = True
         app.connector_features = {"settings_get", "agent_profile_set", "chat_get"}
+        app._sync_body_mode()
 
         await app._open_profile_menu()
         await pilot.pause(0.1)
         assert app._profile_menu_popover is not None
+        composer = app.query_one("#message-input", ChatInput)
+        assert app._profile_menu_popover.region.y + app._profile_menu_popover.region.height == composer.region.y
 
         app.query_one("#message-input", ChatInput).focus()
         await pilot.press("escape")
@@ -1620,7 +1639,7 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
         assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
-async def test_goal_bar_sits_above_model_switcher_with_compact_controls() -> None:
+async def test_composer_bars_stack_without_gaps() -> None:
     app = AgentZeroCLI(config=CLIConfig(instance_url="http://127.0.0.1:19999"), discover_instances=False)
 
     async with app.run_test(size=(100, 30)) as pilot:
@@ -1629,7 +1648,6 @@ async def test_goal_bar_sits_above_model_switcher_with_compact_controls() -> Non
         app.current_context_has_messages = True
         app.current_context = "ctx-1"
         app._sync_body_mode()
-        app._set_goal({"objective": "Ship goal support", "status": "active", "elapsed_seconds": 0})
         goal_bar = app.query_one("#goal-bar", GoalBar)
         model_bar = app.query_one("#model-switcher-bar", ModelSwitcherBar)
         model_bar.set_state(
@@ -1638,8 +1656,17 @@ async def test_goal_bar_sits_above_model_switcher_with_compact_controls() -> Non
             presets=[],
             allowed=False,
         )
+        banner = app.query_one("#computer-use-banner", ComputerUseBanner)
+        banner.set_state(enabled=True, status="active")
+        app._sync_composer_bar_spacing()
         await pilot.pause(0.5)
 
+        assert model_bar.region.y == banner.region.y + banner.region.height
+
+        app._set_goal({"objective": "Ship goal support", "status": "active", "elapsed_seconds": 0})
+        await pilot.pause(0.5)
+
+        assert goal_bar.region.y == banner.region.y + banner.region.height
         assert goal_bar.region.height == 2
         assert model_bar.region.y == goal_bar.region.y + goal_bar.region.height
         assert str(goal_bar._update.label) == "✎ Edit"
