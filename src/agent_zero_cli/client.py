@@ -46,6 +46,8 @@ _EVENT_COMPUTER_USE_OP = "connector_computer_use_op"
 _EVENT_COMPUTER_USE_OP_RESULT = "connector_computer_use_op_result"
 _EVENT_BROWSER_OP = "connector_browser_op"
 _EVENT_BROWSER_OP_RESULT = "connector_browser_op_result"
+_EVENT_GATEWAY_CONTROL = "connector_gateway_control"
+_EVENT_GATEWAY_CONTROL_RESULT = "connector_gateway_control_result"
 _EVENT_REMOTE_TREE_UPDATE = "connector_remote_tree_update"
 _EVENT_ERROR = "connector_error"
 _FILE_OP_RESULT_CHUNK_BYTES = 64 * 1024
@@ -132,6 +134,8 @@ class A0Client:
         self.on_computer_use_op_result_sent: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None
         self.on_browser_op: Callable[[dict[str, Any]], Any] | None = None
         self.on_browser_op_result_sent: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None
+        self.on_gateway_control: Callable[[dict[str, Any]], Any] | None = None
+        self.on_gateway_control_result_sent: Callable[[dict[str, Any], dict[str, Any]], Any] | None = None
 
     def _api_url(self, endpoint: str) -> str:
         return f"{self.base_url}{_PLUGIN_API}/{endpoint}"
@@ -571,6 +575,21 @@ class A0Client:
                 result,
             )
 
+        @self.sio.on(_EVENT_GATEWAY_CONTROL, namespace=WS_NAMESPACE)
+        async def _on_gateway_control(payload: dict[str, Any]) -> None:
+            request = self._unwrap_envelope(payload)
+            result = await self._handle_gateway_control(request)
+            await self.sio.emit(
+                _EVENT_GATEWAY_CONTROL_RESULT,
+                result,
+                namespace=WS_NAMESPACE,
+            )
+            await self._notify_op_result_sent(
+                self.on_gateway_control_result_sent,
+                request,
+                result,
+            )
+
         self._events_registered = True
 
     def _file_op_result_payloads(self, result: dict[str, Any]) -> list[dict[str, Any]]:
@@ -737,6 +756,29 @@ class A0Client:
             "code": "HOST_BROWSER_ERROR",
         }
 
+    async def _handle_gateway_control(self, data: dict[str, Any]) -> dict[str, Any]:
+        callback = self.on_gateway_control
+        request_id = data.get("request_id")
+        if callback is None:
+            return {
+                "request_id": request_id,
+                "ok": False,
+                "error": "No gateway control handler configured",
+            }
+        try:
+            result = callback(data)
+            if asyncio.iscoroutine(result):
+                result = await result
+        except Exception as exc:
+            return {"request_id": request_id, "ok": False, "error": str(exc)}
+        if isinstance(result, dict):
+            return result
+        return {
+            "request_id": request_id,
+            "ok": False,
+            "error": "Invalid gateway control handler result",
+        }
+
     async def fetch_capabilities(self) -> dict[str, Any]:
         response = await self._post("capabilities")
         if response.status_code == 404:
@@ -808,6 +850,7 @@ class A0Client:
         host_browser: dict[str, Any] | None = None,
         remote_files: dict[str, Any] | None = None,
         remote_exec: dict[str, Any] | None = None,
+        gateway: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "protocol": PROTOCOL_VERSION,
@@ -824,6 +867,8 @@ class A0Client:
             payload["remote_files"] = dict(remote_files)
         if isinstance(remote_exec, dict):
             payload["remote_exec"] = dict(remote_exec)
+        if isinstance(gateway, dict):
+            payload["gateway"] = dict(gateway)
         return await self._call(_EVENT_HELLO, payload)
 
     async def subscribe_context(self, context_id: str, from_seq: int = 0) -> dict[str, Any]:

@@ -16,6 +16,7 @@ async def test_discover_local_instances_reports_unavailable_without_docker(
 ) -> None:
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
     monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ())
     monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
 
     result = await discovery.discover_local_instances()
@@ -49,6 +50,7 @@ async def test_discover_local_instances_uses_local_docker_api_without_windows_cl
 
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
     monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ())
     monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ("http://127.0.0.1:23750",))
     monkeypatch.setattr(discovery, "_discover_with_docker_api", fake_discover_with_docker_api)
 
@@ -145,6 +147,7 @@ async def test_discover_local_instances_falls_back_to_wsl_docker(
     monkeypatch.setattr(discovery.sys, "platform", "win32")
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
     monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: "wsl.exe")
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ())
     monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
     monkeypatch.setattr(discovery, "_run_command", fake_run_command)
 
@@ -183,6 +186,7 @@ async def test_discover_local_instances_continues_after_empty_runtime(
     monkeypatch.setattr(discovery.sys, "platform", "win32")
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: "docker")
     monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: "wsl.exe")
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ())
     monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
     monkeypatch.setattr(discovery, "_run_command", fake_run_command)
 

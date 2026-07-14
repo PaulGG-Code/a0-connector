@@ -430,10 +430,12 @@ class ComputerUseManager:
         self,
         config: CLIConfig,
         *,
+        persist_enabled: bool = True,
         backend_selection: ComputerUseBackendSelection | None = None,
     ) -> None:
         self.config = config
         self.enabled = bool(config.computer_use_enabled)
+        self._persist_enabled = persist_enabled
         self.trust_mode = normalize_computer_use_trust_mode(config.computer_use_trust_mode)
         self.restore_token = str(config.computer_use_restore_token or "").strip()
         self._backend_selection = backend_selection or resolve_backend_selection()
@@ -494,14 +496,16 @@ class ComputerUseManager:
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
         self.config.computer_use_enabled = self.enabled
-        save_computer_use_enabled(self.enabled)
+        if self._persist_enabled:
+            save_computer_use_enabled(self.enabled)
         status, error = self._configured_status()
         self._set_status(status, error=error)
 
     def reset_enabled_for_shutdown(self) -> None:
         self.enabled = False
         self.config.computer_use_enabled = False
-        save_computer_use_enabled(False)
+        if self._persist_enabled:
+            save_computer_use_enabled(False)
         self._set_status("disabled", error="")
 
     def set_trust_mode(self, mode: str) -> str:

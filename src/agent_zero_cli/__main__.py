@@ -123,6 +123,35 @@ def _build_parser() -> argparse.ArgumentParser:
         default=".",
         help="Local workspace root for remote file and exec operations.",
     )
+    gateway = subparsers.add_parser(
+        "gateway",
+        help="Run a Launcher-supervised host-tools gateway over JSONL.",
+    )
+    gateway.add_argument(
+        "--host",
+        dest="gateway_host",
+        metavar="URL",
+        help="Agent Zero base URL. Defaults to AGENT_ZERO_HOST or the saved host.",
+    )
+    gateway.add_argument("--workspace", metavar="DIR", default=".", help="Host file root and initial command directory.")
+    gateway.add_argument("--gateway-id", required=True, metavar="ID", help="Stable sanitized Launcher gateway identity.")
+    gateway.add_argument("--host-label", default="", metavar="LABEL", help="Human-readable host name shown in Agent Zero.")
+    gateway_master = gateway.add_mutually_exclusive_group()
+    gateway_master.add_argument("--master", dest="gateway_master", action="store_true", help="Start host access enabled.")
+    gateway_master.add_argument("--no-master", dest="gateway_master", action="store_false", help="Start host access paused.")
+    gateway.set_defaults(gateway_master=True)
+    gateway.add_argument(
+        "--scopes",
+        default="files,code_execution,browser,computer_use",
+        metavar="LIST",
+        help="Comma-separated files, code_execution, browser, and computer_use scopes.",
+    )
+    gateway.add_argument(
+        "--browser-selection",
+        default="",
+        metavar="ID",
+        help="Detected personal Chromium profile identifier.",
+    )
     return parser
 
 
@@ -201,6 +230,33 @@ def _run_headless(
     )
 
 
+def _run_gateway(
+    *,
+    host: str,
+    workspace: str,
+    gateway_id: str,
+    host_label: str,
+    master_enabled: bool,
+    scopes: str,
+    browser_selection: str,
+) -> int:
+    from agent_zero_cli.config import load_config
+    from agent_zero_cli.gateway import gateway_options, run_gateway
+
+    config = load_config()
+    resolved_host = host or config.instance_url
+    options = gateway_options(
+        host=resolved_host,
+        workspace=workspace,
+        gateway_id=gateway_id,
+        host_label=host_label,
+        master_enabled=master_enabled,
+        scopes=scopes,
+        browser_selection=browser_selection,
+    )
+    return run_gateway(options, config)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -222,6 +278,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             print_prompt=args.print_prompt,
             workspace=args.workspace,
             discover_instances=not args.headless_no_docker_discovery,
+        )
+
+    if args.command == "gateway":
+        return _run_gateway(
+            host=(args.gateway_host or args.host or ""),
+            workspace=args.workspace,
+            gateway_id=args.gateway_id,
+            host_label=args.host_label,
+            master_enabled=args.gateway_master,
+            scopes=args.scopes,
+            browser_selection=args.browser_selection,
         )
 
     _run_app(

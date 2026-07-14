@@ -6,7 +6,7 @@
 
 ## Ownership
 
-- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `goal_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, `self_update.py`, and `textual_compat.py` are owned here.
+- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `gateway.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `goal_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, `self_update.py`, and `textual_compat.py` are owned here.
 - `headless/` is owned here and must remain importable without Textual.
 - UI widgets, screens, and TCSS are owned by child docs in `widgets/`, `screens/`, and `styles/`.
 - `assets/` is currently empty; keep it root-package owned until it becomes a durable asset boundary.
@@ -39,6 +39,20 @@
   through `wsl.exe`.
 - Remote workspace tools must respect their write/exec enablement flags and must not widen filesystem access accidentally.
 - Textual compatibility guards live in `textual_compat.py`. Install them only on the interactive TUI startup path so `a0 headless` remains Textual-free.
+- `a0 gateway` is also Textual-free. Its `ConnectorSession` branch authenticates
+  and publishes `connector_hello` without a chat context, handles reconnects
+  without creating chats, and serves file, exec, browser, and Computer Use
+  operations. It requires both Launcher gateway capabilities before announcing
+  readiness.
+- Gateway control uses JSONL stdin/stdout for status, scope replacement,
+  browser preparation, Computer Use rearm, error, and shutdown messages. Saved
+  web sessions are preferred, then ephemeral `A0_USERNAME`/`A0_PASSWORD` login;
+  secrets must never appear in arguments or JSONL output. Gateway scope state
+  must not overwrite interactive CLI preferences. Preserve an HTTP(S) host's
+  reverse-proxy base path while rejecting embedded URL credentials.
+- Gateway shutdown owns complete cleanup of remote process groups, host-browser
+  sessions, Computer Use sessions, and the Socket.IO connection. Emergency
+  disconnect ends the current lease and exits cleanly rather than reconnecting.
 
 ## Work Guidance
 

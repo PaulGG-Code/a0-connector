@@ -1396,6 +1396,37 @@ async def test_registers_browser_ws_handler_and_emits_result() -> None:
     ]
 
 
+async def test_gateway_control_result_is_emitted_before_follow_up_callback() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(
+            status_code=200,
+            text='0{"sid":"sid-1","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}',
+        )
+    )
+    client.sio = FakeSocketIOClient()
+    result = {
+        "request_id": "control-1",
+        "ok": True,
+        "gateway": {"kind": "launcher", "state": "paused"},
+    }
+    client.on_gateway_control = AsyncMock(return_value=result)
+    after_calls: list[list[tuple[str, dict, str | None]]] = []
+    client.on_gateway_control_result_sent = (
+        lambda _request, _result: after_calls.append(list(client.sio.emit_calls))
+    )
+
+    await client.connect_websocket()
+    handler = client.sio.handlers[("/ws", "connector_gateway_control")]
+    await handler({"data": {"request_id": "control-1", "action": "set_master", "enabled": False}})
+
+    assert client.sio.emit_calls == [
+        ("connector_gateway_control_result", result, "/ws")
+    ]
+    assert after_calls == [[("connector_gateway_control_result", result, "/ws")]]
+
+
 async def test_computer_use_handler_error_is_serialized() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.http = Mock()

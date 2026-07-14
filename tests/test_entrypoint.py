@@ -56,6 +56,7 @@ def test_main_help_exits_without_launching_app(
     assert "AGENT_ZERO_HOST" in captured.out
     assert "update" in captured.out
     assert "headless" in captured.out
+    assert "gateway" in captured.out
     assert launched == []
 
 
@@ -168,6 +169,45 @@ def test_main_headless_routes_to_headless_launcher(
             "print_prompt": "what is 2+2",
             "workspace": "/tmp/work",
             "discover_instances": False,
+        }
+    ]
+
+
+def test_main_gateway_routes_without_loading_textual(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    launched: list[dict[str, object]] = []
+    monkeypatch.setattr(__main__, "_run_gateway", lambda **kwargs: launched.append(dict(kwargs)) or 0)
+
+    exit_code = __main__.main(
+        [
+            "gateway",
+            "--host",
+            "http://agent.test:32080",
+            "--workspace",
+            "/tmp/work",
+            "--gateway-id",
+            "launcher-1",
+            "--host-label",
+            "Workstation",
+            "--no-master",
+            "--scopes",
+            "files,browser",
+            "--browser-selection",
+            "chrome:default",
+        ]
+    )
+
+    assert exit_code == 0
+    assert launched == [
+        {
+            "host": "http://agent.test:32080",
+            "workspace": "/tmp/work",
+            "gateway_id": "launcher-1",
+            "host_label": "Workstation",
+            "master_enabled": False,
+            "scopes": "files,browser",
+            "browser_selection": "chrome:default",
         }
     ]
 

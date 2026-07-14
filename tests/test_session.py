@@ -69,6 +69,7 @@ class FakeClient:
         self.subscribe_calls: list[tuple[str, int]] = []
         self.unsubscribe_calls: list[str] = []
         self.remote_tree_updates: list[dict[str, Any]] = []
+        self.create_calls = 0
         self.sent_messages: list[tuple[str, str, list[str] | None]] = []
         self.queued_messages: list[tuple[str, str, list[str] | None]] = []
         self.queue_send_calls: list[tuple[str, str | None, bool]] = []
@@ -119,6 +120,7 @@ class FakeClient:
 
     async def create_chat(self, *, current_context_id: str | None = None) -> str:
         del current_context_id
+        self.create_calls += 1
         return self.create_chat_id
 
     async def list_chats(self) -> list[dict[str, Any]]:
@@ -239,6 +241,216 @@ async def test_session_connects_and_advertises_headless_metadata(tmp_path: Path)
     }
     assert client.hello_calls[-1]["remote_exec"] == {"enabled": True}
 
+    await session.close()
+
+
+class GatewayFakeClient(FakeClient):
+    capabilities = _capabilities(
+        features=["launcher_gateway", "code_execution_remote", "browser_host_remote"]
+    )
+
+    async def send_hello(self, **payload: Any) -> dict[str, Any]:
+        self.hello_calls.append(payload)
+        return {
+            "features": ["launcher_gateway_control"],
+            "exec_config": {"version": 1},
+        }
+
+
+class FakeHostBrowser:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.closed = 0
+        self.requests: list[dict[str, Any]] = []
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def hello_metadata(self, **kwargs: Any) -> dict[str, Any]:
+        return {
+            "supported": True,
+            "enabled": self.enabled,
+            "status": "ready",
+            "browser_id": kwargs.get("browser_selection", ""),
+        }
+
+    async def handle_op(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.requests.append(payload)
+        return {"op_id": payload.get("op_id"), "ok": True, "result": {"browser": True}}
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+class FakeComputerUse:
+    def __init__(self) -> None:
+        self.enabled = False
+        self.closed = 0
+        self.requests: list[dict[str, Any]] = []
+
+    def set_enabled(self, enabled: bool) -> None:
+        self.enabled = enabled
+
+    def hello_metadata(self) -> dict[str, Any]:
+        return {"supported": True, "enabled": self.enabled, "status": "allow"}
+
+    async def handle_op(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self.requests.append(payload)
+        return {"op_id": payload.get("op_id"), "ok": True, "result": {"computer": True}}
+
+    async def close(self) -> None:
+        self.closed += 1
+
+
+async def test_tools_only_gateway_connects_without_creating_or_subscribing_to_chat(
+    tmp_path: Path,
+) -> None:
+    browser = FakeHostBrowser()
+    computer = FakeComputerUse()
+    scopes = {
+        "files": True,
+        "code_execution": True,
+        "browser": True,
+        "computer_use": True,
+    }
+    session = ConnectorSession(
+        CLIConfig(),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=GatewayFakeClient,
+        tools_only=True,
+        gateway={
+            "id": "launcher-test",
+            "host_label": "Test host",
+            "master_enabled": True,
+            "scopes": scopes,
+        },
+        host_browser_manager=browser,
+        computer_use_manager=computer,
+        browser_selection="chromium:default",
+    )
+
+    context_id = await session.connect("http://agent.test")
+    client = FakeClient.instances[-1]
+
+    assert context_id == ""
+    assert session.context_id == ""
+    assert client.create_calls == 0
+    assert client.subscribe_calls == []
+    assert client.hello_calls[-1]["gateway"]["kind"] == "launcher"
+    assert client.hello_calls[-1]["gateway"]["state"] == "connected"
+    assert client.hello_calls[-1]["gateway"]["status"]["browser"]["browser_id"] == "chromium:default"
+    assert client.hello_calls[-1]["gateway"]["status"]["computer_use"]["status"] == "allow"
+    assert client.hello_calls[-1]["host_browser"]["browser_id"] == "chromium:default"
+    assert client.remote_tree_updates
+
+    browser_result = await client.on_browser_op(
+        {
+            "op_id": "browser-1",
+            "action": "status",
+            "profile_mode": "agent",
+            "browser_selection": "stale:profile",
+        }
+    )
+    computer_result = await client.on_computer_use_op({"op_id": "computer-1", "action": "status"})
+    assert browser_result["ok"] is True
+    assert browser.requests[-1]["profile_mode"] == "existing"
+    assert browser.requests[-1]["browser_selection"] == "chromium:default"
+    assert computer_result["ok"] is True
+
+    await session.close()
+    assert browser.closed >= 1
+    assert computer.closed >= 1
+
+
+async def test_tools_only_gateway_reconnects_without_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("agent_zero_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
+    session = ConnectorSession(
+        CLIConfig(),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=GatewayFakeClient,
+        tools_only=True,
+        gateway={"id": "launcher-test", "scopes": {"files": True}},
+    )
+    await session.connect("http://agent.test")
+    client = FakeClient.instances[-1]
+    client.connected = False
+
+    session._handle_disconnect()
+    assert session._recovery_task is not None
+    await session._recovery_task
+
+    assert session.connected is True
+    assert session.context_id == ""
+    assert client.subscribe_calls == []
+    assert len(client.hello_calls) >= 3
+    await session.close()
+
+
+async def test_tools_only_gateway_requires_both_core_features(tmp_path: Path) -> None:
+    class MissingFeatureClient(GatewayFakeClient):
+        capabilities = _capabilities(features=[])
+
+    session = ConnectorSession(
+        CLIConfig(),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=MissingFeatureClient,
+        tools_only=True,
+        gateway={"id": "launcher-test", "scopes": {"files": True}},
+    )
+    with pytest.raises(SessionError, match="launcher_gateway") as exc_info:
+        await session.connect("http://agent.test")
+    assert exc_info.value.code == "CONTRACT_MISMATCH"
+
+
+async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
+    tmp_path: Path,
+) -> None:
+    disconnected: list[bool] = []
+    session = ConnectorSession(
+        CLIConfig(),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=GatewayFakeClient,
+        tools_only=True,
+        gateway={
+            "id": "launcher-test",
+            "scopes": {
+                "files": True,
+                "code_execution": True,
+                "browser": False,
+                "computer_use": False,
+            },
+        },
+        on_gateway_disconnect=lambda: disconnected.append(True),
+    )
+    await session.connect("http://agent.test")
+
+    response = await session._handle_gateway_control(
+        {
+            "request_id": "scope-1",
+            "action": "replace_scopes",
+            "scopes": {
+                "files": False,
+                "code_execution": True,
+                "browser": False,
+                "computer_use": False,
+            },
+        }
+    )
+    assert response["gateway"]["scopes"]["code_execution"] is False
+    assert (await session._handle_file_op({"op_id": "file-1", "op": "read"}))["ok"] is False
+
+    emergency = {"request_id": "stop-1", "action": "emergency_disconnect"}
+    result = await session._handle_gateway_control(emergency)
+    assert result["gateway"]["state"] == "disconnected"
+    await session._handle_gateway_control_result_sent(emergency, result)
+    assert disconnected == [True]
     await session.close()
 
 

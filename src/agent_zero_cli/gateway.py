@@ -1,0 +1,358 @@
+from __future__ import annotations
+
+import asyncio
+from dataclasses import dataclass, replace
+import json
+import os
+from pathlib import Path
+import platform
+import re
+import signal
+import sys
+import threading
+from typing import Any, Callable, TextIO
+from urllib.parse import urlsplit, urlunsplit
+
+from agent_zero_cli.client import DEFAULT_HOST
+from agent_zero_cli.computer_use import ComputerUseManager
+from agent_zero_cli.config import CLIConfig
+from agent_zero_cli.host_browser_manager import HostBrowserManager
+from agent_zero_cli.session import ConnectorSession, SessionError
+
+
+_SCOPE_KEYS = ("files", "code_execution", "browser", "computer_use")
+_SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._:-]+")
+
+
+def sanitize_gateway_id(value: object) -> str:
+    return _SAFE_ID_RE.sub("-", str(value or "").strip())[:128].strip("-")
+
+
+def sanitize_host_label(value: object) -> str:
+    label = " ".join(str(value or "").split())
+    return label[:128] or platform.node()[:128] or "Launcher host"
+
+
+def normalize_gateway_host(value: object) -> str:
+    raw = str(value or "").strip().rstrip("/") or DEFAULT_HOST
+    parsed = urlsplit(raw)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        raise ValueError("gateway host must be an HTTP(S) URL without embedded credentials")
+    return urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+
+
+def normalize_scopes(value: object) -> dict[str, bool]:
+    if isinstance(value, dict):
+        scopes = {key: bool(value.get(key)) for key in _SCOPE_KEYS}
+    else:
+        requested = {
+            item.strip().lower().replace("-", "_")
+            for item in str(value or "").split(",")
+            if item.strip()
+        }
+        aliases = {"exec": "code_execution", "computer": "computer_use"}
+        requested = {aliases.get(item, item) for item in requested}
+        scopes = {key: key in requested for key in _SCOPE_KEYS}
+    if not scopes["files"]:
+        scopes["code_execution"] = False
+    return scopes
+
+
+@dataclass(frozen=True)
+class GatewayOptions:
+    host: str
+    workspace: Path
+    gateway_id: str
+    host_label: str
+    master_enabled: bool
+    scopes: dict[str, bool]
+    browser_selection: str = ""
+
+
+class JsonlWriter:
+    def __init__(self, stream: TextIO = sys.stdout) -> None:
+        self.stream = stream
+
+    def write(self, payload: dict[str, Any]) -> None:
+        self.stream.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
+        self.stream.flush()
+
+
+class GatewayObserver:
+    def __init__(
+        self,
+        emit: Callable[[dict[str, Any]], None],
+        stop: Callable[[], None],
+    ) -> None:
+        self._emit = emit
+        self._stop = stop
+
+    def on_stage(self, stage: str, message: str, detail: str = "") -> None:
+        self._emit({"type": "stage", "stage": stage, "message": message, "detail": detail})
+
+    def on_event(self, event: dict[str, Any]) -> None:
+        return None
+
+    def on_snapshot(self, events: list[dict[str, Any]], queue: list[dict[str, Any]]) -> None:
+        return None
+
+    def on_complete(self, context_id: str) -> None:
+        return None
+
+    def on_error(self, code: str, message: str) -> None:
+        self._emit({"type": "error", "code": code, "message": message, "fatal": False})
+
+    def on_disconnect(self) -> None:
+        self._emit(
+            {
+                "type": "error",
+                "code": "CONNECTION_LOST",
+                "message": "Agent Zero connection recovery was exhausted.",
+                "fatal": True,
+            }
+        )
+        self._stop()
+
+
+class GatewayRunner:
+    def __init__(
+        self,
+        options: GatewayOptions,
+        config: CLIConfig,
+        *,
+        writer: JsonlWriter | None = None,
+        input_stream: TextIO = sys.stdin,
+        session_factory: Callable[..., ConnectorSession] = ConnectorSession,
+        browser_factory: Callable[..., HostBrowserManager] = HostBrowserManager,
+        computer_use_factory: Callable[..., ComputerUseManager] = ComputerUseManager,
+    ) -> None:
+        self.options = options
+        self.config = replace(config)
+        self.writer = writer or JsonlWriter()
+        self.input_stream = input_stream
+        self._session_factory = session_factory
+        self._browser_factory = browser_factory
+        self._computer_use_factory = computer_use_factory
+        self.stop_event = asyncio.Event()
+        self.session: ConnectorSession | None = None
+        self.host_browser: HostBrowserManager | None = None
+        self.computer_use: ComputerUseManager | None = None
+
+    async def run(self) -> int:
+        workspace = self.options.workspace.expanduser().resolve()
+        if not workspace.is_dir():
+            self._emit_error("INVALID_WORKSPACE", f"Workspace is not a directory: {workspace}", fatal=True)
+            return 2
+
+        scopes = normalize_scopes(self.options.scopes)
+        self.config.host_browser_enabled = scopes["browser"]
+        self.config.computer_use_enabled = scopes["computer_use"]
+        self.host_browser = self._browser_factory(self.config, persist_enabled=False)
+        self.computer_use = self._computer_use_factory(self.config, persist_enabled=False)
+        observer = GatewayObserver(self.writer.write, self.stop_event.set)
+        gateway = {
+            "version": 1,
+            "kind": "launcher",
+            "id": self.options.gateway_id,
+            "host_label": self.options.host_label,
+            "master_enabled": self.options.master_enabled,
+            "scopes": scopes,
+        }
+        self.session = self._session_factory(
+            self.config,
+            observer,
+            workspace=workspace,
+            remote_file_write_enabled=scopes["files"],
+            remote_files_enabled=scopes["files"],
+            remote_exec_enabled=scopes["code_execution"],
+            tools_only=True,
+            gateway=gateway,
+            host_browser_manager=self.host_browser,
+            computer_use_manager=self.computer_use,
+            browser_selection=self.options.browser_selection,
+            on_gateway_state_change=self._emit_status,
+            on_gateway_disconnect=self.stop_event.set,
+        )
+        self._install_signal_handlers()
+        stdin_task: asyncio.Task[None] | None = None
+        try:
+            await self.session.connect(
+                self.options.host,
+                username=os.environ.get("A0_USERNAME", ""),
+                password=os.environ.get("A0_PASSWORD", ""),
+                restore_session=True,
+            )
+            self._emit_status(self.session._gateway_metadata() or gateway)
+            stdin_task = asyncio.create_task(self._read_commands())
+            await self.stop_event.wait()
+            return 0
+        except SessionError as exc:
+            self._emit_error(exc.code, exc.message, fatal=True, stage=exc.stage)
+            return exc.exit_code
+        except Exception as exc:
+            self._emit_error("GATEWAY_FAILED", str(exc), fatal=True)
+            return 2
+        finally:
+            if stdin_task is not None:
+                stdin_task.cancel()
+            if self.session is not None:
+                await self.session.close()
+            self.writer.write({"type": "stopped"})
+
+    async def _read_commands(self) -> None:
+        loop = asyncio.get_running_loop()
+        lines: asyncio.Queue[str] = asyncio.Queue()
+
+        def read_lines() -> None:
+            while True:
+                line = self.input_stream.readline()
+                try:
+                    loop.call_soon_threadsafe(lines.put_nowait, line)
+                except RuntimeError:
+                    return
+                if line == "":
+                    return
+
+        threading.Thread(
+            target=read_lines,
+            name="a0-gateway-stdin",
+            daemon=True,
+        ).start()
+        while not self.stop_event.is_set():
+            line = await lines.get()
+            if line == "":
+                self.stop_event.set()
+                return
+            try:
+                payload = json.loads(line)
+                if not isinstance(payload, dict):
+                    raise ValueError("command must be a JSON object")
+            except Exception as exc:
+                self._emit_error("INVALID_JSON", str(exc), fatal=False)
+                continue
+            await self._handle_command(payload)
+
+    async def _handle_command(self, payload: dict[str, Any]) -> None:
+        request_id = str(payload.get("request_id", "") or "").strip()
+        action = str(payload.get("action", "") or "").strip().lower()
+        session = self.session
+        if session is None:
+            self._command_result(request_id, False, error="Gateway is not connected")
+            return
+        try:
+            result: Any = None
+            if action == "status":
+                result = session._gateway_metadata()
+            elif action == "set_master":
+                session.set_gateway_master(bool(payload.get("enabled")))
+                await session.refresh_remote_tool_metadata()
+                result = session._gateway_metadata()
+            elif action == "replace_scopes":
+                scopes = payload.get("scopes")
+                if not isinstance(scopes, dict):
+                    raise ValueError("scopes must be an object")
+                session.replace_gateway_scopes(scopes)
+                await session.refresh_remote_tool_metadata()
+                result = session._gateway_metadata()
+            elif action == "prepare_browser":
+                if self.host_browser is None:
+                    raise RuntimeError("Personal browser is unavailable")
+                result = await self.host_browser.ensure_available(
+                    profile_mode="existing",
+                    browser_selection=self.options.browser_selection,
+                )
+                await session.refresh_remote_tool_metadata()
+            elif action == "rearm_computer_use":
+                if self.computer_use is None:
+                    raise RuntimeError("Computer Use is unavailable")
+                result = await self.computer_use.rearm("launcher")
+                await session.refresh_remote_tool_metadata()
+            elif action in {"shutdown", "stop"}:
+                self.stop_event.set()
+                result = {"stopping": True}
+            else:
+                raise ValueError(f"Unknown gateway action: {action}")
+            self._command_result(request_id, True, result=result)
+            metadata = session._gateway_metadata()
+            if metadata is not None:
+                self._emit_status(metadata)
+        except Exception as exc:
+            self._command_result(request_id, False, error=str(exc))
+
+    def _emit_status(self, gateway: dict[str, Any]) -> None:
+        self.writer.write(
+            {
+                "type": "status",
+                "host": self.options.host,
+                "workspace": str(self.options.workspace.expanduser().resolve()),
+                "gateway": gateway,
+            }
+        )
+
+    def _emit_error(self, code: str, message: str, *, fatal: bool, stage: str = "") -> None:
+        payload = {"type": "error", "code": code, "message": message, "fatal": fatal}
+        if stage:
+            payload["stage"] = stage
+        self.writer.write(payload)
+
+    def _command_result(
+        self,
+        request_id: str,
+        ok: bool,
+        *,
+        result: Any = None,
+        error: str = "",
+    ) -> None:
+        payload: dict[str, Any] = {"type": "result", "request_id": request_id, "ok": ok}
+        if ok:
+            payload["result"] = result
+        else:
+            payload["error"] = error
+        self.writer.write(payload)
+
+    def _install_signal_handlers(self) -> None:
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, self.stop_event.set)
+            except (NotImplementedError, RuntimeError):
+                continue
+
+
+def run_gateway(options: GatewayOptions, config: CLIConfig) -> int:
+    return asyncio.run(GatewayRunner(options, config).run())
+
+
+def gateway_options(
+    *,
+    host: str,
+    workspace: str,
+    gateway_id: str,
+    host_label: str,
+    master_enabled: bool,
+    scopes: str,
+    browser_selection: str,
+) -> GatewayOptions:
+    normalized_id = sanitize_gateway_id(gateway_id)
+    if not normalized_id:
+        raise ValueError("gateway id is required")
+    return GatewayOptions(
+        host=normalize_gateway_host(host),
+        workspace=Path(workspace or "."),
+        gateway_id=normalized_id,
+        host_label=sanitize_host_label(host_label),
+        master_enabled=bool(master_enabled),
+        scopes=normalize_scopes(scopes),
+        browser_selection=(
+            str(browser_selection or "")
+            .strip()
+            .replace("\r", "")
+            .replace("\n", "")
+            .replace("\0", "")[:512]
+        ),
+    )

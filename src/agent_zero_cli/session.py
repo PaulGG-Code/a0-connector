@@ -8,6 +8,8 @@ from typing import Any, Callable, Protocol
 
 from agent_zero_cli.client import A0Client, A0ConnectorPluginMissingError, DEFAULT_HOST
 from agent_zero_cli.config import CLIConfig, save_last_context
+from agent_zero_cli.computer_use import ComputerUseManager
+from agent_zero_cli.host_browser_manager import HostBrowserManager
 from agent_zero_cli.protocol import connector_version_warning, validate_capabilities
 from agent_zero_cli.remote_exec import RemoteExecManager
 from agent_zero_cli.remote_files import RemoteFileUtility
@@ -100,14 +102,33 @@ class ConnectorSession:
         workspace: Path | str | None = None,
         client_factory: ClientFactory = A0Client,
         remote_file_write_enabled: bool = True,
+        remote_files_enabled: bool = True,
         remote_exec_enabled: bool = True,
+        tools_only: bool = False,
+        gateway: dict[str, Any] | None = None,
+        host_browser_manager: HostBrowserManager | None = None,
+        computer_use_manager: ComputerUseManager | None = None,
+        browser_selection: str = "",
+        on_gateway_state_change: Callable[[dict[str, Any]], None] | None = None,
+        on_gateway_disconnect: Callable[[], None] | None = None,
     ) -> None:
         self.config = config
         self.observer = observer or NullSessionObserver()
         self.workspace = Path(workspace or Path.cwd()).expanduser().resolve()
         self._client_factory = client_factory
         self.remote_file_write_enabled = remote_file_write_enabled
+        self.remote_files_enabled = remote_files_enabled
         self.remote_exec_enabled = remote_exec_enabled
+        self.tools_only = tools_only
+        self.gateway = dict(gateway or {})
+        self.gateway_enabled = bool(gateway)
+        self.master_enabled = bool(self.gateway.get("master_enabled", True))
+        self.browser_selection = str(browser_selection or "").strip()
+        self.host_browser = host_browser_manager
+        self.computer_use = computer_use_manager
+        self._on_gateway_state_change = on_gateway_state_change
+        self._on_gateway_disconnect = on_gateway_disconnect
+        self._emergency_disconnected = False
         self.remote_files = RemoteFileUtility(
             scan_root=str(self.workspace),
             allow_writes=self.remote_file_write_enabled,
@@ -132,6 +153,8 @@ class ConnectorSession:
         self._last_remote_tree_published_at = 0.0
         self._remote_tree_task: asyncio.Task[None] | None = None
         self._recovery_task: asyncio.Task[None] | None = None
+        if self.gateway_enabled:
+            self._apply_scope_state()
 
     async def connect(
         self,
@@ -155,6 +178,14 @@ class ConnectorSession:
         capabilities = await self._fetch_and_validate_capabilities(client)
         self.capabilities = capabilities
         self.connector_features = set(capabilities.get("features") or [])
+        if self.tools_only and "launcher_gateway" not in self.connector_features:
+            await self._disconnect_client(close_http=True)
+            raise SessionError(
+                "CONTRACT_MISMATCH",
+                "Agent Zero does not advertise launcher_gateway.",
+                stage="capabilities",
+                exit_code=2,
+            )
 
         if bool(capabilities.get("auth_required")):
             await self._ensure_authenticated(
@@ -175,6 +206,7 @@ class ConnectorSession:
                 host_browser=self._host_browser_metadata(),
                 remote_files=self._remote_file_metadata(),
                 remote_exec=self._remote_exec_metadata(),
+                gateway=self._gateway_metadata(),
             )
             self.remote_exec.set_exec_config(hello.get("exec_config") if isinstance(hello, dict) else None)
         except Exception as exc:
@@ -185,6 +217,24 @@ class ConnectorSession:
                 stage="websocket",
                 exit_code=2,
             ) from exc
+
+        if self.tools_only:
+            hello_features = set(hello.get("features") or []) if isinstance(hello, dict) else set()
+            if "launcher_gateway_control" not in hello_features:
+                await self._disconnect_client(close_http=False)
+                raise SessionError(
+                    "CONTRACT_MISMATCH",
+                    "Agent Zero does not advertise launcher_gateway_control.",
+                    stage="websocket",
+                    exit_code=2,
+                )
+            self.connected = True
+            await self.refresh_remote_tool_metadata()
+            await self.publish_remote_tree_snapshot(force=True)
+            self._start_remote_tree_publisher()
+            self._stage("ready", "Launcher host gateway connected.", normalized_host)
+            self._notify_gateway_state_change()
+            return ""
 
         self._stage("connecting", "Resolving chat context...", normalized_host)
         try:
@@ -389,6 +439,7 @@ class ConnectorSession:
                 host_browser=self._host_browser_metadata(),
                 remote_files=self._remote_file_metadata(),
                 remote_exec=self._remote_exec_metadata(),
+                gateway=self._gateway_metadata(),
             )
         except Exception:
             return False
@@ -397,7 +448,12 @@ class ConnectorSession:
 
     async def publish_remote_tree_snapshot(self, *, force: bool = False) -> None:
         client = self.client
-        if client is None or not getattr(client, "connected", False):
+        if (
+            client is None
+            or not getattr(client, "connected", False)
+            or not self.master_enabled
+            or not self.remote_files_enabled
+        ):
             return
 
         snapshot = self.remote_files.build_tree_snapshot()
@@ -422,6 +478,12 @@ class ConnectorSession:
         self._stop_remote_tree_publisher()
         with contextlib.suppress(Exception):
             await self.remote_exec.close()
+        if self.host_browser is not None:
+            with contextlib.suppress(Exception):
+                await self.host_browser.close()
+        if self.computer_use is not None:
+            with contextlib.suppress(Exception):
+                await self.computer_use.close()
         await self._disconnect_client(close_http=True)
         self.connected = False
         self.agent_active = False
@@ -441,14 +503,23 @@ class ConnectorSession:
         self._last_remote_tree_hash = ""
         self._last_remote_tree_published_at = 0.0
         self.goal = None
+        self._emergency_disconnected = False
         with contextlib.suppress(Exception):
             await self.remote_exec.close()
+        if self.host_browser is not None:
+            with contextlib.suppress(Exception):
+                await self.host_browser.close()
+        if self.computer_use is not None:
+            with contextlib.suppress(Exception):
+                await self.computer_use.close()
         await self._disconnect_client(close_http=True)
         self.remote_exec = RemoteExecManager(
             cwd=self.remote_files.scan_root,
             enabled=self.remote_exec_enabled,
             allow_writes=self.remote_file_write_enabled,
         )
+        if self.gateway_enabled:
+            self._apply_scope_state()
 
     async def _fetch_and_validate_capabilities(self, client: A0Client) -> dict[str, Any]:
         try:
@@ -554,16 +625,24 @@ class ConnectorSession:
         client.on_context_complete = self._handle_context_complete
         client.on_message_queue_updated = self._handle_message_queue_updated
         client.on_error = self._handle_connector_error
-        client.on_file_op = self.remote_files.handle_file_op
-        client.on_exec_op = self.remote_exec.handle_exec_op
-        client.on_computer_use_op = self._handle_unsupported_computer_use_op
-        client.on_browser_op = self._handle_unsupported_browser_op
+        client.on_file_op = self._handle_file_op
+        client.on_exec_op = self._handle_exec_op
+        client.on_computer_use_op = self._handle_computer_use_op
+        client.on_computer_use_op_result_sent = self._handle_tool_result_sent
+        client.on_browser_op = self._handle_browser_op
+        client.on_browser_op_result_sent = self._handle_tool_result_sent
+        client.on_gateway_control = self._handle_gateway_control
+        client.on_gateway_control_result_sent = self._handle_gateway_control_result_sent
 
     def _handle_connect(self) -> None:
         self.connected = True
+        self._notify_gateway_state_change()
 
     def _handle_disconnect(self) -> None:
         self.connected = False
+        self._notify_gateway_state_change()
+        if self._emergency_disconnected:
+            return
         if self._recovery_task is not None and not self._recovery_task.done():
             return
         self._recovery_task = asyncio.create_task(self._recover_websocket())
@@ -619,34 +698,242 @@ class ConnectorSession:
     async def _handle_unsupported_browser_op(self, data: dict[str, Any]) -> dict[str, Any]:
         return _unsupported_result(data, tool="Host browser", code="HOST_BROWSER_UNSUPPORTED")
 
+    def _scope_available(self, scope: str) -> bool:
+        if not self.master_enabled or self._emergency_disconnected:
+            return False
+        scopes = self._gateway_scopes()
+        return bool(scopes.get(scope))
+
+    async def _handle_file_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self._scope_available("files"):
+            return {
+                "op_id": data.get("op_id", ""),
+                "ok": False,
+                "error": "Launcher host file access is paused.",
+                "code": "HOST_FILES_DISABLED",
+            }
+        return self.remote_files.handle_file_op(data)
+
+    async def _handle_exec_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self._scope_available("code_execution"):
+            return {
+                "op_id": data.get("op_id", ""),
+                "ok": False,
+                "error": "Launcher host code execution is paused.",
+                "code": "HOST_EXEC_DISABLED",
+            }
+        return await self.remote_exec.handle_exec_op(data)
+
+    async def _handle_computer_use_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self._scope_available("computer_use"):
+            return _unsupported_result(
+                data,
+                tool="Computer use",
+                code="COMPUTER_USE_DISABLED",
+            )
+        if self.computer_use is None:
+            return await self._handle_unsupported_computer_use_op(data)
+        return await self.computer_use.handle_op(data)
+
+    async def _handle_browser_op(self, data: dict[str, Any]) -> dict[str, Any]:
+        if not self._scope_available("browser"):
+            return _unsupported_result(data, tool="Host browser", code="HOST_BROWSER_DISABLED")
+        if self.host_browser is None:
+            return await self._handle_unsupported_browser_op(data)
+        request = dict(data)
+        request["profile_mode"] = "existing"
+        request.pop("browser_selection", None)
+        if self.browser_selection:
+            request["browser_selection"] = self.browser_selection
+        return await self.host_browser.handle_op(request)
+
+    async def _handle_tool_result_sent(
+        self,
+        _request: dict[str, Any],
+        _result: dict[str, Any],
+    ) -> None:
+        await self.refresh_remote_tool_metadata()
+        self._notify_gateway_state_change()
+
     def _computer_use_metadata(self) -> dict[str, Any]:
-        return {
-            "supported": False,
-            "enabled": False,
-            "status": "unsupported",
-            "last_error": "Computer use is not available in headless mode.",
-            "restore_token_present": False,
-        }
+        if self.computer_use is None:
+            return {
+                "supported": False,
+                "enabled": False,
+                "status": "unsupported",
+                "last_error": "Computer use is not available in headless mode.",
+                "restore_token_present": False,
+            }
+        metadata = self.computer_use.hello_metadata()
+        if not self._scope_available("computer_use"):
+            metadata["enabled"] = False
+        return metadata
 
     def _host_browser_metadata(self) -> dict[str, Any]:
+        if self.host_browser is None:
+            return {
+                "supported": False,
+                "enabled": False,
+                "status": "unsupported",
+                "support_reason": "Host browser is not available in headless mode.",
+                "capabilities": [],
+            }
+        metadata = self.host_browser.hello_metadata(
+            profile_mode="existing",
+            browser_selection=self.browser_selection,
+        )
+        if not self._scope_available("browser"):
+            metadata["enabled"] = False
+        return metadata
+
+    def _gateway_scopes(self) -> dict[str, bool]:
+        scopes = self.gateway.get("scopes")
+        values = scopes if isinstance(scopes, dict) else {}
+        normalized = {
+            "files": bool(values.get("files", self.remote_files_enabled)),
+            "code_execution": bool(values.get("code_execution", self.remote_exec_enabled)),
+            "browser": bool(values.get("browser", self.host_browser is not None)),
+            "computer_use": bool(values.get("computer_use", self.computer_use is not None)),
+        }
+        if not normalized["files"]:
+            normalized["code_execution"] = False
+        return normalized
+
+    def _apply_scope_state(self) -> None:
+        scopes = self._gateway_scopes()
+        self.remote_files_enabled = scopes["files"]
+        self.remote_file_write_enabled = scopes["files"]
+        self.remote_exec_enabled = scopes["code_execution"]
+        self.remote_files.set_write_enabled(scopes["files"])
+        self.remote_exec.set_write_enabled(scopes["files"])
+        self.remote_exec.set_enabled(scopes["code_execution"])
+        if self.host_browser is not None:
+            self.host_browser.set_enabled(scopes["browser"])
+        if self.computer_use is not None:
+            self.computer_use.set_enabled(scopes["computer_use"])
+        if self.gateway_enabled:
+            self.gateway["scopes"] = scopes
+            self.gateway["master_enabled"] = self.master_enabled
+
+    def replace_gateway_scopes(self, scopes: dict[str, Any]) -> dict[str, bool]:
+        self.gateway["scopes"] = {
+            "files": bool(scopes.get("files")),
+            "code_execution": bool(scopes.get("code_execution")),
+            "browser": bool(scopes.get("browser")),
+            "computer_use": bool(scopes.get("computer_use")),
+        }
+        self._apply_scope_state()
+        self._notify_gateway_state_change()
+        return self._gateway_scopes()
+
+    def set_gateway_master(self, enabled: bool) -> None:
+        self.master_enabled = bool(enabled)
+        self.gateway["master_enabled"] = self.master_enabled
+        self._notify_gateway_state_change()
+
+    def _gateway_metadata(self) -> dict[str, Any] | None:
+        if not self.gateway_enabled:
+            return None
+        metadata = {
+            "version": 1,
+            "kind": "launcher",
+            "id": str(self.gateway.get("id", "") or "").strip(),
+            "host_label": str(self.gateway.get("host_label", "") or "").strip(),
+            "master_enabled": self.master_enabled,
+            "scopes": self._gateway_scopes(),
+            "status": {},
+        }
+        browser = self._host_browser_metadata()
+        computer = self._computer_use_metadata()
+        status_details: dict[str, Any] = {
+            "browser": browser,
+            "computer_use": computer,
+        }
+        state = "connected" if self.connected else "connecting"
+        browser_status = str(browser.get("status", "") or "").lower()
+        if self._gateway_scopes()["browser"] and browser_status in {
+            "relaunch_required",
+            "unsupported",
+        }:
+            status_details["browser"] = {
+                **browser,
+                "message": browser.get("support_reason")
+                or "Close the selected browser before preparing personal browser access.",
+            }
+            state = "needs_action"
+        computer_status = str(computer.get("status", "") or "").lower()
+        if self._gateway_scopes()["computer_use"] and computer_status in {
+            "rearm required",
+            "approval required",
+            "unsupported",
+            "error",
+        }:
+            status_details["computer_use"] = {
+                **computer,
+                "message": computer.get("last_error")
+                or "Computer Use needs platform permission.",
+            }
+            state = "needs_action"
+        if not self.master_enabled:
+            state = "paused"
+        if self._emergency_disconnected:
+            state = "disconnected"
+        metadata["state"] = state
+        metadata["status"] = status_details
+        return metadata
+
+    async def _handle_gateway_control(self, data: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(data.get("request_id", "") or "").strip()
+        action = str(data.get("action", "") or "").strip().lower()
+        if not request_id:
+            return {"request_id": "", "ok": False, "error": "request_id is required"}
+        if action == "set_master":
+            self.set_gateway_master(bool(data.get("enabled")))
+        elif action == "replace_scopes":
+            scopes = data.get("scopes")
+            if not isinstance(scopes, dict):
+                return {"request_id": request_id, "ok": False, "error": "scopes are required"}
+            self.replace_gateway_scopes(scopes)
+        elif action == "emergency_disconnect":
+            self._emergency_disconnected = True
+        else:
+            return {"request_id": request_id, "ok": False, "error": "Unknown gateway control action"}
+        self._notify_gateway_state_change()
         return {
-            "supported": False,
-            "enabled": False,
-            "status": "unsupported",
-            "support_reason": "Host browser is not available in headless mode.",
-            "capabilities": [],
+            "request_id": request_id,
+            "ok": True,
+            "gateway": self._gateway_metadata(),
         }
 
+    async def _handle_gateway_control_result_sent(
+        self,
+        request: dict[str, Any],
+        _result: dict[str, Any],
+    ) -> None:
+        if str(request.get("action", "") or "").strip().lower() == "emergency_disconnect":
+            if self._on_gateway_disconnect is not None:
+                self._on_gateway_disconnect()
+            return
+        await self.refresh_remote_tool_metadata()
+
+    def _notify_gateway_state_change(self) -> None:
+        if self._on_gateway_state_change is None:
+            return
+        metadata = self._gateway_metadata()
+        if metadata is not None:
+            self._on_gateway_state_change(metadata)
+
     def _remote_file_metadata(self) -> dict[str, Any]:
+        enabled = self._scope_available("files")
         return {
-            "enabled": True,
-            "write_enabled": self.remote_file_write_enabled,
-            "mode": "read_write" if self.remote_file_write_enabled else "read_only",
+            "enabled": enabled,
+            "write_enabled": enabled and self.remote_file_write_enabled,
+            "mode": "read_write" if enabled and self.remote_file_write_enabled else "read_only",
         }
 
     def _remote_exec_metadata(self) -> dict[str, Any]:
         return {
-            "enabled": self.remote_exec_enabled,
+            "enabled": self._scope_available("code_execution") and self.remote_exec_enabled,
         }
 
     def _start_remote_tree_publisher(self) -> None:
@@ -668,7 +955,7 @@ class ConnectorSession:
     async def _recover_websocket(self) -> None:
         client = self.client
         context_id = self.context_id
-        if client is None or not self.host or not context_id:
+        if client is None or not self.host or (not self.tools_only and not context_id):
             self._recovery_task = None
             self.agent_active = False
             self.observer.on_disconnect()
@@ -683,7 +970,9 @@ class ConnectorSession:
                     f"{self.host} (attempt {attempt})",
                 )
                 await asyncio.sleep(delay)
-                if self.client is not client or not self.context_id:
+                if self.client is not client or (
+                    not self.tools_only and not self.context_id
+                ):
                     return
                 try:
                     await client.connect_websocket()
@@ -693,10 +982,12 @@ class ConnectorSession:
                         host_browser=self._host_browser_metadata(),
                         remote_files=self._remote_file_metadata(),
                         remote_exec=self._remote_exec_metadata(),
+                        gateway=self._gateway_metadata(),
                     )
                     exec_config = hello.get("exec_config") if isinstance(hello, dict) else None
                     self.remote_exec.set_exec_config(exec_config)
-                    await client.subscribe_context(context_id)
+                    if not self.tools_only:
+                        await client.subscribe_context(context_id)
                     await self.publish_remote_tree_snapshot(force=True)
                 except asyncio.CancelledError:
                     raise
@@ -714,6 +1005,7 @@ class ConnectorSession:
                 self._context_run_complete = True
                 self._start_remote_tree_publisher()
                 self._stage("ready", "Reconnected.", self.host)
+                self._notify_gateway_state_change()
                 return
         finally:
             self._recovery_task = None

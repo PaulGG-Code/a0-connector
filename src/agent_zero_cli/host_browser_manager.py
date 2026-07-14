@@ -73,6 +73,7 @@ class HostBrowserManager:
         self,
         config: CLIConfig,
         *,
+        persist_enabled: bool = True,
         candidate_provider: Callable[[], list[BrowserCandidate]] | None = None,
         playwright_available: bool | None = None,
         playwright_starter: Callable[[], Any] | None = None,
@@ -80,6 +81,7 @@ class HostBrowserManager:
     ) -> None:
         self.config = config
         self.enabled = bool(config.host_browser_enabled)
+        self._persist_enabled = persist_enabled
         self._candidate_provider = candidate_provider or detect_browser_candidates
         self._playwright_available = playwright_available
         self._playwright_starter = playwright_starter
@@ -95,9 +97,21 @@ class HostBrowserManager:
     def supported(self) -> bool:
         return self._support_reason() == ""
 
-    def hello_metadata(self) -> dict[str, Any]:
-        profile = self.selected_profile()
-        status = self.status_snapshot(profile=profile)
+    def hello_metadata(
+        self,
+        *,
+        profile_mode: object = "",
+        browser_selection: object = "",
+    ) -> dict[str, Any]:
+        profile = self.selected_profile(
+            profile_mode=profile_mode,
+            browser_selection=browser_selection,
+        )
+        status = self.status_snapshot(
+            profile=profile,
+            profile_mode=profile_mode,
+            browser_selection=browser_selection,
+        )
         return {
             "supported": bool(status["supported"]),
             "can_prepare": bool(status["can_prepare"]),
@@ -204,7 +218,8 @@ class HostBrowserManager:
     def set_enabled(self, enabled: bool) -> None:
         self.enabled = bool(enabled)
         self.config.host_browser_enabled = self.enabled
-        save_host_browser_enabled(self.enabled)
+        if self._persist_enabled:
+            save_host_browser_enabled(self.enabled)
 
     def set_relaunch_preference(self, preference: str) -> str:
         normalized = normalize_host_browser_relaunch_preference(preference)
