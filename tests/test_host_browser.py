@@ -391,6 +391,12 @@ def test_remote_debugging_profile_is_discovered_when_chrome_allows_it(
         normalize_remote_debugging_endpoint("ws://127.0.0.1:9222/devtools/browser/test")
         == "ws://127.0.0.1:9222/devtools/browser/test"
     )
+    assert normalize_remote_debugging_endpoint("localhost:9222") == "http://localhost:9222"
+    assert normalize_remote_debugging_endpoint("ws://localhost:9222") == "http://localhost:9222"
+    assert (
+        normalize_remote_debugging_endpoint("ws://localhost:9222/devtools/Browser/AbC?token=XyZ")
+        == "ws://localhost:9222/devtools/Browser/AbC?token=XyZ"
+    )
     assert len(profiles) == 1
     assert profiles[0].family == "chrome-cdp"
     assert profiles[0].profile_label == "localhost:9222"
@@ -437,6 +443,65 @@ def test_remote_debugging_discovery_reads_active_port_without_network_probe(
     assert [profile.cdp_endpoint for profile in profiles] == [
         "ws://localhost:9222/devtools/browser/test"
     ]
+
+
+async def test_cdp_connection_resolves_discovery_address(monkeypatch: pytest.MonkeyPatch) -> None:
+    import agent_zero_cli.host_browser_cdp as host_browser_cdp_module
+
+    class FakeResponse:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        async def json(self) -> dict[str, str]:
+            return {
+                "webSocketDebuggerUrl": "ws://localhost:9222/devtools/Browser/OperaAbC"
+            }
+
+    class FakeWebSocket:
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+        async def close(self) -> None:
+            return None
+
+    class FakeSession:
+        def __init__(self) -> None:
+            self.version_url = ""
+            self.websocket_url = ""
+
+        def get(self, url: str) -> FakeResponse:
+            self.version_url = url
+            return FakeResponse()
+
+        async def ws_connect(self, url: str, **_: object) -> FakeWebSocket:
+            self.websocket_url = url
+            return FakeWebSocket()
+
+        async def close(self) -> None:
+            return None
+
+    session = FakeSession()
+    monkeypatch.setattr(
+        host_browser_cdp_module.aiohttp,
+        "ClientSession",
+        lambda **_: session,
+    )
+    connection = host_browser_cdp_module.CDPConnection("http://localhost:9222")
+
+    await connection.connect()
+    await connection.close()
+
+    assert session.version_url == "http://localhost:9222/json/version"
+    assert session.websocket_url == "ws://localhost:9222/devtools/Browser/OperaAbC"
 
 
 def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
@@ -628,6 +693,22 @@ def test_browser_selection_accepts_explicit_cdp_endpoint() -> None:
     assert selected.family == "chrome-cdp"
     assert selected.cdp_endpoint == "ws://127.0.0.1:9333/devtools/browser/test"
     assert manager.status_snapshot(profile=selected)["supported"] is True
+
+
+def test_browser_selection_accepts_cdp_discovery_address() -> None:
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [],
+        playwright_available=False,
+    )
+
+    selected = manager.selected_profile(
+        profile_mode="existing",
+        browser_selection="localhost:9333",
+    )
+
+    assert selected is not None
+    assert selected.cdp_endpoint == "http://localhost:9333"
 
 
 async def test_unknown_browser_selection_does_not_fall_back_to_first_profile(tmp_path: Path) -> None:

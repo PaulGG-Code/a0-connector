@@ -41,7 +41,7 @@
 
 - The builtin `_a0_connector` plugin is not vendored here. It lives in Agent Zero Core under `plugins/_a0_connector`.
 - For this workstation, the real Agent Zero Core plugin repo is `/home/eclypso/a0/agent-zero/plugins`.
-- When testing Dockerized Agent Zero backend behavior, treat the instance exposed at `localhost:32080` as the live runtime.
+- When testing Dockerized Agent Zero backend behavior, verify the exact live runtime named for the task instead of assuming a fixed localhost port.
 - When explicitly asked or approved to change plugin/backend code outside this repo, keep the live runtime copy and `/home/eclypso/a0/agent-zero/plugins` in sync.
 - Plugin code must not import `agent`, `initialize`, or `helpers.projects` at module level. Import Agent Zero internals inside handler methods.
 - In plugin `api/ws_connector.py`, `from_sequence` is a log-output cursor (`LogOutput.end`), not a connector event sequence. Do not mix cursor and event sequence domains.
@@ -72,7 +72,7 @@
 
 - The operating shell is `bash` on Ubuntu Linux.
 - Prefer Linux paths and command examples unless a Windows or macOS-specific file requires platform-specific wording.
-- Treat plugin/backend discussion as connected to the Dockerized Agent Zero runtime at `localhost:32080`.
+- Treat plugin/backend discussion as connected to the explicitly named Dockerized Agent Zero runtime when one is in scope.
 - Always mirror live Agent Zero Core plugin runtime changes into `/home/eclypso/a0/agent-zero/plugins` when backend/plugin changes are in scope.
 - Aim for solutions that unite rigor and elegance: concise, technically strong, and beautiful in the small details.
 

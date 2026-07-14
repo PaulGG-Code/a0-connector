@@ -165,7 +165,7 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |
 | `/browser profile` | List detected Chromium-family profiles; pass `<family> <profile>` to select, for example `chrome-a0 Default` |
 | `/browser list` | List host-browser targets |
-| `/browser auto` / `/browser <number>` / `/browser <id>` / `/browser ws://...` | Choose the current Agent Zero Browser host target |
+| `/browser auto` / `/browser <number>` / `/browser <id>` / `/browser <host:port>` / `/browser ws://...` | Choose the current Agent Zero Browser host target |
 | `/browser relaunch` | Prepare the host browser now, either by attaching to allowed Chrome remote debugging or by starting the selected local profile |
 | `/browser repair` | Install missing Python Playwright for the local-profile launch path |
 | `/browser privacy` | Show where host-browser content policy is configured |
@@ -193,6 +193,11 @@ Happy path:
 When a subscribed CLI supports host-browser control, the first browser action can enable and prepare the local browser automatically. The CLI slash commands remain available for diagnostics and manual override.
 
 The CLI does not bundle Chromium and it does not copy credentials, cookies, or profile data out of the browser profile. If the browser's Remote debugging page has been allowed, A0 reads the local `DevToolsActivePort` file and keeps one DevTools Protocol connection open for browser actions. Status checks and profile listing do not connect to the browser, so they should not create repeated **Allow** prompts.
+
+For a browser launched with an explicit debugging port, select its discovery
+address directly, for example `/browser localhost:9222`. A0 CLI resolves
+`/json/version` on the host; full `ws://` or `wss://` DevTools endpoints remain
+supported.
 
 If the selected profile must be launched by A0 and is already locked by a normal browser window, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses Python Playwright in the A0 CLI host environment against an installed Chromium-family executable.
 

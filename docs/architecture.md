@@ -209,6 +209,11 @@ prompts. The first real Browser operation opens one long-lived connection for
 that chat. A0 disconnect does not close the user's browser tabs; explicit
 Browser close actions still act on tabs the agent can see.
 
+Explicit selections accept `host:port`, HTTP(S) CDP discovery addresses, and
+full DevTools WebSocket URLs. The connector resolves discovery addresses via
+`/json/version` on the host before opening the WebSocket, so Agent Zero Core
+does not need direct network access to the host browser.
+
 The local-profile launch path requires Python Playwright in the A0 CLI host
 environment. The Playwright runtime under the Agent Zero Docker container,
 including `/a0/tmp/playwright`, powers the container browser backend and cannot

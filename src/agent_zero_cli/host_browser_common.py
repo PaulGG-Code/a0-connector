@@ -560,9 +560,21 @@ def normalize_remote_debugging_endpoint(value: object) -> str:
     if not raw:
         return ""
     if "://" not in raw:
-        raw = f"ws://{raw}"
+        if not re.fullmatch(r"(?:\[[^\]]+\]|[^/:\s]+):\d+", raw):
+            return ""
+        raw = f"http://{raw}"
     parsed = urlsplit(raw)
-    if parsed.scheme not in {"ws", "wss"} or not parsed.netloc or not parsed.path:
+    if not parsed.netloc:
+        return ""
+    if parsed.scheme in {"http", "https"}:
+        if parsed.path not in {"", "/", "/json/version"}:
+            return ""
+        path = "" if parsed.path in {"", "/"} else parsed.path
+        return urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+    if parsed.scheme in {"ws", "wss"} and parsed.path in {"", "/"}:
+        scheme = "https" if parsed.scheme == "wss" else "http"
+        return urlunsplit((scheme, parsed.netloc, "", parsed.query, ""))
+    if parsed.scheme not in {"ws", "wss"} or not parsed.path:
         return ""
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
@@ -606,6 +618,9 @@ def remote_debugging_endpoint_label(endpoint: str) -> str:
 
 
 def normalize_host_browser_selection(value: object) -> str:
+    endpoint = normalize_remote_debugging_endpoint(value)
+    if endpoint:
+        return endpoint
     raw = re.sub(r"\s+", "_", str(value or "").strip().lower())
     return "".join(ch for ch in raw if ch.isalnum() or ch in {"_", "-", ":", ".", "/"})[:200]
 

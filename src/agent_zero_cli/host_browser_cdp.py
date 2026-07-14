@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import re
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
 
@@ -33,8 +34,20 @@ class CDPConnection:
         timeout = aiohttp.ClientTimeout(total=REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS)
         self._session = aiohttp.ClientSession(timeout=timeout)
         try:
+            endpoint = self.endpoint
+            parsed = urlsplit(endpoint)
+            if parsed.scheme in {"http", "https"}:
+                path = parsed.path if parsed.path == "/json/version" else "/json/version"
+                version_url = urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, ""))
+                async with self._session.get(version_url) as response:
+                    response.raise_for_status()
+                    version = await response.json()
+                endpoint = str(version.get("webSocketDebuggerUrl") or "").strip()
+                resolved = urlsplit(endpoint)
+                if resolved.scheme not in {"ws", "wss"} or not resolved.netloc or not resolved.path:
+                    raise CDPError(f"{version_url} did not return webSocketDebuggerUrl.")
             self._ws = await self._session.ws_connect(
-                self.endpoint,
+                endpoint,
                 timeout=REMOTE_DEBUGGING_CONNECT_TIMEOUT_SECONDS,
                 autoclose=True,
                 autoping=True,
