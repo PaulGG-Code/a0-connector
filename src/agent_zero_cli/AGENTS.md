@@ -53,6 +53,9 @@
 - Gateway shutdown owns complete cleanup of remote process groups, host-browser
   sessions, Computer Use sessions, and the Socket.IO connection. Emergency
   disconnect ends the current lease and exits cleanly rather than reconnecting.
+- Disabling the gateway master switch or an individual long-lived capability
+  closes its active execution, browser, or Computer Use sessions before the
+  control acknowledgement is returned.
 
 ## Work Guidance
 

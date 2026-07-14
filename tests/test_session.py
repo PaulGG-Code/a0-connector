@@ -412,6 +412,8 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
     tmp_path: Path,
 ) -> None:
     disconnected: list[bool] = []
+    browser = FakeHostBrowser()
+    computer = FakeComputerUse()
     session = ConnectorSession(
         CLIConfig(),
         Observer(),
@@ -423,13 +425,23 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
             "scopes": {
                 "files": True,
                 "code_execution": True,
-                "browser": False,
-                "computer_use": False,
+                "browser": True,
+                "computer_use": True,
             },
         },
+        host_browser_manager=browser,
+        computer_use_manager=computer,
         on_gateway_disconnect=lambda: disconnected.append(True),
     )
     await session.connect("http://agent.test")
+    browser_closes = browser.closed
+    computer_closes = computer.closed
+    exec_closes: list[bool] = []
+
+    async def close_exec() -> None:
+        exec_closes.append(True)
+
+    session.remote_exec.close = close_exec
 
     response = await session._handle_gateway_control(
         {
@@ -438,13 +450,24 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
             "scopes": {
                 "files": False,
                 "code_execution": True,
-                "browser": False,
-                "computer_use": False,
+                "browser": True,
+                "computer_use": True,
             },
         }
     )
     assert response["gateway"]["scopes"]["code_execution"] is False
     assert (await session._handle_file_op({"op_id": "file-1", "op": "read"}))["ok"] is False
+    assert exec_closes == [True]
+    assert browser.closed == browser_closes
+    assert computer.closed == computer_closes
+
+    paused = await session._handle_gateway_control(
+        {"request_id": "pause-1", "action": "set_master", "enabled": False}
+    )
+    assert paused["gateway"]["state"] == "paused"
+    assert len(exec_closes) == 2
+    assert browser.closed == browser_closes + 1
+    assert computer.closed == computer_closes + 1
 
     emergency = {"request_id": "stop-1", "action": "emergency_disconnect"}
     result = await session._handle_gateway_control(emergency)

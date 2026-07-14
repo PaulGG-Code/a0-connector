@@ -246,19 +246,20 @@ class GatewayRunner:
             return
         try:
             result: Any = None
+            refresh_metadata = False
             if action == "status":
                 result = session._gateway_metadata()
             elif action == "set_master":
-                session.set_gateway_master(bool(payload.get("enabled")))
-                await session.refresh_remote_tool_metadata()
+                await session.set_gateway_master(bool(payload.get("enabled")))
                 result = session._gateway_metadata()
+                refresh_metadata = True
             elif action == "replace_scopes":
                 scopes = payload.get("scopes")
                 if not isinstance(scopes, dict):
                     raise ValueError("scopes must be an object")
-                session.replace_gateway_scopes(scopes)
-                await session.refresh_remote_tool_metadata()
+                await session.replace_gateway_scopes(scopes)
                 result = session._gateway_metadata()
+                refresh_metadata = True
             elif action == "prepare_browser":
                 if self.host_browser is None:
                     raise RuntimeError("Personal browser is unavailable")
@@ -266,18 +267,20 @@ class GatewayRunner:
                     profile_mode="existing",
                     browser_selection=self.options.browser_selection,
                 )
-                await session.refresh_remote_tool_metadata()
+                refresh_metadata = True
             elif action == "rearm_computer_use":
                 if self.computer_use is None:
                     raise RuntimeError("Computer Use is unavailable")
                 result = await self.computer_use.rearm("launcher")
-                await session.refresh_remote_tool_metadata()
+                refresh_metadata = True
             elif action in {"shutdown", "stop"}:
                 self.stop_event.set()
                 result = {"stopping": True}
             else:
                 raise ValueError(f"Unknown gateway action: {action}")
             self._command_result(request_id, True, result=result)
+            if refresh_metadata:
+                await session.refresh_remote_tool_metadata()
             metadata = session._gateway_metadata()
             if metadata is not None:
                 self._emit_status(metadata)

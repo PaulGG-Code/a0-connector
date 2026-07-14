@@ -55,10 +55,10 @@ class FakeSession:
     def _gateway_metadata(self) -> dict[str, Any]:
         return dict(self.gateway)
 
-    def set_gateway_master(self, enabled: bool) -> None:
+    async def set_gateway_master(self, enabled: bool) -> None:
         self.gateway["master_enabled"] = enabled
 
-    def replace_gateway_scopes(self, scopes: dict[str, Any]) -> None:
+    async def replace_gateway_scopes(self, scopes: dict[str, Any]) -> None:
         self.gateway["scopes"] = normalize_scopes(scopes)
 
     async def refresh_remote_tool_metadata(self) -> bool:
@@ -151,6 +151,54 @@ async def test_gateway_rejects_invalid_workspace_without_starting_session(tmp_pa
     assert await runner.run() == 2
     assert FakeSession.instances == []
     assert json.loads(output.getvalue())["code"] == "INVALID_WORKSPACE"
+
+
+async def test_gateway_writes_command_result_before_metadata_refresh(tmp_path: Path) -> None:
+    order: list[str] = []
+
+    class OrderingSession(FakeSession):
+        async def refresh_remote_tool_metadata(self) -> bool:
+            order.append("refresh")
+            return True
+
+    class OrderingWriter(JsonlWriter):
+        def write(self, payload: dict[str, Any]) -> None:
+            if payload.get("type") == "result" and payload.get("request_id") == "scope-1":
+                order.append("result")
+            super().write(payload)
+
+    commands = io.StringIO(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "request_id": "scope-1",
+                        "action": "replace_scopes",
+                        "scopes": {
+                            "files": False,
+                            "code_execution": False,
+                            "browser": True,
+                            "computer_use": False,
+                        },
+                    }
+                ),
+                json.dumps({"request_id": "stop-1", "action": "shutdown"}),
+                "",
+            ]
+        )
+    )
+    runner = GatewayRunner(
+        _options(tmp_path),
+        CLIConfig(),
+        writer=OrderingWriter(io.StringIO()),
+        input_stream=commands,
+        session_factory=OrderingSession,
+        browser_factory=FakeManager,
+        computer_use_factory=FakeManager,
+    )
+
+    assert await runner.run() == 0
+    assert order == ["result", "refresh"]
 
 
 async def test_gateway_can_stop_while_jsonl_input_is_blocked(tmp_path: Path) -> None:

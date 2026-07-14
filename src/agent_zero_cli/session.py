@@ -815,7 +815,7 @@ class ConnectorSession:
             self.gateway["scopes"] = scopes
             self.gateway["master_enabled"] = self.master_enabled
 
-    def replace_gateway_scopes(self, scopes: dict[str, Any]) -> dict[str, bool]:
+    async def replace_gateway_scopes(self, scopes: dict[str, Any]) -> dict[str, bool]:
         self.gateway["scopes"] = {
             "files": bool(scopes.get("files")),
             "code_execution": bool(scopes.get("code_execution")),
@@ -823,13 +823,28 @@ class ConnectorSession:
             "computer_use": bool(scopes.get("computer_use")),
         }
         self._apply_scope_state()
+        await self._close_disabled_gateway_sessions()
         self._notify_gateway_state_change()
         return self._gateway_scopes()
 
-    def set_gateway_master(self, enabled: bool) -> None:
+    async def set_gateway_master(self, enabled: bool) -> None:
         self.master_enabled = bool(enabled)
         self.gateway["master_enabled"] = self.master_enabled
+        await self._close_disabled_gateway_sessions()
         self._notify_gateway_state_change()
+
+    async def _close_disabled_gateway_sessions(self) -> None:
+        scopes = self._gateway_scopes()
+        if not self.master_enabled or not scopes["code_execution"]:
+            await self.remote_exec.close()
+        if self.host_browser is not None and (
+            not self.master_enabled or not scopes["browser"]
+        ):
+            await self.host_browser.close()
+        if self.computer_use is not None and (
+            not self.master_enabled or not scopes["computer_use"]
+        ):
+            await self.computer_use.close()
 
     def _gateway_metadata(self) -> dict[str, Any] | None:
         if not self.gateway_enabled:
@@ -888,17 +903,17 @@ class ConnectorSession:
         if not request_id:
             return {"request_id": "", "ok": False, "error": "request_id is required"}
         if action == "set_master":
-            self.set_gateway_master(bool(data.get("enabled")))
+            await self.set_gateway_master(bool(data.get("enabled")))
         elif action == "replace_scopes":
             scopes = data.get("scopes")
             if not isinstance(scopes, dict):
                 return {"request_id": request_id, "ok": False, "error": "scopes are required"}
-            self.replace_gateway_scopes(scopes)
+            await self.replace_gateway_scopes(scopes)
         elif action == "emergency_disconnect":
             self._emergency_disconnected = True
+            self._notify_gateway_state_change()
         else:
             return {"request_id": request_id, "ok": False, "error": "Unknown gateway control action"}
-        self._notify_gateway_state_change()
         return {
             "request_id": request_id,
             "ok": True,
