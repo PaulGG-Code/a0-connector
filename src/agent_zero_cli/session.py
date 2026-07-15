@@ -178,11 +178,14 @@ class ConnectorSession:
         capabilities = await self._fetch_and_validate_capabilities(client)
         self.capabilities = capabilities
         self.connector_features = set(capabilities.get("features") or [])
-        if self.tools_only and "launcher_gateway" not in self.connector_features:
+        if self.tools_only and not {
+            "launcher_gateway",
+            "launcher_gateway_file_write",
+        }.issubset(self.connector_features):
             await self._disconnect_client(close_http=True)
             raise SessionError(
                 "CONTRACT_MISMATCH",
-                "Agent Zero does not advertise launcher_gateway.",
+                "Agent Zero does not advertise the current Launcher gateway scopes.",
                 stage="capabilities",
                 exit_code=2,
             )
@@ -791,21 +794,26 @@ class ConnectorSession:
         values = scopes if isinstance(scopes, dict) else {}
         normalized = {
             "files": bool(values.get("files", self.remote_files_enabled)),
+            "file_write": bool(
+                values.get("file_write", values.get("files", self.remote_file_write_enabled))
+            ),
             "code_execution": bool(values.get("code_execution", self.remote_exec_enabled)),
             "browser": bool(values.get("browser", self.host_browser is not None)),
             "computer_use": bool(values.get("computer_use", self.computer_use is not None)),
         }
         if not normalized["files"]:
+            normalized["file_write"] = False
+        if not normalized["file_write"]:
             normalized["code_execution"] = False
         return normalized
 
     def _apply_scope_state(self) -> None:
         scopes = self._gateway_scopes()
         self.remote_files_enabled = scopes["files"]
-        self.remote_file_write_enabled = scopes["files"]
+        self.remote_file_write_enabled = scopes["file_write"]
         self.remote_exec_enabled = scopes["code_execution"]
-        self.remote_files.set_write_enabled(scopes["files"])
-        self.remote_exec.set_write_enabled(scopes["files"])
+        self.remote_files.set_write_enabled(scopes["file_write"])
+        self.remote_exec.set_write_enabled(scopes["file_write"])
         self.remote_exec.set_enabled(scopes["code_execution"])
         if self.host_browser is not None:
             self.host_browser.set_enabled(scopes["browser"])
@@ -818,6 +826,7 @@ class ConnectorSession:
     async def replace_gateway_scopes(self, scopes: dict[str, Any]) -> dict[str, bool]:
         self.gateway["scopes"] = {
             "files": bool(scopes.get("files")),
+            "file_write": bool(scopes.get("file_write", scopes.get("files"))),
             "code_execution": bool(scopes.get("code_execution")),
             "browser": bool(scopes.get("browser")),
             "computer_use": bool(scopes.get("computer_use")),
@@ -873,7 +882,7 @@ class ConnectorSession:
             status_details["browser"] = {
                 **browser,
                 "message": browser.get("support_reason")
-                or "Close the selected browser before preparing personal browser access.",
+                or "Close the selected browser before preparing browser access.",
             }
             state = "needs_action"
         computer_status = str(computer.get("status", "") or "").lower()

@@ -246,7 +246,12 @@ async def test_session_connects_and_advertises_headless_metadata(tmp_path: Path)
 
 class GatewayFakeClient(FakeClient):
     capabilities = _capabilities(
-        features=["launcher_gateway", "code_execution_remote", "browser_host_remote"]
+        features=[
+            "launcher_gateway",
+            "launcher_gateway_file_write",
+            "code_execution_remote",
+            "browser_host_remote",
+        ]
     )
 
     async def send_hello(self, **payload: Any) -> dict[str, Any]:
@@ -309,6 +314,7 @@ async def test_tools_only_gateway_connects_without_creating_or_subscribing_to_ch
     computer = FakeComputerUse()
     scopes = {
         "files": True,
+        "file_write": True,
         "code_execution": True,
         "browser": True,
         "computer_use": True,
@@ -403,7 +409,7 @@ async def test_tools_only_gateway_requires_both_core_features(tmp_path: Path) ->
         tools_only=True,
         gateway={"id": "launcher-test", "scopes": {"files": True}},
     )
-    with pytest.raises(SessionError, match="launcher_gateway") as exc_info:
+    with pytest.raises(SessionError, match="Launcher gateway") as exc_info:
         await session.connect("http://agent.test")
     assert exc_info.value.code == "CONTRACT_MISMATCH"
 
@@ -424,6 +430,7 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
             "id": "launcher-test",
             "scopes": {
                 "files": True,
+                "file_write": True,
                 "code_execution": True,
                 "browser": True,
                 "computer_use": True,
@@ -449,6 +456,7 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
             "action": "replace_scopes",
             "scopes": {
                 "files": False,
+                "file_write": True,
                 "code_execution": True,
                 "browser": True,
                 "computer_use": True,
@@ -474,6 +482,37 @@ async def test_gateway_scope_dependency_and_emergency_disconnect_are_immediate(
     assert result["gateway"]["state"] == "disconnected"
     await session._handle_gateway_control_result_sent(emergency, result)
     assert disconnected == [True]
+    await session.close()
+
+
+async def test_gateway_file_write_scope_controls_writes_without_hiding_reads(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "note.txt"
+    target.write_text("hello", encoding="utf-8")
+    session = ConnectorSession(
+        CLIConfig(),
+        Observer(),
+        workspace=tmp_path,
+        client_factory=GatewayFakeClient,
+        tools_only=True,
+        gateway={
+            "id": "launcher-test",
+            "scopes": {
+                "files": True,
+                "file_write": False,
+                "code_execution": True,
+                "browser": False,
+                "computer_use": False,
+            },
+        },
+    )
+    await session.connect("http://agent.test")
+
+    assert session._gateway_scopes()["code_execution"] is False
+    assert (await session._handle_file_op({"op_id": "read", "op": "read", "path": "note.txt"}))["ok"] is True
+    assert (await session._handle_file_op({"op_id": "write", "op": "write", "path": "note.txt", "content": "changed"}))["ok"] is False
+    assert session._remote_file_metadata()["mode"] == "read_only"
     await session.close()
 
 

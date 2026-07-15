@@ -29,8 +29,8 @@
 - Use full suite verification for shared protocol, backend contract, or UI orchestration changes.
 - Gateway coverage must include its parser/JSONL contract, tools-only connection
   without chat creation, authentication and capability failures, no-context
-  reconnect, all four tool families, scope dependencies, result-before-metadata
-  ordering, and complete shutdown cleanup.
+  reconnect, all four tool families, five permission scopes, scope dependencies,
+  result-before-metadata ordering, and complete shutdown cleanup.
 
 ## Verification
 

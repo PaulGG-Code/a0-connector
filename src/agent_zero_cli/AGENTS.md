@@ -56,6 +56,12 @@
 - Disabling the gateway master switch or an individual long-lived capability
   closes its active execution, browser, or Computer Use sessions before the
   control acknowledgement is returned.
+- Launcher gateway scopes expose file reading and writing separately. File
+  writing requires file reading, and Code execution requires file writing;
+  older gateway payloads with only `files` retain their previous read/write
+  meaning. The command-line contract uses `file_read` for the new read-only
+  selection and keeps legacy `files` read/write so a CLI update cannot silently
+  downgrade an older Launcher.
 
 ## Work Guidance
 

@@ -142,15 +142,15 @@ def _build_parser() -> argparse.ArgumentParser:
     gateway.set_defaults(gateway_master=True)
     gateway.add_argument(
         "--scopes",
-        default="files,code_execution,browser,computer_use",
+        default="file_read,file_write,code_execution",
         metavar="LIST",
-        help="Comma-separated files, code_execution, browser, and computer_use scopes.",
+        help="Comma-separated file_read, file_write, code_execution, browser, and computer_use scopes.",
     )
     gateway.add_argument(
         "--browser-selection",
         default="",
         metavar="ID",
-        help="Detected personal Chromium profile identifier.",
+        help="Chromium profile identifier to use.",
     )
     return parser
 

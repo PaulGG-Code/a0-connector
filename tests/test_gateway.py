@@ -72,7 +72,7 @@ def _options(tmp_path: Path) -> GatewayOptions:
         gateway_id="launcher-test",
         host_label="Test host",
         master_enabled=True,
-        scopes=normalize_scopes("files,code_execution,browser,computer_use"),
+        scopes=normalize_scopes("file_read,file_write,code_execution,browser,computer_use"),
         browser_selection="chromium:default",
     )
 
@@ -94,6 +94,7 @@ async def test_gateway_jsonl_contract_and_environment_auth(
                         "action": "replace_scopes",
                         "scopes": {
                             "files": False,
+                            "file_write": True,
                             "code_execution": True,
                             "browser": True,
                             "computer_use": False,
@@ -124,6 +125,7 @@ async def test_gateway_jsonl_contract_and_environment_auth(
     assert session.kwargs["host_browser_manager"].persist_enabled is False
     assert session.kwargs["computer_use_manager"].persist_enabled is False
     assert session.gateway["scopes"]["files"] is False
+    assert session.gateway["scopes"]["file_write"] is False
     assert session.gateway["scopes"]["code_execution"] is False
     assert session.closed is True
 
@@ -176,6 +178,7 @@ async def test_gateway_writes_command_result_before_metadata_refresh(tmp_path: P
                         "action": "replace_scopes",
                         "scopes": {
                             "files": False,
+                            "file_write": False,
                             "code_execution": False,
                             "browser": True,
                             "computer_use": False,
@@ -237,7 +240,7 @@ def test_gateway_options_sanitize_identity_and_enforce_scope_dependency() -> Non
         gateway_id=" launcher id / unsafe ",
         host_label="  My   computer  ",
         master_enabled=True,
-        scopes="code_execution,browser",
+        scopes="file_read,code_execution,browser",
         browser_selection="chrome:default",
     )
 
@@ -245,8 +248,16 @@ def test_gateway_options_sanitize_identity_and_enforce_scope_dependency() -> Non
     assert options.gateway_id == "launcher-id-unsafe"
     assert options.host == "http://agent.test"
     assert options.host_label == "My computer"
-    assert options.scopes["files"] is False
+    assert options.scopes["files"] is True
+    assert options.scopes["file_write"] is False
     assert options.scopes["code_execution"] is False
+
+
+def test_gateway_scopes_keep_legacy_files_read_write() -> None:
+    assert normalize_scopes({"files": True})["file_write"] is True
+    assert normalize_scopes("files")["file_write"] is True
+    assert normalize_scopes("files,code_execution")["code_execution"] is True
+    assert normalize_scopes("file_read")["file_write"] is False
 
 
 def test_gateway_host_preserves_base_path_and_rejects_embedded_credentials() -> None:

@@ -20,7 +20,7 @@ from agent_zero_cli.host_browser_manager import HostBrowserManager
 from agent_zero_cli.session import ConnectorSession, SessionError
 
 
-_SCOPE_KEYS = ("files", "code_execution", "browser", "computer_use")
+_SCOPE_KEYS = ("files", "file_write", "code_execution", "browser", "computer_use")
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._:-]+")
 
 
@@ -48,17 +48,29 @@ def normalize_gateway_host(value: object) -> str:
 
 def normalize_scopes(value: object) -> dict[str, bool]:
     if isinstance(value, dict):
-        scopes = {key: bool(value.get(key)) for key in _SCOPE_KEYS}
+        scopes = {
+            key: bool(value.get(key, value.get("files") if key == "file_write" else False))
+            for key in _SCOPE_KEYS
+        }
     else:
         requested = {
             item.strip().lower().replace("-", "_")
             for item in str(value or "").split(",")
             if item.strip()
         }
-        aliases = {"exec": "code_execution", "computer": "computer_use"}
+        legacy_files = "files" in requested
+        aliases = {
+            "exec": "code_execution",
+            "computer": "computer_use",
+            "file_read": "files",
+        }
         requested = {aliases.get(item, item) for item in requested}
         scopes = {key: key in requested for key in _SCOPE_KEYS}
+        if legacy_files:
+            scopes["file_write"] = True
     if not scopes["files"]:
+        scopes["file_write"] = False
+    if not scopes["file_write"]:
         scopes["code_execution"] = False
     return scopes
 
@@ -167,7 +179,7 @@ class GatewayRunner:
             self.config,
             observer,
             workspace=workspace,
-            remote_file_write_enabled=scopes["files"],
+            remote_file_write_enabled=scopes["file_write"],
             remote_files_enabled=scopes["files"],
             remote_exec_enabled=scopes["code_execution"],
             tools_only=True,
@@ -262,7 +274,7 @@ class GatewayRunner:
                 refresh_metadata = True
             elif action == "prepare_browser":
                 if self.host_browser is None:
-                    raise RuntimeError("Personal browser is unavailable")
+                    raise RuntimeError("Browser access is unavailable")
                 result = await self.host_browser.ensure_available(
                     profile_mode="existing",
                     browser_selection=self.options.browser_selection,
