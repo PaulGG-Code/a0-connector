@@ -46,7 +46,15 @@ async def cmd_goal(app: AgentZeroCLI, *, query: str = "") -> None:
         if not remainder:
             app._show_notice("Usage: /goal update <goal>", error=True)
             return
-        await _update_goal(app, "update", "Goal updated.", objective=remainder, status="active")
+        response = await _update_goal(
+            app,
+            "update",
+            "Goal updated.",
+            objective=remainder,
+            status="active",
+        )
+        if response and response.get("reactivated") is True:
+            await app._send_chat_text(remainder, raw_text=remainder, attachments=[])
         return
     if action in {"auto", "ask", "model"}:
         prompt = _AUTO_PROMPT
@@ -64,22 +72,22 @@ async def _update_goal(
     action: str,
     success_message: str,
     **payload: Any,
-) -> bool:
+) -> dict[str, Any] | None:
     try:
         response = await app.client.goal_action(action, app.current_context or "", **payload)
     except Exception as exc:
         app._show_notice(f"Goal command failed: {exc}", error=True)
-        return False
+        return None
 
     if not response.get("ok"):
         message = str(response.get("message") or response.get("error") or "Goal command failed.")
         app._show_notice(message, error=True)
-        return False
+        return None
 
     goal = response.get("goal") if isinstance(response, Mapping) else None
     app._set_goal(goal if isinstance(goal, Mapping) else None)
     app._show_notice(success_message)
-    return True
+    return response
 
 
 def _split_action(raw: str) -> tuple[str, str]:

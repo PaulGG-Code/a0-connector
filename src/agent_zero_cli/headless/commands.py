@@ -160,10 +160,12 @@ async def _cmd_goal(session: ConnectorSession, argument: str) -> HeadlessCommand
     if action in {"update", "edit"}:
         if not remainder:
             return HeadlessCommandResult(["usage: /goal update <goal>"], error=True)
-        return _goal_result(
-            await session.goal_action("update", objective=remainder, status="active"),
-            "Goal updated.",
-        )
+        response = await session.goal_action("update", objective=remainder, status="active")
+        result = _goal_result(response, "Goal updated.")
+        if result.error or response.get("reactivated") is not True:
+            return result
+        await session.send_message(remainder)
+        return HeadlessCommandResult(result.lines, await_completion=True)
     if action in {"auto", "ask", "model"}:
         prompt = _auto_goal_prompt(remainder)
         await session.send_message(prompt)
@@ -218,7 +220,6 @@ def _goal_may_start_agent(argument: str) -> bool:
         "complete",
         "delete",
         "done",
-        "edit",
         "pause",
         "paused",
         "remove",
@@ -226,7 +227,6 @@ def _goal_may_start_agent(argument: str) -> bool:
         "show",
         "start",
         "status",
-        "update",
     })
 
 

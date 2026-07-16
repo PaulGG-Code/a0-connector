@@ -155,7 +155,7 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/clear` | Clear the visible chat log |
 | `/new` | Start a new chat |
 | `/compact` | Compact the current chat when supported |
-| `/goal <objective>` / `/goal update <text>` / `/goal delete` | Set, update, or delete the active chat goal; setting a goal also sends the objective to the agent |
+| `/goal <objective>` / `/goal update <text>` / `/goal delete` | Set, update, or delete the active chat goal; setting or reactivating a terminal goal sends the objective to the agent |
 | `/nudge` | Nudge the current agent run |
 | `/pause` / `/resume` | Pause or resume the active agent run |
 | `/presets` | Pick a model preset |

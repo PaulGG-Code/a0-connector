@@ -2625,7 +2625,7 @@ async def test_goal_command_update_and_delete_do_not_send_message(
         assert context_id == "ctx-1"
         calls.append((action, dict(payload)))
         goal = None if action == "delete" else {"objective": payload.get("objective"), "status": "active"}
-        return {"ok": True, "goal": goal}
+        return {"ok": True, "goal": goal, "reactivated": False}
 
     async def fake_send_chat_text(text: str, **kwargs: object) -> None:
         del kwargs
@@ -2644,6 +2644,35 @@ async def test_goal_command_update_and_delete_do_not_send_message(
     ]
     assert sent == []
     assert dummy_app.goal is None
+
+
+async def test_goal_command_reactivated_update_sends_objective(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    sent: list[str] = []
+
+    async def fake_goal_action(*args: object, **kwargs: object) -> dict[str, object]:
+        del args, kwargs
+        return {
+            "ok": True,
+            "goal": {"objective": "Continue the goal", "status": "active"},
+            "reactivated": True,
+        }
+
+    async def fake_send_chat_text(text: str, **kwargs: object) -> None:
+        del kwargs
+        sent.append(text)
+
+    monkeypatch.setattr(dummy_app.client, "goal_action", fake_goal_action)
+    monkeypatch.setattr(dummy_app, "_send_chat_text", fake_send_chat_text)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda *args, **kwargs: None)
+
+    await dummy_app._dispatch_command("/goal update Continue the goal")
+
+    assert sent == ["Continue the goal"]
 
 
 def test_goal_bar_update_button_prefills_update_command(dummy_app: DummyAgentZeroCLI) -> None:

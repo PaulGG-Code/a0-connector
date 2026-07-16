@@ -122,6 +122,7 @@ class FakeSession:
 
     async def goal_action(self, action: str, **payload: Any) -> dict[str, Any]:
         self.goal_calls.append((action, dict(payload)))
+        previous_status = str((self.goal or {}).get("status") or "")
         if action in {"create", "update"}:
             objective = str(payload.get("objective") or (self.goal or {}).get("objective") or "")
             status = str(payload.get("status") or (self.goal or {}).get("status") or "active")
@@ -132,7 +133,15 @@ class FakeSession:
             self.goal = {**(self.goal or {"objective": "current"}), "status": "active"}
         elif action == "delete":
             self.goal = None
-        return {"ok": True, "goal": self.goal}
+        return {
+            "ok": True,
+            "goal": self.goal,
+            "reactivated": (
+                action == "update"
+                and previous_status in {"blocked", "complete"}
+                and (self.goal or {}).get("status") == "active"
+            ),
+        }
 
     async def refresh_goal(self) -> dict[str, Any]:
         self.goal_calls.append(("get", {}))
@@ -312,11 +321,28 @@ async def test_headless_goal_commands_set_update_and_delete(tmp_path: Path) -> N
     ]
 
 
+async def test_headless_terminal_goal_update_restarts_agent(tmp_path: Path) -> None:
+    session = FakeSession(
+        CLIConfig(),
+        SimpleNamespace(on_event=lambda event: None, on_complete=lambda context_id: None),
+        workspace=tmp_path,
+        remote_file_write_enabled=True,
+        remote_exec_enabled=True,
+    )
+    session.goal = {"objective": "Old goal", "status": "blocked"}
+
+    updated = await dispatch_headless_command(session, "/goal update Continue the goal")
+
+    assert updated.lines == ["Goal updated."]
+    assert updated.await_completion is True
+    assert session.sent == ["Continue the goal"]
+
+
 def test_headless_queue_send_command_is_agent_starting() -> None:
     assert command_may_start_agent("/send") is True
     assert command_may_start_agent("/queue send") is True
     assert command_may_start_agent("/goal Find weak spots") is True
-    assert command_may_start_agent("/goal update Ship CLI row") is False
+    assert command_may_start_agent("/goal update Ship CLI row") is True
     assert command_may_start_agent("/goal delete") is False
     assert command_may_start_agent("/queue") is False
     assert command_may_start_agent("/status") is False
