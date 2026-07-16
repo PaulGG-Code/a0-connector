@@ -106,9 +106,10 @@ async def test_gateway_jsonl_contract_and_environment_auth(
             ]
         )
     )
+    config = CLIConfig()
     runner = GatewayRunner(
         _options(tmp_path),
-        CLIConfig(),
+        config,
         writer=JsonlWriter(output),
         input_stream=commands,
         session_factory=FakeSession,
@@ -124,6 +125,11 @@ async def test_gateway_jsonl_contract_and_environment_auth(
     assert session.kwargs["tools_only"] is True
     assert session.kwargs["host_browser_manager"].persist_enabled is False
     assert session.kwargs["computer_use_manager"].persist_enabled is False
+    assert (
+        session.kwargs["computer_use_manager"].config.computer_use_trust_mode
+        == "persistent"
+    )
+    assert config.computer_use_trust_mode == "allow"
     assert session.gateway["scopes"]["files"] is False
     assert session.gateway["scopes"]["file_write"] is False
     assert session.gateway["scopes"]["code_execution"] is False

@@ -79,7 +79,7 @@ _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
 _ARMING_STATUS = "arming"
 _REARM_REQUIRED_MESSAGE = (
     "Computer use is configured, but the installed desktop-control backend is not armed. "
-    "Run /computer-use on in the A0 CLI and approve the platform permission prompt if shown."
+    "Run /computer-use on and approve the platform permission prompt if shown."
 )
 
 

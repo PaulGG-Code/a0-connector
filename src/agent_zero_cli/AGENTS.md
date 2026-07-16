@@ -48,8 +48,11 @@
   browser preparation, Computer Use rearm, error, and shutdown messages. Saved
   web sessions are preferred, then ephemeral `A0_USERNAME`/`A0_PASSWORD` login;
   secrets must never appear in arguments or JSONL output. Gateway scope state
-  must not overwrite interactive CLI preferences. Preserve an HTTP(S) host's
-  reverse-proxy base path while rejecting embedded URL credentials.
+  must not overwrite interactive CLI preferences. A Launcher gateway maps the
+  copied Computer Use `allow` mode to `persistent` so a natural desktop action
+  may keep the platform approval prompt open without changing the interactive
+  CLI's saved mode. Preserve an HTTP(S) host's reverse-proxy base path while
+  rejecting embedded URL credentials.
 - Gateway shutdown owns complete cleanup of remote process groups, host-browser
   sessions, Computer Use sessions, and the Socket.IO connection. Emergency
   disconnect ends the current lease and exits cleanly rather than reconnecting.

@@ -164,6 +164,8 @@ class GatewayRunner:
         scopes = normalize_scopes(self.options.scopes)
         self.config.host_browser_enabled = scopes["browser"]
         self.config.computer_use_enabled = scopes["computer_use"]
+        if self.config.computer_use_trust_mode == "allow":
+            self.config.computer_use_trust_mode = "persistent"
         self.host_browser = self._browser_factory(self.config, persist_enabled=False)
         self.computer_use = self._computer_use_factory(self.config, persist_enabled=False)
         observer = GatewayObserver(self.writer.write, self.stop_event.set)
