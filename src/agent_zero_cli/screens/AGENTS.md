@@ -16,6 +16,7 @@
 - Textual `Select` widgets may emit duplicate `Changed` events while overlays close or while options refresh. Treat selection as user intent only when the screen is not suppressing events, the widget is not busy, and the value differs from the last committed value.
 - When refreshing `Select` state programmatically, update cached selection inside the suppression window to prevent render loops.
 - Result dataclasses should remain stable and easy for tests to assert.
+- `ModelPresetsScreen` shows Main, Utility, and Embedding model details and describes clearing a chat override as using the concrete preset from settings.
 
 ## Work Guidance
 

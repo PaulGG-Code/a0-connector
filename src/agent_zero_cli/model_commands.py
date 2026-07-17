@@ -122,7 +122,10 @@ async def cmd_model_presets(app: AgentZeroCLI) -> None:
         return
 
     override = switcher_payload.get("override") if isinstance(switcher_payload.get("override"), dict) else {}
-    current_preset = str(override.get("preset_name") or "").strip()
+    override_preset = str(override.get("preset_name") or "").strip()
+    configured_preset = str(switcher_payload.get("configured_preset") or "").strip()
+    effective_preset = str(switcher_payload.get("effective_preset") or override_preset).strip()
+    current_preset = "" if override and not override_preset else effective_preset
     custom_override_label = ""
     if override and not current_preset:
         custom_override_label = str(override.get("name") or override.get("provider") or "Custom override").strip()
@@ -131,6 +134,8 @@ async def cmd_model_presets(app: AgentZeroCLI) -> None:
         ModelPresetsScreen(
             presets=presets,
             current_preset=current_preset,
+            configured_preset=configured_preset,
+            override_active=bool(override),
             switch_allowed=bool(switcher_payload.get("allowed")),
             reason="Model preset switching is unavailable for this chat.",
             current_override_label=custom_override_label,
@@ -142,7 +147,7 @@ async def cmd_model_presets(app: AgentZeroCLI) -> None:
         raise TypeError(f"Unexpected model presets result: {result!r}")
 
     selected = result.preset_name or ""
-    has_custom_override = bool(override) and not current_preset
+    has_custom_override = bool(override) and not override_preset
     if selected == current_preset and not has_custom_override:
         return
     await set_model_preset(app, selected or None)
@@ -182,9 +187,19 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
         if isinstance(switcher_payload.get("utility_model"), dict)
         else {}
     )
+    embedding_payload = (
+        switcher_payload.get("embedding_model")
+        if isinstance(switcher_payload.get("embedding_model"), dict)
+        else {}
+    )
     raw_main_override = coerce_model_config(override_main_model(override))
     raw_utility_override = (
         coerce_model_config(override.get("utility"))
+        if isinstance(override, dict) and not preset_override_active
+        else {}
+    )
+    raw_embedding_override = (
+        coerce_model_config(override.get("embedding"))
         if isinstance(override, dict) and not preset_override_active
         else {}
     )
@@ -220,12 +235,18 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
     )
     main_override = result.main_model if result.main_changed else base_main_override
     utility_override = result.utility_model if result.utility_changed else base_utility_override
+    embedding_override = (
+        coerce_model_config(embedding_payload)
+        if preset_override_active
+        else raw_embedding_override
+    )
 
     try:
         payload = await app.client.set_model_override(
             context_id,
             main_model=main_override,
             utility_model=utility_override,
+            embedding_model=embedding_override,
         )
     except Exception as exc:
         app._show_notice(f"Failed to update model runtime override: {exc}", error=True)

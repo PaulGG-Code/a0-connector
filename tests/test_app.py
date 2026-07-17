@@ -1626,7 +1626,6 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
         model_bar = app.query_one("#model-switcher-bar", ModelSwitcherBar)
         model_bar.set_state(
             main_model={"provider": "codex", "name": "gpt-5.5"},
-            utility_model={"provider": "codex", "name": "gpt-5.4-mini"},
             presets=[],
             allowed=False,
         )
@@ -1636,6 +1635,8 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
         await pilot.pause(0.5)
 
         queue_bar = app.query_one("#message-queue-bar", MessageQueueBar)
+        assert len(model_bar.query(".model-switcher-chip")) == 1
+        assert str(model_bar._main_button.label) == "Main codex/gpt-5.5"
         assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
@@ -1652,7 +1653,6 @@ async def test_composer_bars_stack_without_gaps() -> None:
         model_bar = app.query_one("#model-switcher-bar", ModelSwitcherBar)
         model_bar.set_state(
             main_model={"provider": "codex", "name": "gpt-5.5"},
-            utility_model={"provider": "codex", "name": "gpt-5.4-mini"},
             presets=[],
             allowed=False,
         )
@@ -3228,7 +3228,7 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
 
     default_utility = {"provider": "a0_venice", "name": "venice-uncensored-1-2"}
     updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
-    calls: list[tuple[str, dict[str, object], dict[str, object]]] = []
+    calls: list[tuple[str, dict[str, object], dict[str, object], dict[str, object]]] = []
 
     async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
         assert context_id == "ctx-1"
@@ -3255,8 +3255,16 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
         *,
         main_model: dict[str, object] | None = None,
         utility_model: dict[str, object] | None = None,
+        embedding_model: dict[str, object] | None = None,
     ) -> dict[str, object]:
-        calls.append((context_id, dict(main_model or {}), dict(utility_model or {})))
+        calls.append(
+            (
+                context_id,
+                dict(main_model or {}),
+                dict(utility_model or {}),
+                dict(embedding_model or {}),
+            )
+        )
         return {
             "ok": True,
             "allowed": True,
@@ -3276,12 +3284,14 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
 
     await dummy_app._cmd_models(focus_target="main")
 
-    assert calls == [("ctx-1", updated_main, {})]
+    assert calls == [("ctx-1", updated_main, {}, {})]
 
 
-async def test_model_runtime_main_change_preserves_existing_utility_override(
+@pytest.mark.parametrize("named_preset", [False, True], ids=["custom", "named-preset"])
+async def test_model_runtime_main_change_preserves_other_models(
     dummy_app: DummyAgentZeroCLI,
     monkeypatch: pytest.MonkeyPatch,
+    named_preset: bool,
 ) -> None:
     dummy_app.current_context = "ctx-1"
     dummy_app.connected = True
@@ -3289,18 +3299,29 @@ async def test_model_runtime_main_change_preserves_existing_utility_override(
     dummy_app._model_switch_allowed = True
 
     utility_override = {"provider": "openai", "name": "gpt-5.4-mini"}
+    embedding_override = {"provider": "openai", "name": "text-embedding-3-large"}
     updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
-    calls: list[tuple[dict[str, object], dict[str, object]]] = []
+    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
 
     async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
         assert context_id == "ctx-1"
         return {
             "ok": True,
             "allowed": True,
-            "override": {"utility": dict(utility_override)},
-            "presets": [],
+            "override": (
+                {"preset_name": "Power"}
+                if named_preset
+                else {
+                    "utility": dict(utility_override),
+                    "embedding": dict(embedding_override),
+                }
+            ),
+            "configured_preset": "Default",
+            "effective_preset": "Power" if named_preset else "Default",
+            "presets": [{"name": "Default"}, {"name": "Power"}],
             "main_model": {"provider": "openai", "name": "gpt-5.4"},
             "utility_model": dict(utility_override),
+            "embedding_model": dict(embedding_override),
         }
 
     async def fake_push_screen_wait(self: object, screen: object) -> ModelRuntimeResult:
@@ -3317,16 +3338,28 @@ async def test_model_runtime_main_change_preserves_existing_utility_override(
         *,
         main_model: dict[str, object] | None = None,
         utility_model: dict[str, object] | None = None,
+        embedding_model: dict[str, object] | None = None,
     ) -> dict[str, object]:
         assert context_id == "ctx-1"
-        calls.append((dict(main_model or {}), dict(utility_model or {})))
+        calls.append(
+            (
+                dict(main_model or {}),
+                dict(utility_model or {}),
+                dict(embedding_model or {}),
+            )
+        )
         return {
             "ok": True,
             "allowed": True,
-            "override": {"chat": dict(main_model or {}), "utility": dict(utility_model or {})},
+            "override": {
+                "chat": dict(main_model or {}),
+                "utility": dict(utility_model or {}),
+                "embedding": dict(embedding_model or {}),
+            },
             "presets": [],
             "main_model": dict(main_model or {}),
             "utility_model": dict(utility_model or {}),
+            "embedding_model": dict(embedding_model or {}),
         }
 
     async def async_noop(*args, **kwargs) -> None:
@@ -3339,7 +3372,7 @@ async def test_model_runtime_main_change_preserves_existing_utility_override(
 
     await dummy_app._cmd_models(focus_target="main")
 
-    assert calls == [(updated_main, utility_override)]
+    assert calls == [(updated_main, utility_override, embedding_override)]
 
 
 async def test_chat_list_command_supports_project_filter_and_sort_flags(

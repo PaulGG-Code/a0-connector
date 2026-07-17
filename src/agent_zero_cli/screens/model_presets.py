@@ -11,7 +11,7 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Select, Static
 from textual.widgets._select import SelectOverlay
 
-from agent_zero_cli.model_config import format_model_label
+from agent_zero_cli.model_config import format_model_label, format_settings_preset_label
 
 
 @dataclass(frozen=True)
@@ -21,6 +21,7 @@ class ModelPresetChoice:
     description: str = ""
     main_model: str = ""
     utility_model: str = ""
+    embedding_model: str = ""
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,7 @@ def _coerce_model_preset(value: object) -> ModelPresetChoice:
             label=clean or "Unnamed preset",
             main_model="Connector default",
             utility_model="Connector default",
+            embedding_model="Connector default",
         )
     if isinstance(value, Mapping):
         raw_name = str(value.get("name") or value.get("value") or "").strip()
@@ -54,12 +56,14 @@ def _coerce_model_preset(value: object) -> ModelPresetChoice:
             or value.get("model")
         )
         raw_utility_model = value.get("utility") or value.get("utility_model")
+        raw_embedding_model = value.get("embedding") or value.get("embedding_model")
         return ModelPresetChoice(
             name=raw_name,
             label=raw_label or raw_name or "Unnamed preset",
             description=raw_description,
             main_model=_model_label(raw_main_model),
             utility_model=_model_label(raw_utility_model),
+            embedding_model=_model_label(raw_embedding_model),
         )
     clean = str(value).strip()
     return ModelPresetChoice(
@@ -67,6 +71,7 @@ def _coerce_model_preset(value: object) -> ModelPresetChoice:
         label=clean or "Unnamed preset",
         main_model="Connector default",
         utility_model="Connector default",
+        embedding_model="Connector default",
     )
 
 
@@ -84,19 +89,28 @@ def _coerce_preset_list(
     return tuple(items)
 
 
-def _preset_options(presets: Sequence[ModelPresetChoice]) -> list[tuple[str, str]]:
-    options: list[tuple[str, str]] = [("Default LLM", "")]
+def _preset_options(
+    presets: Sequence[ModelPresetChoice],
+    *,
+    configured_preset: str = "",
+    include_settings: bool = False,
+) -> list[tuple[str, str]]:
+    options: list[tuple[str, str]] = []
+    if include_settings:
+        options.append((format_settings_preset_label(configured_preset), ""))
     for preset in presets:
         options.append((preset.label or preset.name, preset.name))
-    return options
+    return options or [(format_settings_preset_label(configured_preset), "")]
 
 
-def _render_default_details() -> Text:
+def _render_settings_details(configured_preset: str) -> Text:
     details = Text()
-    details.append("Default LLM", style="bold")
+    details.append(format_settings_preset_label(configured_preset), style="bold")
     details.append("\nMain model:", style="dim")
     details.append(" Connector default")
     details.append("\nUtility model:", style="dim")
+    details.append(" Connector default")
+    details.append("\nEmbedding model:", style="dim")
     details.append(" Connector default")
     return details
 
@@ -108,6 +122,8 @@ def _render_preset_details(preset: ModelPresetChoice) -> Text:
     details.append(f" {preset.main_model or 'Connector default'}")
     details.append("\nUtility model:", style="dim")
     details.append(f" {preset.utility_model or 'Connector default'}")
+    details.append("\nEmbedding model:", style="dim")
+    details.append(f" {preset.embedding_model or 'Connector default'}")
     if preset.description:
         details.append("\nDescription:", style="dim")
         details.append(f" {preset.description}")
@@ -115,7 +131,7 @@ def _render_preset_details(preset: ModelPresetChoice) -> Text:
 
 
 class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
-    """Select a model preset with visible main/utility mapping details."""
+    """Select a model preset with visible main/utility/embedding details."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -128,6 +144,8 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
         presets: Sequence[ModelPresetChoice | Mapping[str, Any] | str] | None = None,
         *,
         current_preset: str = "",
+        configured_preset: str = "",
+        override_active: bool = False,
         switch_allowed: bool = True,
         reason: str = "",
         current_override_label: str = "",
@@ -139,6 +157,8 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
         if self._current_preset not in self._preset_lookup:
             self._current_preset = ""
         self._selected_preset = self._current_preset
+        self._configured_preset = configured_preset.strip()
+        self._include_settings = override_active or not self._current_preset
         self._switch_allowed = switch_allowed
         self._reason = reason
         self._current_override_label = current_override_label.strip()
@@ -149,11 +169,15 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
             with Vertical(id="model-presets-box"):
                 yield Static("Model Presets", id="model-presets-title")
                 yield Static(
-                    "Select a preset and inspect its Main/Utility model mapping before applying.",
+                    "Select a preset and inspect its Main, Utility, and Embedding models.",
                     id="model-presets-description",
                 )
                 yield Select(
-                    _preset_options(self._presets),
+                    _preset_options(
+                        self._presets,
+                        configured_preset=self._configured_preset,
+                        include_settings=self._include_settings,
+                    ),
                     prompt="Select preset",
                     allow_blank=False,
                     value=self._selected_preset,
@@ -173,7 +197,13 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
         self._suppress_events = True
         try:
             select = self.query_one("#model-presets-select", Select)
-            select.set_options(_preset_options(self._presets))
+            select.set_options(
+                _preset_options(
+                    self._presets,
+                    configured_preset=self._configured_preset,
+                    include_settings=self._include_settings,
+                )
+            )
             select.value = self._selected_preset
         finally:
             self._suppress_events = False
@@ -184,7 +214,15 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
     def _sync_details(self) -> None:
         details = self.query_one("#model-presets-details", Static)
         preset = self._preset_lookup.get(self._selected_preset)
-        details.update(_render_preset_details(preset) if preset else _render_default_details())
+        if preset:
+            details.update(_render_preset_details(preset))
+            return
+        configured = self._preset_lookup.get(self._configured_preset)
+        details.update(
+            _render_preset_details(configured)
+            if configured
+            else _render_settings_details(self._configured_preset)
+        )
 
     def _sync_status(self) -> None:
         status = self.query_one("#model-presets-status", Static)
@@ -195,7 +233,7 @@ class ModelPresetsScreen(ModalScreen[ModelPresetsResult | None]):
             override = Text()
             override.append("Current override:", style="dim")
             override.append(f" {self._current_override_label}. Apply ")
-            override.append("Default LLM", style="bold")
+            override.append(format_settings_preset_label(self._configured_preset), style="bold")
             override.append(" to clear it.")
             status.update(
                 override

@@ -9,7 +9,7 @@ from textual.containers import Horizontal
 from textual.message import Message
 from textual.widgets import Button, Select
 
-from agent_zero_cli.model_config import format_model_label
+from agent_zero_cli.model_config import format_model_label, format_settings_preset_label
 
 _CUSTOM_OVERRIDE_VALUE = "__custom_override__"
 _PRESET_MIN_VISIBLE_WIDTH = 82
@@ -80,9 +80,13 @@ def _model_text(model: object) -> str:
 def _preset_options(
     presets: Sequence[ModelPreset | Mapping[str, object] | str] | None,
     *,
+    configured_preset: str = "",
+    include_settings: bool = False,
     override_label: str = "",
 ) -> list[tuple[str, str]]:
-    options: list[tuple[str, str]] = [("Default LLM", "")]
+    options: list[tuple[str, str]] = []
+    if include_settings:
+        options.append((format_settings_preset_label(configured_preset), ""))
     if override_label:
         options.append((override_label, _CUSTOM_OVERRIDE_VALUE))
     for raw in presets or []:
@@ -93,7 +97,7 @@ def _preset_options(
         if preset.description:
             label = f"{label} - {preset.description}"
         options.append((label, preset.name))
-    return options
+    return options or [(format_settings_preset_label(configured_preset), "")]
 
 
 class ModelSwitcherBar(Horizontal):
@@ -122,9 +126,8 @@ class ModelSwitcherBar(Horizontal):
         super().__init__(id=id)
         self._summary = Horizontal(id="model-switcher-summary")
         self._main_button = Button("", id="model-switcher-main", classes="model-switcher-chip")
-        self._utility_button = Button("", id="model-switcher-utility", classes="model-switcher-chip")
         self._preset = Select(
-            [("Default LLM", "")],
+            [(format_settings_preset_label(""), "")],
             prompt="Preset",
             allow_blank=False,
             value="",
@@ -137,13 +140,11 @@ class ModelSwitcherBar(Horizontal):
         self._suppress_events = False
         self._selected_value = ""
         self._main_model_text = "—"
-        self._utility_model_text = "—"
         self.display = False
 
     def compose(self) -> ComposeResult:
         with self._summary:
             yield self._main_button
-            yield self._utility_button
         yield self._preset
 
     def on_mount(self) -> None:
@@ -161,9 +162,8 @@ class ModelSwitcherBar(Horizontal):
         self._suppress_events = True
         try:
             self._main_model_text = "—"
-            self._utility_model_text = "—"
             self._sync_summary_labels()
-            self._preset.set_options([("Default LLM", "")])
+            self._preset.set_options([(format_settings_preset_label(""), "")])
             self._preset.value = ""
         finally:
             self._suppress_events = False
@@ -177,23 +177,28 @@ class ModelSwitcherBar(Horizontal):
         self,
         *,
         main_model: object,
-        utility_model: object,
         presets: Sequence[ModelPreset | Mapping[str, object] | str] | None,
         allowed: bool,
         selected_preset: str = "",
+        configured_preset: str = "",
+        override_active: bool = False,
         override_label: str = "",
     ) -> None:
         self.display = True
         self._main_model_text = _model_text(main_model)
-        self._utility_model_text = _model_text(utility_model)
         self._sync_summary_labels()
 
-        options = _preset_options(presets, override_label=override_label)
+        options = _preset_options(
+            presets,
+            configured_preset=configured_preset,
+            include_settings=override_active or not selected_preset,
+            override_label=override_label,
+        )
         option_values = {value for _, value in options}
         current_value = (
-            selected_preset
-            if selected_preset and selected_preset in option_values
-            else (_CUSTOM_OVERRIDE_VALUE if override_label else "")
+            _CUSTOM_OVERRIDE_VALUE
+            if override_label
+            else (selected_preset if selected_preset in option_values else "")
         )
 
         self._suppress_events = True
@@ -211,11 +216,9 @@ class ModelSwitcherBar(Horizontal):
 
     def _sync_summary_labels(self) -> None:
         self._main_button.label = f"Main {self._main_model_text}"
-        self._utility_button.label = f"Utility {self._utility_model_text}"
         # Textual doesn't always re-measure auto-width buttons after a label swap
         # until the next resize event, so force a layout refresh here.
         self._main_button.refresh(layout=True)
-        self._utility_button.refresh(layout=True)
         self._summary.refresh(layout=True)
         self.refresh(layout=True)
 
@@ -226,7 +229,7 @@ class ModelSwitcherBar(Horizontal):
         self._preset.disabled = self._busy or not self._switch_allowed or self._option_count <= 1
 
     def _request_model_config(self, target: str) -> None:
-        if target not in {"main", "utility"}:
+        if target != "main":
             return
         if self._busy:
             return
@@ -236,10 +239,6 @@ class ModelSwitcherBar(Horizontal):
         button_id = event.button.id or ""
         if button_id == "model-switcher-main":
             self._request_model_config("main")
-            return
-        if button_id == "model-switcher-utility":
-            self._request_model_config("utility")
-            return
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if self._suppress_events or event.select.id != "model-switcher-preset":

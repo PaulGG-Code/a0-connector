@@ -463,7 +463,7 @@ class AgentZeroCLI(App):
             CommandSpec(
                 "/presets",
                 (),
-                "Open preset picker with Main/Utility model details.",
+                "Open preset picker with Main, Utility, and Embedding model details.",
                 lambda app: availability.model_presets_availability(app),
                 lambda app: app._cmd_model_presets(),
             ),

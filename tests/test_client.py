@@ -510,11 +510,16 @@ async def test_set_model_override_posts_complete_model_payload() -> None:
         "api_key": "sk-utility",
         "api_base": "https://example.test/utility/v1",
     }
+    embedding_model = {
+        "provider": "openai",
+        "name": "text-embedding-3-large",
+    }
 
     result = await client.set_model_override(
         "ctx-1",
         main_model=main_model,
         utility_model=utility_model,
+        embedding_model=embedding_model,
     )
 
     assert result == {"ok": True}
@@ -525,6 +530,7 @@ async def test_set_model_override_posts_complete_model_payload() -> None:
             "context_id": "ctx-1",
             "main_model": main_model,
             "utility_model": utility_model,
+            "embedding_model": embedding_model,
         },
     )
 

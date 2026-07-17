@@ -1371,12 +1371,14 @@ class A0Client:
         *,
         main_model: dict[str, Any] | None = None,
         utility_model: dict[str, Any] | None = None,
+        embedding_model: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "action": "set_override",
             "context_id": context_id,
             "main_model": main_model or {},
             "utility_model": utility_model or {},
+            "embedding_model": embedding_model or {},
         }
         response = await self._post("model_switcher", payload)
         if response.status_code >= 400:

@@ -18,6 +18,7 @@
 - Remote file, exec, computer-use, and browser operation handlers must emit their `connector_*_op_result` event before follow-up metadata refresh work starts.
 - Use the client after-result callbacks for browser and computer-use status refreshes so server-side pending operations resolve before any nested `connector_hello` round trip.
 - Refresh the active chat tab metadata after context completion so server-side automatic chat renames become visible in the TUI.
+- Model switcher state must use the backend's effective preset for display and identify the configured settings preset when clearing a chat override. Changing one runtime model must preserve untouched Utility and Embedding selections.
 - `/computer-use on` is a human approval command. It must force `ComputerUseManager.rearm()` immediately instead of silently validating a saved restore token first.
 - Host-browser `open` must reuse an already-open tab with the same normalized URL before creating a new tab. Keep `list` and `set_active` workflows available for title-based or URL-based selection.
 - Host-browser metadata must advertise stable browser choices, and incoming `browser_selection` / `host_browser_selection` values must select that browser instead of falling back to the automatic profile picker.

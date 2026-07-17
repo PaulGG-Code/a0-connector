@@ -78,6 +78,11 @@ def format_model_label(value: object, *, default: str = "Connector default") -> 
     return text or default
 
 
+def format_settings_preset_label(value: object) -> str:
+    name = str(value or "").strip()
+    return f"Use preset from settings ({name})" if name else "Use preset from settings"
+
+
 def override_main_model(override: Mapping[str, Any] | None) -> object:
     if not isinstance(override, Mapping) or override.get("preset_name"):
         return None
@@ -96,11 +101,13 @@ def apply_model_switcher_state(payload: dict[str, Any]) -> tuple[bool, dict[str,
     """
     presets = payload.get("presets") if isinstance(payload.get("presets"), list) else []
     override = payload.get("override") if isinstance(payload.get("override"), dict) else {}
-    selected_preset = str(override.get("preset_name") or "").strip()
+    override_preset = str(override.get("preset_name") or "").strip()
+    configured_preset = str(payload.get("configured_preset") or "").strip()
+    selected_preset = str(payload.get("effective_preset") or override_preset).strip()
     override_label = ""
     main_model = payload.get("main_model") if isinstance(payload.get("main_model"), Mapping) else {}
 
-    if override and not selected_preset:
+    if override and not override_preset:
         override_label = str(override.get("name") or override.get("provider") or "Custom override").strip()
     elif selected_preset:
         preset_names = {
@@ -115,13 +122,14 @@ def apply_model_switcher_state(payload: dict[str, Any]) -> tuple[bool, dict[str,
 
     state_kwargs = {
         "main_model": main_model,
-        "utility_model": payload.get("utility_model"),
         "presets": presets,
         "allowed": allowed,
         "selected_preset": selected_preset,
+        "configured_preset": configured_preset,
+        "override_active": bool(override),
         "override_label": override_label,
     }
-    
+
     return allowed, state_kwargs
 
 
