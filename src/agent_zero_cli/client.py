@@ -119,6 +119,7 @@ class A0Client:
         self._events_registered = False
         self._last_connect_error: Any = None
         self._suppress_disconnect_callback = False
+        self._op_result_notification_tasks: set[asyncio.Task[None]] = set()
 
         self.on_connect: Callable[[], None] | None = None
         self.on_disconnect: Callable[[], None] | None = None
@@ -554,7 +555,7 @@ class A0Client:
                 result,
                 namespace=WS_NAMESPACE,
             )
-            await self._notify_op_result_sent(
+            self._notify_op_result_sent(
                 self.on_computer_use_op_result_sent,
                 request,
                 result,
@@ -569,7 +570,7 @@ class A0Client:
                 result,
                 namespace=WS_NAMESPACE,
             )
-            await self._notify_op_result_sent(
+            self._notify_op_result_sent(
                 self.on_browser_op_result_sent,
                 request,
                 result,
@@ -584,7 +585,7 @@ class A0Client:
                 result,
                 namespace=WS_NAMESPACE,
             )
-            await self._notify_op_result_sent(
+            self._notify_op_result_sent(
                 self.on_gateway_control_result_sent,
                 request,
                 result,
@@ -615,8 +616,8 @@ class A0Client:
             for index, chunk in enumerate(chunks)
         ]
 
-    @staticmethod
-    async def _notify_op_result_sent(
+    def _notify_op_result_sent(
+        self,
         callback: Callable[[dict[str, Any], dict[str, Any]], Any] | None,
         request: dict[str, Any],
         result: dict[str, Any],
@@ -625,8 +626,17 @@ class A0Client:
             return
         try:
             notification = callback(request, result)
-            if asyncio.iscoroutine(notification):
-                await notification
+        except Exception:
+            return
+        if asyncio.iscoroutine(notification):
+            task = asyncio.create_task(self._await_op_result_notification(notification))
+            self._op_result_notification_tasks.add(task)
+            task.add_done_callback(self._op_result_notification_tasks.discard)
+
+    @staticmethod
+    async def _await_op_result_notification(notification: Any) -> None:
+        try:
+            await notification
         except Exception:
             return
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import ssl
@@ -1425,6 +1426,41 @@ async def test_gateway_control_result_is_emitted_before_follow_up_callback() -> 
         ("connector_gateway_control_result", result, "/ws")
     ]
     assert after_calls == [[("connector_gateway_control_result", result, "/ws")]]
+
+
+async def test_gateway_control_handler_does_not_wait_for_follow_up_callback() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(
+            status_code=200,
+            text='0{"sid":"sid-1","upgrades":["websocket"],"pingInterval":25000,"pingTimeout":20000}',
+        )
+    )
+    client.sio = FakeSocketIOClient()
+    result = {"request_id": "control-1", "ok": True}
+    client.on_gateway_control = AsyncMock(return_value=result)
+    callback_started = asyncio.Event()
+    callback_release = asyncio.Event()
+
+    async def after_result_sent(_request: dict, _result: dict) -> None:
+        callback_started.set()
+        await callback_release.wait()
+
+    client.on_gateway_control_result_sent = after_result_sent
+
+    await client.connect_websocket()
+    handler = client.sio.handlers[("/ws", "connector_gateway_control")]
+    handler_task = asyncio.create_task(
+        handler({"data": {"request_id": "control-1", "action": "set_master"}})
+    )
+
+    try:
+        await asyncio.wait_for(callback_started.wait(), timeout=1)
+        assert handler_task.done()
+    finally:
+        callback_release.set()
+        await handler_task
 
 
 async def test_computer_use_handler_error_is_serialized() -> None:
