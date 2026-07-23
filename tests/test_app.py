@@ -3416,8 +3416,10 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
     dummy_app._model_switch_allowed = True
 
     default_utility = {"provider": "a0_venice", "name": "venice-uncensored-1-2"}
+    default_chat = {"provider": "openai", "name": "gpt-5.4"}
     updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
-    calls: list[tuple[str, dict[str, object], dict[str, object], dict[str, object]]] = []
+    saved_presets: list[list[dict[str, object]]] = []
+    clear_calls: list[tuple[str, str | None]] = []
 
     async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
         assert context_id == "ctx-1"
@@ -3425,8 +3427,16 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
             "ok": True,
             "allowed": True,
             "override": None,
-            "presets": [],
-            "main_model": {"provider": "openai", "name": "gpt-5.4"},
+            "configured_preset": "Default",
+            "effective_preset": "Default",
+            "presets": [
+                {
+                    "name": "Default",
+                    "chat": dict(default_chat),
+                    "utility": dict(default_utility),
+                }
+            ],
+            "main_model": dict(default_chat),
             "utility_model": dict(default_utility),
         }
 
@@ -3439,27 +3449,20 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
             utility_changed=False,
         )
 
-    async def fake_set_model_override(
-        context_id: str,
-        *,
-        main_model: dict[str, object] | None = None,
-        utility_model: dict[str, object] | None = None,
-        embedding_model: dict[str, object] | None = None,
-    ) -> dict[str, object]:
-        calls.append(
-            (
-                context_id,
-                dict(main_model or {}),
-                dict(utility_model or {}),
-                dict(embedding_model or {}),
-            )
-        )
+    async def fake_save_model_presets(presets: list[dict[str, object]]) -> dict[str, object]:
+        saved_presets.append(presets)
+        return {"ok": True}
+
+    async def fake_set_model_preset(context_id: str, preset_name: str | None) -> dict[str, object]:
+        clear_calls.append((context_id, preset_name))
         return {
             "ok": True,
             "allowed": True,
-            "override": {"chat": dict(main_model or {})},
-            "presets": [],
-            "main_model": dict(main_model or {}),
+            "override": None,
+            "configured_preset": "Default",
+            "effective_preset": "Default",
+            "presets": saved_presets[-1],
+            "main_model": dict(updated_main),
             "utility_model": dict(default_utility),
         }
 
@@ -3467,13 +3470,17 @@ async def test_model_runtime_main_change_does_not_pin_default_utility(
         del args, kwargs
 
     monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
-    monkeypatch.setattr(dummy_app.client, "set_model_override", fake_set_model_override)
+    monkeypatch.setattr(dummy_app.client, "save_model_presets", fake_save_model_presets)
+    monkeypatch.setattr(dummy_app.client, "set_model_preset", fake_set_model_preset)
     monkeypatch.setattr(DummyAgentZeroCLI, "push_screen_wait", fake_push_screen_wait)
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
 
     await dummy_app._cmd_models(focus_target="main")
 
-    assert calls == [("ctx-1", updated_main, {}, {})]
+    assert clear_calls == [("ctx-1", None)]
+    assert len(saved_presets) == 1
+    assert saved_presets[0][0]["chat"] == updated_main
+    assert saved_presets[0][0]["utility"] == default_utility
 
 
 @pytest.mark.parametrize("named_preset", [False, True], ids=["custom", "named-preset"])
@@ -3489,8 +3496,10 @@ async def test_model_runtime_main_change_preserves_other_models(
 
     utility_override = {"provider": "openai", "name": "gpt-5.4-mini"}
     embedding_override = {"provider": "openai", "name": "text-embedding-3-large"}
+    default_chat = {"provider": "openai", "name": "gpt-5.4"}
     updated_main = {"provider": "codex_oauth", "name": "gpt-5.5"}
-    calls: list[tuple[dict[str, object], dict[str, object], dict[str, object]]] = []
+    saved_presets: list[list[dict[str, object]]] = []
+    clear_calls: list[tuple[str, str | None]] = []
 
     async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
         assert context_id == "ctx-1"
@@ -3507,8 +3516,16 @@ async def test_model_runtime_main_change_preserves_other_models(
             ),
             "configured_preset": "Default",
             "effective_preset": "Power" if named_preset else "Default",
-            "presets": [{"name": "Default"}, {"name": "Power"}],
-            "main_model": {"provider": "openai", "name": "gpt-5.4"},
+            "presets": [
+                {
+                    "name": "Default",
+                    "chat": dict(default_chat),
+                    "utility": dict(utility_override),
+                    "embedding": dict(embedding_override),
+                },
+                {"name": "Power"},
+            ],
+            "main_model": dict(default_chat),
             "utility_model": dict(utility_override),
             "embedding_model": dict(embedding_override),
         }
@@ -3522,46 +3539,42 @@ async def test_model_runtime_main_change_preserves_other_models(
             utility_changed=False,
         )
 
-    async def fake_set_model_override(
-        context_id: str,
-        *,
-        main_model: dict[str, object] | None = None,
-        utility_model: dict[str, object] | None = None,
-        embedding_model: dict[str, object] | None = None,
-    ) -> dict[str, object]:
+    async def fake_save_model_presets(presets: list[dict[str, object]]) -> dict[str, object]:
+        saved_presets.append(presets)
+        return {"ok": True}
+
+    async def fake_set_model_preset(context_id: str, preset_name: str | None) -> dict[str, object]:
         assert context_id == "ctx-1"
-        calls.append(
-            (
-                dict(main_model or {}),
-                dict(utility_model or {}),
-                dict(embedding_model or {}),
-            )
-        )
+        clear_calls.append((context_id, preset_name))
         return {
             "ok": True,
             "allowed": True,
-            "override": {
-                "chat": dict(main_model or {}),
-                "utility": dict(utility_model or {}),
-                "embedding": dict(embedding_model or {}),
-            },
-            "presets": [],
-            "main_model": dict(main_model or {}),
-            "utility_model": dict(utility_model or {}),
-            "embedding_model": dict(embedding_model or {}),
+            "override": None,
+            "configured_preset": "Default",
+            "effective_preset": "Default",
+            "presets": saved_presets[-1],
+            "main_model": dict(updated_main),
+            "utility_model": dict(utility_override),
+            "embedding_model": dict(embedding_override),
         }
 
     async def async_noop(*args, **kwargs) -> None:
         del args, kwargs
 
     monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
-    monkeypatch.setattr(dummy_app.client, "set_model_override", fake_set_model_override)
+    monkeypatch.setattr(dummy_app.client, "save_model_presets", fake_save_model_presets)
+    monkeypatch.setattr(dummy_app.client, "set_model_preset", fake_set_model_preset)
     monkeypatch.setattr(DummyAgentZeroCLI, "push_screen_wait", fake_push_screen_wait)
     monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
 
     await dummy_app._cmd_models(focus_target="main")
 
-    assert calls == [(updated_main, utility_override, embedding_override)]
+    assert clear_calls == [("ctx-1", None)]
+    assert len(saved_presets) == 1
+    saved_default = saved_presets[0][0]
+    assert saved_default["chat"] == updated_main
+    assert saved_default["utility"] == utility_override
+    assert saved_default["embedding"] == embedding_override
 
 
 async def test_chat_list_command_supports_project_filter_and_sort_flags(
