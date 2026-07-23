@@ -4934,9 +4934,12 @@ async def test_chat_log_caches_rendered_content_until_updated() -> None:
         widget = log._seq_to_widget[1]
         first = widget.render()
         assert widget.render() is first
+        assert hasattr(widget._render_cache, "lines")
 
         widget.update(Panel("Second version", padding=(0, 1)))
         assert widget.render() is not first
+        await pilot.pause()
+        assert hasattr(widget._render_cache, "lines")
 
 
 async def test_chat_log_prepends_older_history_before_loaded_entries() -> None:

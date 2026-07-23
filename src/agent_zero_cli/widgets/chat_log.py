@@ -351,20 +351,20 @@ class SelectableStatic(Static):
             disabled=disabled,
         )
         self._renderable = content
-        self._render_cache: tuple[tuple[int, int, int], Content] | None = None
+        self._a0_content_cache: tuple[tuple[int, int, int], Content] | None = None
 
     def render(self) -> Content:
         cache_key = self._render_cache_key()
-        if self._render_cache is not None and self._render_cache[0] == cache_key:
-            return self._render_cache[1]
+        if self._a0_content_cache is not None and self._a0_content_cache[0] == cache_key:
+            return self._a0_content_cache[1]
 
         content = _renderable_to_content(self, self._renderable)
-        self._render_cache = (cache_key, content)
+        self._a0_content_cache = (cache_key, content)
         return content
 
     def update(self, content: RenderableType = "", *, layout: bool = True) -> None:
         self._renderable = content
-        self._render_cache = None
+        self._a0_content_cache = None
         self.refresh(layout=layout)
 
     def _render_cache_key(self) -> tuple[int, int, int]:
@@ -384,10 +384,10 @@ class SelectableStatic(Static):
 
     def on_resize(self, event: events.Resize) -> None:
         del event
-        self._render_cache = None
+        self._a0_content_cache = None
 
     def notify_style_update(self) -> None:
-        self._render_cache = None
+        self._a0_content_cache = None
         super().notify_style_update()
 
     def copy_text(self) -> str:
