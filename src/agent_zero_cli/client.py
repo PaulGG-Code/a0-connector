@@ -1377,6 +1377,23 @@ class A0Client:
         presets = data.get("presets", data.get("data", []))
         return presets if isinstance(presets, list) else []
 
+    async def save_model_presets(self, presets: list[dict[str, Any]]) -> dict[str, Any]:
+        response = await self._post(
+            "model_presets",
+            {"action": "save", "presets": presets},
+        )
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "message": self._response_message(response),
+                "status_code": response.status_code,
+            }
+
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
+
     async def get_model_switcher(self, context_id: str) -> dict[str, Any]:
         response = await self._post(
             "model_switcher",

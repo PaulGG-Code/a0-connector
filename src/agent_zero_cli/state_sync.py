@@ -109,6 +109,19 @@ async def refresh_model_switcher_snapshot(app: AgentZeroCLI, *, silent: bool = T
         return False
 
     signature = model_switcher_signature(payload)
+    pending_signature = app._model_switcher_signature_pending
+    if pending_signature:
+        if signature == pending_signature:
+            app._model_switcher_signature = signature
+            app._model_switcher_signature_pending = ""
+            app._model_switcher_signature_pending_retries = 0
+            return False
+        if app._model_switcher_signature_pending_retries < 2:
+            app._model_switcher_signature_pending_retries += 1
+            return False
+        app._model_switcher_signature_pending = ""
+        app._model_switcher_signature_pending_retries = 0
+
     if signature == app._model_switcher_signature:
         return False
 

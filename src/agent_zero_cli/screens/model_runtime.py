@@ -37,7 +37,7 @@ def _model_label(value: Mapping[str, Any] | None) -> str:
 
 
 class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
-    """Edit Main/Utility runtime model configuration for this chat."""
+    """Edit the Main/Utility models in Agent Zero's Default preset."""
 
     BINDINGS = [
         Binding("escape", "cancel", "Cancel"),
@@ -52,15 +52,10 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
         utility_model: Mapping[str, Any] | None = None,
         focus_target: str = "main",
         provider_options: Sequence[tuple[str, str]] | None = None,
-        provider_api_key_status: Mapping[str, object] | None = None,
-        main_has_api_key: bool = False,
-        utility_has_api_key: bool = False,
     ) -> None:
         super().__init__()
         self._main_model = coerce_model_config(main_model)
         self._utility_model = coerce_model_config(utility_model)
-        self._main_has_api_key = bool(main_has_api_key)
-        self._utility_has_api_key = bool(utility_has_api_key)
         self._focus_target = "utility" if focus_target == "utility" else "main"
         self._main_label = _model_label(main_model)
         self._utility_label = _model_label(utility_model)
@@ -69,19 +64,6 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
             main_model=self._main_model,
             utility_model=self._utility_model,
         )
-        self._provider_api_key_status = {
-            str(provider).strip().lower(): bool(has_key)
-            for provider, has_key in dict(provider_api_key_status or {}).items()
-            if str(provider).strip()
-        }
-
-        main_provider = _clean_text(self._main_model.get("provider")).lower()
-        utility_provider = _clean_text(self._utility_model.get("provider")).lower()
-        if main_provider and main_provider not in self._provider_api_key_status:
-            self._provider_api_key_status[main_provider] = self._main_has_api_key
-        if utility_provider and utility_provider not in self._provider_api_key_status:
-            self._provider_api_key_status[utility_provider] = self._utility_has_api_key
-
     def _normalize_provider_options(
         self,
         options: Sequence[tuple[str, str]] | None,
@@ -118,18 +100,11 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
         provider = _clean_text(values.get("provider"))
         return provider if provider else Select.NULL
 
-    def _api_key_placeholder(self, *, provider: str, explicit_key: str = "") -> str:
-        if explicit_key:
-            return "Custom key override for this chat"
-        if self._provider_api_key_status.get(provider.strip().lower(), False):
-            return "Already set in Agent Zero (leave empty to keep it)"
-        return "Set your API key for this provider"
-
     def compose(self) -> ComposeResult:
         with Vertical(id="model-runtime-box"):
-            yield Static("Change LLMs", id="model-runtime-title")
+            yield Static("Change Default LLMs", id="model-runtime-title")
             yield Static(
-                "Pick provider and model for this chat. API key and Base URL are optional overrides.",
+                "Pick the provider and model for Agent Zero's Default preset. Configure API keys in Agent Zero.",
                 id="model-runtime-description",
             )
             yield from self._compose_section(
@@ -173,16 +148,6 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
                 placeholder="Example: claude-sonnet-4 or gpt-4o",
                 id=f"model-runtime-{key}-name",
             )
-            yield Static("API Key", classes="model-runtime-label")
-            yield Input(
-                value=_clean_text(values.get("api_key")),
-                placeholder=self._api_key_placeholder(
-                    provider=_clean_text(values.get("provider")),
-                    explicit_key=_clean_text(values.get("api_key")),
-                ),
-                password=True,
-                id=f"model-runtime-{key}-api-key",
-            )
             yield Static("Base URL", classes="model-runtime-label")
             yield Input(
                 value=_clean_text(values.get("api_base")),
@@ -210,48 +175,16 @@ class ModelRuntimeScreen(Screen[ModelRuntimeResult | None]):
         if button_id == "model-runtime-cancel":
             self.dismiss(None)
 
-    def on_select_changed(self, event: Select.Changed) -> None:
-        select_id = event.select.id or ""
-        if select_id == "model-runtime-main-provider":
-            self._sync_api_key_placeholder("main")
-        elif select_id == "model-runtime-utility-provider":
-            self._sync_api_key_placeholder("utility")
-
-    def on_input_changed(self, event: Input.Changed) -> None:
-        input_id = event.input.id or ""
-        if input_id == "model-runtime-main-api-key":
-            self._sync_api_key_placeholder("main")
-        elif input_id == "model-runtime-utility-api-key":
-            self._sync_api_key_placeholder("utility")
-
-    def _selected_provider(self, key: str) -> str:
-        provider_value = self.query_one(f"#model-runtime-{key}-provider", Select).value
-        if isinstance(provider_value, str):
-            return _clean_text(provider_value).lower()
-        fallback = self._main_model if key == "main" else self._utility_model
-        return _clean_text(fallback.get("provider")).lower()
-
-    def _sync_api_key_placeholder(self, key: str) -> None:
-        input_widget = self.query_one(f"#model-runtime-{key}-api-key", Input)
-        explicit_key = _clean_text(input_widget.value)
-        input_widget.placeholder = self._api_key_placeholder(
-            provider=self._selected_provider(key),
-            explicit_key=explicit_key,
-        )
-
     def _collect_model(self, key: str) -> dict[str, str]:
         provider_value = self.query_one(f"#model-runtime-{key}-provider", Select).value
         provider = _clean_text(provider_value) if isinstance(provider_value, str) else ""
         name = _clean_text(self.query_one(f"#model-runtime-{key}-name", Input).value)
-        api_key = _clean_text(self.query_one(f"#model-runtime-{key}-api-key", Input).value)
         base_url = _clean_text(self.query_one(f"#model-runtime-{key}-base-url", Input).value)
         payload: dict[str, str] = {}
         if provider:
             payload["provider"] = provider
         if name:
             payload["name"] = name
-        if api_key:
-            payload["api_key"] = api_key
         if base_url:
             payload["api_base"] = base_url
         return payload

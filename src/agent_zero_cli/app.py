@@ -255,6 +255,8 @@ class AgentZeroCLI(App):
         self._model_switch_allowed = False
         self._settings_snapshot_signature = ""
         self._model_switcher_signature = ""
+        self._model_switcher_signature_pending = ""
+        self._model_switcher_signature_pending_retries = 0
         self._pause_latched = False
         self._slash_palette_query: str | None = None
         self._skill_palette_cache: list[dict[str, Any]] = []
@@ -1396,6 +1398,8 @@ class AgentZeroCLI(App):
 
     def _clear_model_switcher(self) -> None:
         clear_model_switcher(self)
+        self._model_switcher_signature_pending = ""
+        self._model_switcher_signature_pending_retries = 0
 
     def _apply_model_switcher_state(self, payload: dict[str, Any]) -> None:
         from agent_zero_cli.model_config import apply_model_switcher_state

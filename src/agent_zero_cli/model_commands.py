@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from copy import deepcopy
+from typing import TYPE_CHECKING, Any
 
 from agent_zero_cli.model_config import (
     apply_model_switcher_state,
     coerce_model_config,
     collect_provider_options,
-    collect_provider_api_key_status,
-    override_main_model,
 )
 from agent_zero_cli.state_sync import model_switcher_signature
 from agent_zero_cli.screens.model_presets import ModelPresetsResult, ModelPresetsScreen
@@ -49,6 +48,35 @@ async def refresh_model_switcher(app: AgentZeroCLI, *, silent: bool = True) -> N
     widget.set_busy(False)
 
 
+async def _apply_model_switcher_payload(
+    app: AgentZeroCLI,
+    payload: dict[str, Any],
+    *,
+    bar: ModelSwitcherBar | None = None,
+    optimistic: bool = False,
+) -> None:
+    if not payload or "main_model" not in payload or "presets" not in payload:
+        await refresh_model_switcher(app, silent=True)
+        return
+
+    allowed, state_kwargs = apply_model_switcher_state(payload)
+    signature = model_switcher_signature(payload)
+    app._model_switcher_signature = signature
+    if optimistic:
+        app._model_switcher_signature_pending = signature
+        app._model_switcher_signature_pending_retries = 0
+    app._model_switch_allowed = allowed
+
+    if bar is not None:
+        bar.set_state(**state_kwargs)
+        return
+
+    try:
+        app.query_one("#model-switcher-bar", ModelSwitcherBar).set_state(**state_kwargs)
+    except Exception:
+        pass
+
+
 async def set_model_preset(
     app: AgentZeroCLI,
     preset_name: str | None,
@@ -84,13 +112,10 @@ async def set_model_preset(
             app._show_notice(f"Failed to update model preset: {exc}", error=True)
         return
 
-    allowed, state_kwargs = apply_model_switcher_state(payload)
-    app._model_switcher_signature = model_switcher_signature(payload)
-    app._model_switch_allowed = allowed
+    await _apply_model_switcher_payload(app, payload, bar=target_bar, optimistic=True)
     if target_bar is not None:
-        target_bar.set_state(**state_kwargs)
         target_bar.set_busy(False)
-    
+
     # We call back into app to refresh tokens (which is a global state logic)
     await app._refresh_token_usage()
 
@@ -182,36 +207,22 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
         app._show_notice(availability.reason or "Model runtime editing is unavailable.", error=True)
         return
 
-    override = switcher_payload.get("override") if isinstance(switcher_payload.get("override"), dict) else {}
-    preset_override_active = bool(override.get("preset_name")) if isinstance(override, dict) else False
-    main_payload = switcher_payload.get("main_model") if isinstance(switcher_payload.get("main_model"), dict) else {}
-    utility_payload = (
-        switcher_payload.get("utility_model")
-        if isinstance(switcher_payload.get("utility_model"), dict)
-        else {}
-    )
-    embedding_payload = (
-        switcher_payload.get("embedding_model")
-        if isinstance(switcher_payload.get("embedding_model"), dict)
-        else {}
-    )
-    raw_main_override = coerce_model_config(override_main_model(override))
-    raw_utility_override = (
-        coerce_model_config(override.get("utility"))
-        if isinstance(override, dict) and not preset_override_active
-        else {}
-    )
-    raw_embedding_override = (
-        coerce_model_config(override.get("embedding"))
-        if isinstance(override, dict) and not preset_override_active
-        else {}
-    )
-    main_model = coerce_model_config(override_main_model(override))
-    utility_model = coerce_model_config(override.get("utility") if isinstance(override, dict) else None)
-    if not main_model:
-        main_model = coerce_model_config(main_payload)
-    if not utility_model:
-        utility_model = coerce_model_config(utility_payload)
+    presets = switcher_payload.get("presets")
+    default_preset = next(
+        (
+            preset
+            for preset in presets
+            if isinstance(preset, dict)
+            and str(preset.get("name") or "").strip().casefold() == "default"
+        ),
+        None,
+    ) if isinstance(presets, list) else None
+    if not isinstance(default_preset, dict):
+        app._show_notice("Agent Zero did not provide its Default model preset.", error=True)
+        return
+
+    main_model = coerce_model_config(default_preset.get("chat"))
+    utility_model = coerce_model_config(default_preset.get("utility"))
 
     result = await app.push_screen_wait(
         ModelRuntimeScreen(
@@ -219,9 +230,6 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
             utility_model=utility_model,
             focus_target=focus_target,
             provider_options=collect_provider_options(switcher_payload),
-            provider_api_key_status=collect_provider_api_key_status(switcher_payload),
-            main_has_api_key=bool(main_payload.get("has_api_key")),
-            utility_has_api_key=bool(utility_payload.get("has_api_key")),
         )
     )
     if result is None:
@@ -232,38 +240,44 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
     if not result.main_changed and not result.utility_changed:
         return
 
-    base_main_override = coerce_model_config(main_payload) if preset_override_active else raw_main_override
-    base_utility_override = (
-        coerce_model_config(utility_payload) if preset_override_active else raw_utility_override
+    presets_to_save = deepcopy(presets)
+    default_to_save = next(
+        preset
+        for preset in presets_to_save
+        if isinstance(preset, dict)
+        and str(preset.get("name") or "").strip().casefold() == "default"
     )
-    main_override = result.main_model if result.main_changed else base_main_override
-    utility_override = result.utility_model if result.utility_changed else base_utility_override
-    embedding_override = (
-        coerce_model_config(embedding_payload)
-        if preset_override_active
-        else raw_embedding_override
-    )
+    for slot, model, changed in (
+        ("chat", result.main_model, result.main_changed),
+        ("utility", result.utility_model, result.utility_changed),
+    ):
+        if not changed:
+            continue
+        current = default_to_save.get(slot)
+        updated = dict(current) if isinstance(current, dict) else {}
+        if str(updated.get("provider") or "").strip().casefold() != str(
+            model.get("provider") or ""
+        ).strip().casefold():
+            updated.pop("api_base", None)
+            updated.pop("kwargs", None)
+        updated.update(model)
+        default_to_save[slot] = updated
 
     try:
-        payload = await app.client.set_model_override(
-            context_id,
-            main_model=main_override,
-            utility_model=utility_override,
-            embedding_model=embedding_override,
-        )
+        saved = await app.client.save_model_presets(presets_to_save)
     except Exception as exc:
-        app._show_notice(f"Failed to update model runtime override: {exc}", error=True)
+        app._show_notice(f"Failed to update the Default model preset: {exc}", error=True)
         return
-    if not payload.get("ok"):
-        app._show_notice(str(payload.get("message") or "Failed to update model runtime override."), error=True)
+    if not saved.get("ok"):
+        app._show_notice(str(saved.get("message") or "Failed to update the Default model preset."), error=True)
         return
 
-    allowed, state_kwargs = apply_model_switcher_state(payload)
-    app._model_switcher_signature = model_switcher_signature(payload)
-    app._model_switch_allowed = allowed
     try:
-        app.query_one("#model-switcher-bar", ModelSwitcherBar).set_state(**state_kwargs)
-    except Exception:
-        pass
+        payload = await app.client.set_model_preset(context_id, None)
+    except Exception as exc:
+        app._show_notice(f"Default model preset saved, but failed to clear this chat override: {exc}", error=True)
+        return
+
+    await _apply_model_switcher_payload(app, payload, optimistic=True)
 
     await app._refresh_token_usage(context_id=context_id)

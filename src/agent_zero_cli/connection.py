@@ -512,6 +512,8 @@ def _reset_disconnected_state(app: AgentZeroCLI) -> None:
     app._settings_snapshot_signature = ""
     app._model_switcher_signature = ""
     app._clear_goal_bar()
+    app._model_switcher_signature_pending = ""
+    app._model_switcher_signature_pending_retries = 0
     app._last_remote_tree_hash = ""
     app._last_remote_tree_published_at = 0.0
     app._python_tty.set_exec_config(None)
