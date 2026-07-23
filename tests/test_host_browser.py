@@ -919,6 +919,7 @@ def test_hello_metadata_marks_missing_playwright_as_preparable(tmp_path: Path) -
 
     assert metadata["supported"] is False
     assert metadata["can_prepare"] is True
+    assert metadata["can_repair"] is True
     assert metadata["status"] == "unsupported"
     assert "Browser support is incomplete" in metadata["support_reason"]
     assert "Browser setup action" in metadata["support_reason"]
@@ -1621,6 +1622,32 @@ async def test_host_browser_manager_can_repair_missing_playwright(tmp_path: Path
     assert result["installed"] is True
     assert calls == [manager.playwright_install_command()]
     assert manager.has_playwright_dependency() is True
+
+
+async def test_browser_preparation_repairs_playwright_before_reporting_no_browser() -> None:
+    calls: list[list[str]] = []
+
+    async def fake_installer(command: list[str]) -> tuple[int, str]:
+        calls.append(command)
+        manager._playwright_available = True
+        return 0, "installed"
+
+    manager = HostBrowserManager(
+        CLIConfig(host_browser_enabled=True),
+        candidate_provider=lambda: [],
+        playwright_available=False,
+        playwright_installer=fake_installer,
+    )
+
+    metadata = manager.hello_metadata(profile_mode="existing")
+    assert metadata["can_prepare"] is False
+    assert metadata["can_repair"] is True
+
+    with pytest.raises(RuntimeError, match="No Chromium-family browser profile"):
+        await manager.ensure_available(profile_mode="existing")
+
+    assert calls == [manager.playwright_install_command()]
+    assert manager.hello_metadata(profile_mode="existing")["can_repair"] is False
 
 
 async def test_host_browser_manager_bootstraps_pip_when_uv_unavailable(

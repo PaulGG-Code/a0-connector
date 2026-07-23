@@ -112,9 +112,11 @@ class HostBrowserManager:
             profile_mode=profile_mode,
             browser_selection=browser_selection,
         )
+        can_repair = not self._has_playwright() and not bool(profile and profile.is_remote_debugging)
         return {
             "supported": bool(status["supported"]),
             "can_prepare": bool(status["can_prepare"]),
+            "can_repair": can_repair,
             "enabled": bool(status["enabled"]),
             "status": status["status"],
             "browser_family": profile.family if profile else "",
@@ -471,6 +473,9 @@ class HostBrowserManager:
         mode = normalize_host_browser_profile_mode(profile_mode)
         selection = normalize_host_browser_selection(browser_selection)
         profile = self._auto_start_profile(profile_mode=mode, browser_selection=selection)
+        if profile is None and not self._has_playwright():
+            await self.ensure_playwright_dependency()
+            profile = self._auto_start_profile(profile_mode=mode, browser_selection=selection)
         if profile is None:
             if selection:
                 raise RuntimeError(f"No Chromium-family browser matched selection {selection!r}.")

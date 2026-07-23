@@ -261,9 +261,9 @@ class GatewayRunner:
             self._command_result(request_id, False, error="Gateway is not connected")
             return
         result_sent = False
+        refresh_metadata = False
         try:
             result: Any = None
-            refresh_metadata = False
             if action == "status":
                 result = session._gateway_metadata()
             elif action == "set_master":
@@ -280,6 +280,7 @@ class GatewayRunner:
             elif action == "prepare_browser":
                 if self.host_browser is None:
                     raise RuntimeError("Browser access is unavailable")
+                refresh_metadata = True
                 result = await self.host_browser.ensure_available(
                     profile_mode="existing",
                     browser_selection=self.options.browser_selection,
@@ -337,6 +338,14 @@ class GatewayRunner:
                     error=str(exc),
                     code=code,
                 )
+            if refresh_metadata:
+                try:
+                    await session.refresh_remote_tool_metadata()
+                    metadata = session._gateway_metadata()
+                    if metadata is not None:
+                        self._emit_status(metadata)
+                except Exception as refresh_exc:
+                    self._emit_error("GATEWAY_METADATA_REFRESH_FAILED", str(refresh_exc), fatal=False)
 
     def _emit_status(self, gateway: dict[str, Any]) -> None:
         self.writer.write(

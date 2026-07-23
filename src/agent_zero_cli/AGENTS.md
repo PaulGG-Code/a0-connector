@@ -24,7 +24,10 @@
 - Host-browser metadata must advertise stable browser choices, and incoming `browser_selection` / `host_browser_selection` values must select that browser instead of falling back to the automatic profile picker.
 - The packaged A0 runtime includes the Python Playwright client for local-profile
   launch without bundling Chromium. Keep automatic preparation and `/browser
-  repair` able to restore it in older or damaged CLI environments.
+  repair` able to restore it in older or damaged CLI environments. Browser
+  metadata must advertise dependency repair separately from profile preparation,
+  and a repair attempt must run before reporting that no supported browser is
+  installed.
 - Explicit host-browser endpoints may be `host:port`, HTTP(S) CDP discovery addresses, or full DevTools WebSocket URLs. Resolve discovery addresses through `/json/version` on the host, preserve WebSocket path/query case, and fail explicitly instead of selecting another browser.
 - Host-browser discovery covers major Chromium-family browsers with CDP-compatible profiles, including Chrome, Chromium, Edge, Brave, Opera, and Vivaldi.
 - `/browser list`, `/browser auto`, and direct `/browser <number|id|host:port|ws://...>` own CLI-side host-browser target selection for the current Agent Zero project.

@@ -342,6 +342,55 @@ async def test_gateway_does_not_emit_a_second_result_when_metadata_refresh_fails
     )
 
 
+async def test_failed_browser_repair_still_refreshes_gateway_metadata(tmp_path: Path) -> None:
+    class RefreshingSession(FakeSession):
+        refresh_count = 0
+
+        async def refresh_remote_tool_metadata(self) -> bool:
+            type(self).refresh_count += 1
+            self.gateway["status"] = {
+                "browser": {
+                    "status": "unsupported",
+                    "can_repair": False,
+                    "support_reason": "No installed Chromium-family browser profile was detected.",
+                }
+            }
+            return True
+
+    class RepairingBrowser(FakeManager):
+        async def ensure_available(self, **_kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("No Chromium-family browser profile was found.")
+
+    RefreshingSession.refresh_count = 0
+    output = io.StringIO()
+    commands = io.StringIO(
+        "\n".join(
+            [
+                json.dumps({"request_id": "browser-1", "action": "prepare_browser"}),
+                json.dumps({"request_id": "stop-1", "action": "shutdown"}),
+                "",
+            ]
+        )
+    )
+    runner = GatewayRunner(
+        _options(tmp_path),
+        CLIConfig(),
+        writer=JsonlWriter(output),
+        input_stream=commands,
+        session_factory=RefreshingSession,
+        browser_factory=RepairingBrowser,
+        computer_use_factory=FakeComputerManager,
+    )
+
+    assert await runner.run() == 0
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    result = next(item for item in records if item.get("request_id") == "browser-1")
+    assert result["ok"] is False
+    assert RefreshingSession.refresh_count == 1
+    refreshed = [item for item in records if item.get("type") == "status"][-1]
+    assert refreshed["gateway"]["status"]["browser"]["can_repair"] is False
+
+
 async def test_gateway_can_stop_while_jsonl_input_is_blocked(tmp_path: Path) -> None:
     class BlockingInput:
         def readline(self) -> str:
