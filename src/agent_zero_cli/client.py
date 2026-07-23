@@ -1125,6 +1125,25 @@ class A0Client:
         response.raise_for_status()
         return self._json(response)
 
+    async def list_commands(self, context_id: str) -> list[dict[str, Any]]:
+        response = await self.http.post(
+            f"{self.base_url}/api/plugins/_commands/commands",
+            json={"action": "list_effective", "context_id": context_id},
+            headers=await self._csrf_headers(),
+        )
+        if response.status_code == 403:
+            self._csrf_token = None
+            response = await self.http.post(
+                f"{self.base_url}/api/plugins/_commands/commands",
+                json={"action": "list_effective", "context_id": context_id},
+                headers=await self._csrf_headers(),
+            )
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        commands = self._json(response).get("commands", [])
+        return commands if isinstance(commands, list) else []
+
     async def list_skills(
         self,
         *,

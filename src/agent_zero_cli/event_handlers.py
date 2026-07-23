@@ -195,6 +195,11 @@ def handle_context_complete(app: AgentZeroCLI, data: dict[str, Any]) -> None:
     if context_id != app.current_context:
         return
 
+    response = data.get("response")
+    if not app._response_delivered and isinstance(response, str) and response.strip():
+        app._response_delivered = True
+        app._show_notice(response)
+
     app._set_pause_latched(False)
     app.agent_active = False
     app._context_run_complete = True

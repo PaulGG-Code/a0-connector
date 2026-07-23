@@ -13,11 +13,16 @@ class OrderedSystemCommandsProvider(Provider):
     """Expose app system commands without Textual's default discovery sorting."""
 
     async def discover(self):
+        await self.app._load_server_commands(force=True)
         for title, help_text, callback, discover in self.app.get_system_commands(self.screen):
             if discover:
                 yield DiscoveryHit(title, callback, help=help_text)
 
     async def search(self, query: str):
+        normalized = str(query or "").strip()
+        if normalized.startswith("/"):
+            await self.app._load_server_commands(force=normalized == "/")
+
         async for hit in self._search_skill_targets(query):
             yield hit
 
@@ -27,7 +32,7 @@ class OrderedSystemCommandsProvider(Provider):
         async for hit in self._search_browser_targets(query):
             yield hit
 
-        if str(query or "").strip() == "/":
+        if normalized == "/":
             score = 1_000_000
             for title, help_text, callback, *_ in self.app.get_system_commands(self.screen):
                 if title.startswith("/"):

@@ -566,6 +566,41 @@ async def test_list_skills_posts_context_scoped_payload() -> None:
     ]
 
 
+async def test_list_commands_posts_to_commands_plugin_api_with_csrf() -> None:
+    client = A0Client("http://example.test")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        return_value=FakeResponse(
+            json_data={
+                "ok": True,
+                "commands": [
+                    {
+                        "name": "compress",
+                        "description": "Compress this chat.",
+                        "source_scope_label": "Plugin: compress_history",
+                    }
+                ],
+            }
+        )
+    )
+    client._csrf_headers = AsyncMock(return_value={"X-CSRF-Token": "csrf"})  # type: ignore[method-assign]
+
+    result = await client.list_commands("ctx-1")
+
+    client.http.post.assert_awaited_once_with(
+        "http://example.test/api/plugins/_commands/commands",
+        json={"action": "list_effective", "context_id": "ctx-1"},
+        headers={"X-CSRF-Token": "csrf"},
+    )
+    assert result == [
+        {
+            "name": "compress",
+            "description": "Compress this chat.",
+            "source_scope_label": "Plugin: compress_history",
+        }
+    ]
+
+
 async def test_activate_skill_posts_context_scoped_payload() -> None:
     client = A0Client("http://example.test")
     client.http = Mock()

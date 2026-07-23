@@ -247,6 +247,8 @@ class AgentZeroCLI(App):
             for spec in self._command_registry
             for name in spec.names()
         }
+        self._server_commands: tuple[dict[str, Any], ...] = ()
+        self._server_commands_context: str | None = None
         self._remote_tree_task: asyncio.Task[None] | None = None
         self._last_remote_tree_hash = ""
         self._last_remote_tree_published_at = 0.0
@@ -345,6 +347,24 @@ class AgentZeroCLI(App):
                 spec.description,
                 lambda command=command, worker_name=worker_name: self._run_dispatch_command(
                     command,
+                    worker_name=worker_name,
+                ),
+            )
+        for command in self._server_commands:
+            name = f"/{command['name']}"
+            worker_name = f"palette-{name.lstrip('/').replace('/', '-')}"
+            description = str(command.get("description") or "Run Agent Zero command.").strip()
+            argument_hint = str(command.get("argument_hint") or "").strip()
+            source = str(command.get("source_scope_label") or command.get("scope_label") or "").strip()
+            if argument_hint:
+                description = f"{description} {argument_hint}"
+            if source:
+                description = f"{description} ({source})"
+            yield SystemCommand(
+                name,
+                description,
+                lambda name=name, worker_name=worker_name: self._run_dispatch_command(
+                    name,
                     worker_name=worker_name,
                 ),
             )
@@ -576,6 +596,39 @@ class AgentZeroCLI(App):
                 continue
             rows.append((spec, availability))
         return tuple(rows)
+
+    async def _load_server_commands(self, *, force: bool = False) -> tuple[dict[str, Any], ...]:
+        context_id = self.current_context if self.connected else None
+        if not context_id:
+            self._server_commands = ()
+            self._server_commands_context = None
+            return ()
+        if not force and self._server_commands_context == context_id:
+            return self._server_commands
+
+        try:
+            commands = await self.client.list_commands(context_id)
+        except Exception:
+            commands = []
+
+        local_names = set(self._command_lookup)
+        valid_characters = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_-")
+        normalized: list[dict[str, Any]] = []
+        for command in commands:
+            if not isinstance(command, Mapping):
+                continue
+            name = str(command.get("name") or "").strip().lower().lstrip("/")
+            if (
+                not name
+                or any(character not in valid_characters for character in name)
+                or f"/{name}" in local_names
+            ):
+                continue
+            normalized.append({**command, "name": name})
+
+        self._server_commands = tuple(normalized)
+        self._server_commands_context = context_id
+        return self._server_commands
 
     def _sync_connection_status(self, status: str, url: str | None = None) -> None:
         widget = self.query_one("#connection-status", ConnectionStatus)
@@ -1923,7 +1976,11 @@ class AgentZeroCLI(App):
         token = text.split()[0].lower()
         spec = self._command_lookup.get(token)
         if spec is None:
-            self._show_notice(f"Unknown command: {token}. Type /help for available commands.", error=True)
+            server_commands = await self._load_server_commands(force=True)
+            if token not in {f"/{command['name']}" for command in server_commands}:
+                self._show_notice(f"Unknown command: {token}. Type /help for available commands.", error=True)
+                return
+            await self._send_chat_text(text, raw_text=text, attachments=[])
             return
 
         availability = spec.availability(self)

@@ -1969,6 +1969,31 @@ async def test_context_complete_refreshes_active_tab_metadata(
     assert dummy_app._context_tabs == [ContextTab("ctx-alpha", "Renamed Chat", True)]
 
 
+async def test_context_complete_surfaces_response_without_assistant_message(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-alpha"
+    dummy_app.current_context_has_messages = True
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_context_tab_metadata", async_noop)
+
+    event_handlers.handle_context_complete(
+        dummy_app,
+        {"context_id": "ctx-alpha", "response": "Command completed."},
+    )
+    await asyncio.sleep(0)
+
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    assert log.writes == ["Command completed."]
+    assert dummy_app._response_delivered is True
+
+
 async def test_context_tabs_render_in_textual() -> None:
     app = ContextTabsRenderApp()
 
@@ -4155,6 +4180,67 @@ def test_system_commands_include_plugins_when_feature_available(
     titles = {getattr(command, "title", getattr(command, "name", "")) for command in commands}
 
     assert "/plugins" in titles
+
+
+async def test_server_commands_extend_palette_without_overriding_local_commands(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+
+    async def fake_list_commands(context_id: str) -> list[dict[str, object]]:
+        assert context_id == "ctx-1"
+        return [
+            {
+                "name": "compact",
+                "description": "Server compact command.",
+            },
+            {
+                "name": "compress",
+                "description": "Force-run LLM context compression on the current chat.",
+                "source_scope_label": "Plugin: compress_history",
+            },
+        ]
+
+    monkeypatch.setattr(dummy_app.client, "list_commands", fake_list_commands)
+
+    await dummy_app._load_server_commands()
+    commands = list(dummy_app.get_system_commands(None))
+    titles = [getattr(command, "title", getattr(command, "name", "")) for command in commands]
+
+    assert titles.count("/compact") == 1
+    assert "/compress" in titles
+
+
+async def test_server_command_dispatch_uses_normal_chat_path(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    sent: list[tuple[str, str, list[object]]] = []
+
+    async def fake_list_commands(context_id: str) -> list[dict[str, object]]:
+        assert context_id == "ctx-1"
+        return [{"name": "compress", "description": "Compress this chat."}]
+
+    async def fake_send_chat_text(
+        text: str,
+        *,
+        raw_text: str,
+        attachments: list[object],
+        input_widget: object = None,
+    ) -> None:
+        del input_widget
+        sent.append((text, raw_text, attachments))
+
+    monkeypatch.setattr(dummy_app.client, "list_commands", fake_list_commands)
+    monkeypatch.setattr(dummy_app, "_send_chat_text", fake_send_chat_text)
+
+    await dummy_app._dispatch_command("/compress now")
+
+    assert sent == [("/compress now", "/compress now", [])]
 
 
 async def test_plugins_command_opens_installed_plugins_screen(
