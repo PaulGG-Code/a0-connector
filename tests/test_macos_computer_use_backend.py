@@ -243,6 +243,78 @@ def test_macos_backend_wrapper_uses_current_python() -> None:
     assert backend.helper_command()[-1] == "--stdio"
 
 
+def test_macos_permission_status_and_requests_are_structured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeAccessibility:
+        kAXTrustedCheckOptionPrompt = "prompt"
+        trusted = False
+        prompt_calls = 0
+
+        @classmethod
+        def AXIsProcessTrusted(cls) -> bool:
+            return cls.trusted
+
+        @classmethod
+        def AXIsProcessTrustedWithOptions(cls, options: dict[str, bool]) -> bool:
+            assert options == {"prompt": True}
+            cls.prompt_calls += 1
+            return cls.trusted
+
+    class FakeQuartz:
+        granted = False
+        request_calls = 0
+
+        @classmethod
+        def CGPreflightScreenCaptureAccess(cls) -> bool:
+            return cls.granted
+
+        @classmethod
+        def CGRequestScreenCaptureAccess(cls) -> bool:
+            cls.request_calls += 1
+            cls.granted = True
+            return True
+
+    monkeypatch.setattr(macos_runtime_mod, "_load_accessibility_module", lambda: FakeAccessibility)
+    monkeypatch.setattr(macos_runtime_mod, "_load_quartz_module", lambda: FakeQuartz)
+    runtime = MacOSComputerUseRuntime(driver=_FakeDriver(), state_dir=tmp_path / "state")
+
+    assert runtime.permission_status()["state"] == "accessibility_required"
+    assert runtime.request_accessibility()["state"] == "accessibility_required"
+    assert FakeAccessibility.prompt_calls == 1
+
+    FakeAccessibility.trusted = True
+    assert runtime.permission_status()["state"] == "screen_recording_required"
+    requested = runtime.request_screen_recording()
+    assert requested["state"] == "ready"
+    assert requested["screen_recording"] == "granted"
+    assert requested["restart_required"] is False
+    assert FakeQuartz.request_calls == 1
+
+
+def test_macos_screen_recording_request_reports_restart_when_fresh_process_is_needed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class FakeQuartz:
+        @staticmethod
+        def CGPreflightScreenCaptureAccess() -> bool:
+            return False
+
+        @staticmethod
+        def CGRequestScreenCaptureAccess() -> bool:
+            return True
+
+    monkeypatch.setattr(macos_runtime_mod, "_load_quartz_module", lambda: FakeQuartz)
+    runtime = MacOSComputerUseRuntime(driver=_FakeDriver(), state_dir=tmp_path / "state")
+
+    result = runtime.request_screen_recording()
+
+    assert result["state"] == "screen_recording_required"
+    assert result["restart_required"] is True
+
+
 def test_macos_action_normalization_matches_shared_surface() -> None:
     move = normalize_action_payload("move", {"x": 0.25, "y": 0.75}, context_id="ctx-1")
     click = normalize_action_payload(

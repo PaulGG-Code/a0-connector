@@ -284,6 +284,260 @@ async def test_prompt_backends_rearm_keep_approval_required_status(
     assert statuses[-1] == "active"
 
 
+async def test_macos_permission_setup_uses_fresh_helpers_and_advances_in_order(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    session = _HelperSession(context_id="launcher")
+    calls: list[str] = []
+    responses = iter(
+        [
+            {
+                "ok": True,
+                "result": {
+                    "accessibility": "required",
+                    "screen_recording": "required",
+                },
+            },
+            {"ok": True, "result": {"accessibility": "required"}},
+            {
+                "ok": True,
+                "result": {
+                    "accessibility": "granted",
+                    "screen_recording": "required",
+                },
+            },
+            {
+                "ok": True,
+                "result": {
+                    "screen_recording": "required",
+                    "restart_required": False,
+                },
+            },
+            {
+                "ok": True,
+                "result": {
+                    "accessibility": "granted",
+                    "screen_recording": "granted",
+                },
+            },
+        ]
+    )
+
+    async def fresh(
+        _session: _HelperSession,
+        action: str,
+        **_options: object,
+    ) -> dict[str, object]:
+        calls.append(action)
+        return next(responses)
+
+    monkeypatch.setattr(manager, "_fresh_permission_request", fresh)
+    monkeypatch.setattr(computer_use_mod, "_MACOS_PERMISSION_POLL_INTERVAL_SECONDS", 0.0)
+
+    result = await manager._prepare_macos_permissions(session, prompt=True, timeout=5.0)
+
+    assert result["state"] == "ready"
+    assert calls == [
+        "permission_status",
+        "request_accessibility",
+        "permission_status",
+        "request_screen_recording",
+        "permission_status",
+    ]
+    assert manager.hello_metadata()["setup"]["state"] == "ready"
+
+
+async def test_macos_permission_checks_close_the_helper_before_and_after_each_poll(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    session = _HelperSession(context_id="launcher")
+    manager._close_helper_session = AsyncMock()  # type: ignore[method-assign]
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={"ok": True, "result": {"state": "ready"}}
+    )
+
+    result = await manager._fresh_permission_request(session, "permission_status")
+
+    assert result["ok"] is True
+    assert manager._close_helper_session.await_count == 2
+    request = manager._helper_request.await_args.args[1]
+    assert request["action"] == "permission_status"
+    assert request["request_timeout_seconds"] == 2.0
+
+
+async def test_macos_start_session_resumes_original_request_after_permission_setup(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="persistent",
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    manager._prepare_macos_permissions = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "state": "ready",
+            "accessibility": "granted",
+            "screen_recording": "granted",
+        }
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": True,
+            "result": {
+                "active": True,
+                "status": "active",
+                "session_id": "sess-mac",
+                "width": 1280,
+                "height": 720,
+            },
+        }
+    )
+
+    result = await manager.handle_op(
+        {"op_id": "start-mac", "action": "start_session", "context_id": "ctx-mac"}
+    )
+
+    assert result["ok"] is True
+    manager._prepare_macos_permissions.assert_awaited_once()
+    request = manager._helper_request.await_args.args[1]
+    assert request["allow_prompt"] is False
+    assert request["request_timeout_seconds"] == 2.0
+
+
+async def test_macos_setup_runs_a_harmless_start_capture_stop_probe(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="persistent",
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    manager._prepare_macos_permissions = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "state": "ready",
+            "accessibility": "granted",
+            "screen_recording": "granted",
+        }
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            {
+                "ok": True,
+                "result": {
+                    "active": True,
+                    "status": "active",
+                    "session_id": "probe-session",
+                    "width": 1280,
+                    "height": 720,
+                },
+            },
+            {
+                "ok": True,
+                "result": {
+                    "session_id": "probe-session",
+                    "width": 1280,
+                    "height": 720,
+                    "png_base64": "iVBORw0KGgo=",
+                },
+            },
+        ]
+    )
+    stop_calls: list[str] = []
+
+    async def stop_probe(op_id: str, _session: _HelperSession) -> dict[str, object]:
+        stop_calls.append("stop_session")
+        return {"op_id": op_id, "ok": True, "result": {"status": "stopped"}}
+
+    manager._stop_session = stop_probe  # type: ignore[method-assign]
+
+    result = await manager.setup_permissions("launcher", prompt=True)
+
+    assert result["ok"] is True
+    actions = [call.args[1]["action"] for call in manager._helper_request.await_args_list]
+    assert actions + stop_calls == ["start_session", "capture", "stop_session"]
+    assert manager.hello_metadata()["setup"]["state"] == "ready"
+
+
+async def test_macos_agent_start_waits_for_inflight_launcher_setup(
+    _temp_env: Path,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        trust_mode="persistent",
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    setup_started = asyncio.Event()
+    release_setup = asyncio.Event()
+    agent_started = asyncio.Event()
+
+    async def setup_probe(*_args: object, **_kwargs: object) -> dict[str, object]:
+        setup_started.set()
+        await release_setup.wait()
+        return {"ok": True, "result": {"state": "ready"}}
+
+    async def agent_start(*_args: object) -> dict[str, object]:
+        agent_started.set()
+        return {"op_id": "agent-start", "ok": True, "result": {"active": True}}
+
+    manager._setup_macos_permissions = setup_probe  # type: ignore[method-assign]
+    manager._start_session_unlocked = agent_start  # type: ignore[method-assign]
+    launcher_task = asyncio.create_task(manager.setup_permissions("launcher", prompt=True))
+    await setup_started.wait()
+    agent_task = asyncio.create_task(
+        manager._start_session("agent-start", _HelperSession(context_id="agent"))
+    )
+    await asyncio.sleep(0)
+
+    assert agent_started.is_set() is False
+    release_setup.set()
+    await launcher_task
+    await agent_task
+    assert agent_started.is_set() is True
+
+
+async def test_macos_permission_setup_timeout_is_bounded_below_core_tool_timeout(
+    _temp_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _manager(
+        enabled=True,
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    manager._fresh_permission_request = AsyncMock(  # type: ignore[method-assign]
+        side_effect=[
+            {
+                "ok": True,
+                "result": {
+                    "accessibility": "required",
+                    "screen_recording": "required",
+                },
+            },
+            {"ok": True, "result": {"accessibility": "required"}},
+        ]
+    )
+    monkeypatch.setattr(computer_use_mod, "_MACOS_PERMISSION_POLL_INTERVAL_SECONDS", 0.0)
+
+    result = await manager._prepare_macos_permissions(
+        _HelperSession(context_id="launcher"),
+        prompt=True,
+        timeout=0.0,
+    )
+
+    assert computer_use_mod._MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS == 120.0
+    assert result["state"] == "error"
+    assert result["code"] == "COMPUTER_USE_APPROVAL_TIMEOUT"
+    assert "macOS permissions" in result["message"]
+
+
 def test_allow_with_restore_token_starts_in_allow_status(
     _temp_env: Path,
 ) -> None:

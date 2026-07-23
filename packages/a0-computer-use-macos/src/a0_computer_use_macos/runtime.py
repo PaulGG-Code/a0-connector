@@ -1035,6 +1035,9 @@ class MacOSComputerUseRuntime:
 
     def dispatch(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         handlers = {
+            "permission_status": self.permission_status,
+            "request_accessibility": self.request_accessibility,
+            "request_screen_recording": self.request_screen_recording,
             "start_session": self.start_session,
             "status": self.status,
             "capture": self.capture,
@@ -1077,6 +1080,60 @@ class MacOSComputerUseRuntime:
                 context_id=normalize_context_id(normalized_params.get("context_id")),
             )
         return handler(normalized_params)
+
+    def permission_status(self, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+        accessibility = _load_accessibility_module()
+        quartz = _load_quartz_module()
+        accessibility_granted = self._accessibility_trusted(accessibility, prompt=False)
+        screen_recording_granted = self._screen_recording_granted(quartz)
+        state = (
+            "accessibility_required"
+            if not accessibility_granted
+            else "screen_recording_required"
+            if not screen_recording_granted
+            else "ready"
+        )
+        return {
+            "state": state,
+            "accessibility": "granted" if accessibility_granted else "required",
+            "screen_recording": "granted" if screen_recording_granted else "required",
+            "restart_required": False,
+        }
+
+    def request_accessibility(self, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+        accessibility = _load_accessibility_module()
+        granted = self._accessibility_trusted(accessibility, prompt=True)
+        return {
+            "state": "ready" if granted else "accessibility_required",
+            "accessibility": "granted" if granted else "required",
+            "screen_recording": "unknown",
+            "restart_required": False,
+        }
+
+    def request_screen_recording(self, _params: dict[str, Any] | None = None) -> dict[str, Any]:
+        quartz = _load_quartz_module()
+        if self._screen_recording_granted(quartz):
+            return {
+                "state": "ready",
+                "accessibility": "granted",
+                "screen_recording": "granted",
+                "restart_required": False,
+            }
+        request = getattr(quartz, "CGRequestScreenCaptureAccess", None)
+        if not callable(request):
+            raise MacOSComputerUseError(
+                "COMPUTER_USE_CAPTURE_UNAVAILABLE",
+                "This macOS version cannot request Screen Recording permission automatically.",
+            )
+        requested = bool(request())
+        granted = self._screen_recording_granted(quartz)
+        return {
+            "state": "ready" if granted else "screen_recording_required",
+            "accessibility": "granted",
+            "screen_recording": "granted" if granted else "required",
+            "permission_granted": requested,
+            "restart_required": requested and not granted,
+        }
 
     def start_session(self, params: dict[str, Any]) -> dict[str, Any]:
         trust_mode = str(params.get("trust_mode") or "persistent").strip().lower()
@@ -2333,6 +2390,16 @@ class MacOSComputerUseRuntime:
                 return bool(accessibility.AXIsProcessTrusted())
         return bool(accessibility.AXIsProcessTrusted())
 
+    def _screen_recording_granted(self, quartz: Any) -> bool:
+        preflight = getattr(quartz, "CGPreflightScreenCaptureAccess", None)
+        if callable(preflight):
+            return bool(preflight())
+        try:
+            self._driver.capture_png()
+        except MacOSComputerUseError:
+            return False
+        return True
+
     def _require_session(self, params: dict[str, Any]) -> _RuntimeSession:
         context_id = normalize_context_id(params.get("context_id"))
         session = self._session
@@ -2409,6 +2476,9 @@ def serve_stdio(runtime: MacOSComputerUseRuntime | None = None) -> int:
             try:
                 with contextlib.redirect_stdout(sys.stderr):
                     if action in {
+                        "permission_status",
+                        "request_accessibility",
+                        "request_screen_recording",
                         "start_session",
                         "status",
                         "capture",

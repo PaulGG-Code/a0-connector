@@ -173,7 +173,14 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
 
-Computer Use may need platform approval before the CLI can capture or control the host desktop. `/computer-use on` enables the active backend; if the system portal does not appear immediately, ask Agent Zero to perform the desktop task and the portal will appear for that task.
+Computer Use may need platform approval before the CLI can capture or control
+the host desktop. `/computer-use on` enables the active backend; if the system
+portal does not appear immediately, ask Agent Zero to perform the desktop task
+and the portal will appear for that task. Launcher 1.4 and A0 CLI 2.6 add a
+staged macOS setup flow: enabling Computer Use requests Accessibility before
+Screen Recording, polls permission changes through fresh helpers, and resumes
+the initiating desktop operation after approval. Later launches preflight
+silently and surface an explicit retry or restart action if needed.
 
 ### Skill shortcuts
 

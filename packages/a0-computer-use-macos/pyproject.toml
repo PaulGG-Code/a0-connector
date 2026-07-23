@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "a0-computer-use-macos"
-version = "1.5"
+version = "1.6"
 description = "macOS computer-use backend for a0"
 requires-python = ">=3.10"
 authors = [

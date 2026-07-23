@@ -865,6 +865,11 @@ class ConnectorSession:
             "host_label": str(self.gateway.get("host_label", "") or "").strip(),
             "master_enabled": self.master_enabled,
             "scopes": self._gateway_scopes(),
+            "features": [
+                str(item)
+                for item in self.gateway.get("features", [])
+                if str(item).strip()
+            ],
             "status": {},
         }
         browser = self._host_browser_metadata()
@@ -889,6 +894,7 @@ class ConnectorSession:
         if self._gateway_scopes()["computer_use"] and computer_status in {
             "rearm required",
             "approval required",
+            "restart required",
             "unsupported",
             "error",
         }:

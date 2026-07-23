@@ -46,14 +46,21 @@
   operations. It requires both Launcher gateway capabilities before announcing
   readiness.
 - Gateway control uses JSONL stdin/stdout for status, scope replacement,
-  browser preparation, Computer Use rearm, error, and shutdown messages. Saved
+  browser preparation, Computer Use setup/rearm, error, and shutdown messages.
+  Commands that expect a result carry `request_id`, and every nested manager
+  failure must become a failed correlated gateway result rather than a success
+  wrapper. `computer_use_setup_v1` gates the staged setup command independently
+  from the base Launcher gateway contract. Saved
   web sessions are preferred, then ephemeral `A0_USERNAME`/`A0_PASSWORD` login;
   secrets must never appear in arguments or JSONL output. Gateway scope state
   must not overwrite interactive CLI preferences. A Launcher gateway maps the
   copied Computer Use `allow` mode to `persistent` so a natural desktop action
   may keep the platform approval prompt open without changing the interactive
-  CLI's saved mode. Preserve an HTTP(S) host's reverse-proxy base path while
-  rejecting embedded URL credentials.
+  CLI's saved mode. On macOS, permission checks and polling must use fresh helper
+  processes, prompt Accessibility before Screen Recording at most once per
+  attempt, and finish within 120 seconds so the original Agent Zero operation
+  can continue under its existing timeout. Preserve an HTTP(S) host's
+  reverse-proxy base path while rejecting embedded URL credentials.
 - Gateway shutdown owns complete cleanup of remote process groups, host-browser
   sessions, Computer Use sessions, and the Socket.IO connection. Emergency
   disconnect ends the current lease and exits cleanly rather than reconnecting.

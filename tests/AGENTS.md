@@ -30,7 +30,10 @@
 - Gateway coverage must include its parser/JSONL contract, tools-only connection
   without chat creation, authentication and capability failures, no-context
   reconnect, all four tool families, five permission scopes, scope dependencies,
-  result-before-metadata ordering, and complete shutdown cleanup.
+  result-before-metadata ordering, correlated command success/failure, and
+  complete shutdown cleanup. macOS Computer Use coverage must assert staged
+  Accessibility then Screen Recording setup, one prompt per service, fresh
+  helper polling, bounded timeout, and resumption of the original start request.
 
 ## Verification
 

@@ -21,6 +21,7 @@ from agent_zero_cli.session import ConnectorSession, SessionError
 
 
 _SCOPE_KEYS = ("files", "file_write", "code_execution", "browser", "computer_use")
+_GATEWAY_FEATURES = ("computer_use_setup_v1",)
 _SAFE_ID_RE = re.compile(r"[^A-Za-z0-9._:-]+")
 
 
@@ -176,6 +177,7 @@ class GatewayRunner:
             "host_label": self.options.host_label,
             "master_enabled": self.options.master_enabled,
             "scopes": scopes,
+            "features": list(_GATEWAY_FEATURES),
         }
         self.session = self._session_factory(
             self.config,
@@ -258,6 +260,7 @@ class GatewayRunner:
         if session is None:
             self._command_result(request_id, False, error="Gateway is not connected")
             return
+        result_sent = False
         try:
             result: Any = None
             refresh_metadata = False
@@ -285,21 +288,55 @@ class GatewayRunner:
             elif action == "rearm_computer_use":
                 if self.computer_use is None:
                     raise RuntimeError("Computer Use is unavailable")
-                result = await self.computer_use.rearm("launcher")
+                result = await self.computer_use.setup_permissions("launcher", prompt=True)
+                refresh_metadata = True
+            elif action == "setup_computer_use":
+                if self.computer_use is None:
+                    raise RuntimeError("Computer Use is unavailable")
+                result = await self.computer_use.setup_permissions(
+                    "launcher",
+                    prompt=bool(payload.get("prompt")),
+                )
                 refresh_metadata = True
             elif action in {"shutdown", "stop"}:
                 self.stop_event.set()
                 result = {"stopping": True}
             else:
                 raise ValueError(f"Unknown gateway action: {action}")
-            self._command_result(request_id, True, result=result)
+            if (
+                action in {"rearm_computer_use", "setup_computer_use"}
+                and isinstance(result, dict)
+                and "ok" in result
+            ):
+                command_ok = bool(result.get("ok"))
+                command_result = result.get("result")
+                self._command_result(
+                    request_id,
+                    command_ok,
+                    result=command_result,
+                    error=str(result.get("error") or "") if not command_ok else "",
+                    code=str(result.get("code") or "") if not command_ok else "",
+                )
+                result_sent = True
+            else:
+                self._command_result(request_id, True, result=result)
+                result_sent = True
             if refresh_metadata:
                 await session.refresh_remote_tool_metadata()
             metadata = session._gateway_metadata()
             if metadata is not None:
                 self._emit_status(metadata)
         except Exception as exc:
-            self._command_result(request_id, False, error=str(exc))
+            code = str(getattr(exc, "code", "") or "GATEWAY_COMMAND_FAILED")
+            if result_sent:
+                self._emit_error(code, str(exc), fatal=False)
+            else:
+                self._command_result(
+                    request_id,
+                    False,
+                    error=str(exc),
+                    code=code,
+                )
 
     def _emit_status(self, gateway: dict[str, Any]) -> None:
         self.writer.write(
@@ -324,12 +361,17 @@ class GatewayRunner:
         *,
         result: Any = None,
         error: str = "",
+        code: str = "",
     ) -> None:
         payload: dict[str, Any] = {"type": "result", "request_id": request_id, "ok": ok}
         if ok:
             payload["result"] = result
         else:
             payload["error"] = error
+            if code:
+                payload["code"] = code
+            if result is not None:
+                payload["result"] = result
         self.writer.write(payload)
 
     def _install_signal_handlers(self) -> None:

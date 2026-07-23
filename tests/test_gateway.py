@@ -30,6 +30,43 @@ class FakeManager:
         self.persist_enabled = persist_enabled
 
 
+class FakeComputerManager(FakeManager):
+    def __init__(self, config: CLIConfig, *, persist_enabled: bool) -> None:
+        super().__init__(config, persist_enabled=persist_enabled)
+        self.prompted_setup_calls = 0
+
+    async def setup_permissions(self, context_id: str, *, prompt: bool) -> dict[str, Any]:
+        assert context_id == "launcher"
+        if prompt:
+            self.prompted_setup_calls += 1
+            if self.prompted_setup_calls > 1:
+                return {
+                    "ok": False,
+                    "code": "COMPUTER_USE_RESTART_REQUIRED",
+                    "error": "Restart Agent Zero Launcher.",
+                    "result": {"state": "restart_required"},
+                }
+            return {
+                "ok": True,
+                "result": {
+                    "state": "ready",
+                    "accessibility": "granted",
+                    "screen_recording": "granted",
+                },
+            }
+        return {
+            "ok": True,
+            "result": {
+                "state": "screen_recording_required",
+                "accessibility": "granted",
+                "screen_recording": "required",
+            },
+        }
+
+    async def rearm(self, _context_id: str) -> dict[str, Any]:
+        raise AssertionError("gateway rearm must delegate to setup_permissions")
+
+
 class FakeSession:
     instances: list["FakeSession"] = []
 
@@ -133,6 +170,7 @@ async def test_gateway_jsonl_contract_and_environment_auth(
     assert session.gateway["scopes"]["files"] is False
     assert session.gateway["scopes"]["file_write"] is False
     assert session.gateway["scopes"]["code_execution"] is False
+    assert session.gateway["features"] == ["computer_use_setup_v1"]
     assert session.closed is True
 
     records = [json.loads(line) for line in output.getvalue().splitlines()]
@@ -140,6 +178,55 @@ async def test_gateway_jsonl_contract_and_environment_auth(
     assert any(record.get("request_id") == "scope-1" and record.get("ok") for record in records)
     assert "launcher-secret" not in output.getvalue()
     assert "launcher-user" not in output.getvalue()
+
+
+async def test_gateway_computer_use_setup_is_correlated_and_unwraps_manager_results(
+    tmp_path: Path,
+) -> None:
+    output = io.StringIO()
+    commands = io.StringIO(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "request_id": "setup-1",
+                        "action": "setup_computer_use",
+                        "prompt": True,
+                    }
+                ),
+                json.dumps({"request_id": "rearm-1", "action": "rearm_computer_use"}),
+                json.dumps({"request_id": "stop-1", "action": "shutdown"}),
+                "",
+            ]
+        )
+    )
+    runner = GatewayRunner(
+        _options(tmp_path),
+        CLIConfig(),
+        writer=JsonlWriter(output),
+        input_stream=commands,
+        session_factory=FakeSession,
+        browser_factory=FakeManager,
+        computer_use_factory=FakeComputerManager,
+    )
+
+    assert await runner.run() == 0
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    setup = next(record for record in records if record.get("request_id") == "setup-1")
+    assert setup == {
+        "type": "result",
+        "request_id": "setup-1",
+        "ok": True,
+        "result": {
+            "state": "ready",
+            "accessibility": "granted",
+            "screen_recording": "granted",
+        },
+    }
+    rearm = next(record for record in records if record.get("request_id") == "rearm-1")
+    assert rearm["ok"] is False
+    assert rearm["code"] == "COMPUTER_USE_RESTART_REQUIRED"
+    assert rearm["result"] == {"state": "restart_required"}
 
 
 async def test_gateway_rejects_invalid_workspace_without_starting_session(tmp_path: Path) -> None:
@@ -208,6 +295,51 @@ async def test_gateway_writes_command_result_before_metadata_refresh(tmp_path: P
 
     assert await runner.run() == 0
     assert order == ["result", "refresh"]
+
+
+async def test_gateway_does_not_emit_a_second_result_when_metadata_refresh_fails(
+    tmp_path: Path,
+) -> None:
+    class FailingRefreshSession(FakeSession):
+        async def refresh_remote_tool_metadata(self) -> bool:
+            raise RuntimeError("metadata refresh failed")
+
+    output = io.StringIO()
+    commands = io.StringIO(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "request_id": "scope-refresh-1",
+                        "action": "replace_scopes",
+                        "scopes": {"browser": True},
+                    }
+                ),
+                json.dumps({"request_id": "stop-1", "action": "shutdown"}),
+                "",
+            ]
+        )
+    )
+    runner = GatewayRunner(
+        _options(tmp_path),
+        CLIConfig(),
+        writer=JsonlWriter(output),
+        input_stream=commands,
+        session_factory=FailingRefreshSession,
+        browser_factory=FakeManager,
+        computer_use_factory=FakeComputerManager,
+    )
+
+    assert await runner.run() == 0
+    records = [json.loads(line) for line in output.getvalue().splitlines()]
+    correlated = [item for item in records if item.get("request_id") == "scope-refresh-1"]
+    assert len(correlated) == 1
+    assert correlated[0]["ok"] is True
+    assert any(
+        item.get("type") == "error"
+        and "metadata refresh failed" in item.get("message", "")
+        for item in records
+    )
 
 
 async def test_gateway_can_stop_while_jsonl_input_is_blocked(tmp_path: Path) -> None:

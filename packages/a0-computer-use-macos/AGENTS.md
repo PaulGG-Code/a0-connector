@@ -15,11 +15,19 @@
 - Trust modes and shared feature constants live in `shared.py`; keep backend metadata, runtime metadata, and tests aligned.
 - Runtime responses must include contract version and capabilities derived from the shared feature list.
 - Debug logging must stay opt-in through environment flags and must not leak secrets.
+- The runtime exposes non-prompting `permission_status`, explicit
+  `request_accessibility`, and explicit `request_screen_recording` internal
+  operations. Screen status/request uses Core Graphics preflight/request APIs;
+  Accessibility uses the ApplicationServices trust APIs.
 
 ## Work Guidance
 
 - Keep macOS framework imports isolated to this package/runtime path.
 - Preserve user permission semantics around Accessibility and screen capture.
+- Permission orchestration belongs to the parent connector manager: this helper
+  must return promptly after one status or request operation so the manager can
+  close it and poll TCC through a fresh process. Do not add an indefinite prompt
+  wait inside the helper.
 - Keep session restore-token handling normalized through shared helpers.
 
 ## Verification

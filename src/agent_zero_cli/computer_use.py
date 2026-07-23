@@ -39,6 +39,10 @@ _HELPER_STDIO_LIMIT = 32 * 1024 * 1024
 _HELPER_DEFAULT_RESPONSE_TIMEOUT_SECONDS = 30.0
 _HELPER_RESPONSE_GRACE_SECONDS = 8.0
 _HELPER_CLOSE_DRAIN_TIMEOUT_SECONDS = 1.0
+_MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS = 120.0
+_MACOS_PERMISSION_CLEANUP_MARGIN_SECONDS = 2.0
+_MACOS_PERMISSION_POLL_INTERVAL_SECONDS = 1.0
+_MACOS_PERMISSION_HELPER_TIMEOUT_SECONDS = 2.0
 _SUPPORTED_ACTIONS = {
     "start_session",
     "status",
@@ -74,6 +78,8 @@ _CAPTURE_COORDINATE_SPACE = "normalized_global_screen"
 _DISABLED_ERROR = "COMPUTER_USE_DISABLED"
 _REARM_REQUIRED_ERROR = "COMPUTER_USE_REARM_REQUIRED"
 _APPROVAL_REQUIRED_ERROR = "COMPUTER_USE_APPROVAL_REQUIRED"
+_APPROVAL_TIMEOUT_ERROR = "COMPUTER_USE_APPROVAL_TIMEOUT"
+_RESTART_REQUIRED_ERROR = "COMPUTER_USE_RESTART_REQUIRED"
 _SESSION_REQUIRED_ERROR = "COMPUTER_USE_SESSION_REQUIRED"
 _UNSUPPORTED_ERROR = "COMPUTER_USE_UNSUPPORTED"
 _ARMING_STATUS = "arming"
@@ -445,6 +451,14 @@ class ComputerUseManager:
         self.status, self.last_error = self._configured_status()
         self._sessions: dict[str, _HelperSession] = {}
         self._status_callback: Callable[[str, str], None] | None = None
+        self._macos_setup_lock = asyncio.Lock()
+        self._permission_setup: dict[str, Any] = {
+            "state": "unknown",
+            "accessibility": "unknown",
+            "screen_recording": "unknown",
+            "restart_required": False,
+            "message": "",
+        }
         self._debug_enabled = _env_flag(_DEBUG_ENV)
         self._debug_log_path = _resolve_debug_log_path()
 
@@ -465,6 +479,7 @@ class ComputerUseManager:
             "last_error": self.last_error,
             "restore_token_present": bool(_normalize_restore_token(self.restore_token)),
             "artifact_root": CONTAINER_ARTIFACT_ROOT,
+            "setup": dict(self._permission_setup),
         }
         metadata.update(self._backend_metadata)
         return metadata
@@ -563,6 +578,7 @@ class ComputerUseManager:
             "host_artifact_root": str(host_artifact_root) if host_artifact_root else None,
             "active_contexts": active_contexts,
             "last_error": self.last_error or None,
+            "setup": dict(self._permission_setup),
         }
         snapshot.update(self._backend_metadata)
         return snapshot
@@ -637,6 +653,22 @@ class ComputerUseManager:
         # Re-arming is an intentional user-approved flow. Do not try to
         # silently revive the old token; force the backend to ask the platform.
         self.restore_token = ""
+        async with self._macos_setup_lock:
+            return await self._setup_macos_permissions(
+                op_id,
+                context_id,
+                prompt=prompt,
+                timeout=timeout,
+            )
+
+    async def _setup_macos_permissions(
+        self,
+        op_id: str,
+        context_id: str,
+        *,
+        prompt: bool,
+        timeout: float,
+    ) -> dict[str, Any]:
         session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
         if session.active or session.session_id:
             await self._close_helper_session(session)
@@ -656,6 +688,123 @@ class ComputerUseManager:
 
         return result
 
+    async def setup_permissions(
+        self,
+        context_id: str | None = None,
+        *,
+        prompt: bool = False,
+        timeout: float = _MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        """Preflight platform access and optionally complete the macOS permission flow."""
+        op_id = f"setup-{uuid.uuid4().hex}"
+        context_id = _normalize_context_id(context_id)
+        if not self.supported:
+            self._set_permission_setup(
+                "error",
+                message=_UNSUPPORTED_ERROR,
+            )
+            return self._error(op_id, _UNSUPPORTED_ERROR, result=self._permission_snapshot())
+        if not self.enabled:
+            self._set_permission_setup(
+                "error",
+                message=_DISABLED_ERROR,
+            )
+            return self._error(op_id, _DISABLED_ERROR, result=self._permission_snapshot())
+
+        if not self._uses_macos_permission_setup():
+            result = await (self.rearm(context_id) if prompt else self.ensure_armed(context_id))
+            if bool(result.get("ok")):
+                self._set_permission_setup(
+                    "ready",
+                    accessibility="granted",
+                    screen_recording="granted",
+                )
+                return self._success(op_id, self._permission_snapshot())
+            self._set_permission_setup("error", message=str(result.get("error") or "Computer Use setup failed."))
+            return self._error(
+                op_id,
+                str(result.get("code") or "COMPUTER_USE_SETUP_FAILED"),
+                message=str(result.get("error") or "Computer Use setup failed."),
+                result=self._permission_snapshot(),
+            )
+
+        session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
+        prepared = await self._prepare_macos_permissions(
+            session,
+            prompt=prompt,
+            timeout=timeout,
+        )
+        if prepared.get("state") != "ready":
+            if prepared.get("state") in {
+                "accessibility_required",
+                "screen_recording_required",
+                "restart_required",
+            }:
+                return self._success(op_id, prepared)
+            return self._error(
+                op_id,
+                str(prepared.get("code") or "COMPUTER_USE_SETUP_FAILED"),
+                message=str(prepared.get("message") or "Computer Use setup failed."),
+                result=prepared,
+            )
+
+        request = {
+            "action": "start_session",
+            "context_id": session.context_id,
+            "trust_mode": "persistent",
+            "restore_token": "",
+            "allow_prompt": False,
+            "request_timeout_seconds": 2.0,
+        }
+        response = await self._helper_request(session, request)
+        started = self._normalize_helper_response(op_id, session, response, action="start_session")
+        if not bool(started.get("ok")):
+            message = str(started.get("error") or "Computer Use validation failed.")
+            self._set_permission_setup("error", message=message)
+            return self._error(
+                op_id,
+                str(started.get("code") or "COMPUTER_USE_SETUP_FAILED"),
+                message=message,
+                result=self._permission_snapshot(),
+            )
+        try:
+            capture = await self._dispatch_session_action(
+                op_id,
+                session,
+                {"action": "capture", "context_id": session.context_id},
+            )
+        except Exception as exc:
+            capture = self._error(
+                op_id,
+                "COMPUTER_USE_SETUP_FAILED",
+                message=f"Computer Use capture validation failed: {exc}",
+            )
+        try:
+            stopped = await self._stop_session(op_id, session)
+        except Exception as exc:
+            await self._close_helper_session(session)
+            stopped = self._error(
+                op_id,
+                "COMPUTER_USE_SETUP_FAILED",
+                message=f"Computer Use validation cleanup failed: {exc}",
+            )
+        probe_failure = capture if not bool(capture.get("ok")) else stopped
+        if not bool(probe_failure.get("ok")):
+            message = str(probe_failure.get("error") or "Computer Use validation failed.")
+            self._set_permission_setup("error", message=message)
+            return self._error(
+                op_id,
+                str(probe_failure.get("code") or "COMPUTER_USE_SETUP_FAILED"),
+                message=message,
+                result=self._permission_snapshot(),
+            )
+        self._set_permission_setup(
+            "ready",
+            accessibility="granted",
+            screen_recording="granted",
+        )
+        return self._success(op_id, self._permission_snapshot())
+
     async def ensure_armed(self, context_id: str | None = None) -> dict[str, Any]:
         """Validate that the configured allow session can actually start."""
         op_id = f"arm-{uuid.uuid4().hex}"
@@ -670,6 +819,212 @@ class ComputerUseManager:
 
         session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
         return await self._start_session(op_id, session)
+
+    def _uses_macos_permission_setup(self) -> bool:
+        return (
+            str(self._backend_metadata.get("backend_id") or "").strip().lower() == "macos"
+            or str(self._backend_metadata.get("backend_family") or "").strip().lower() == "macos"
+        )
+
+    def _permission_snapshot(self) -> dict[str, Any]:
+        return dict(self._permission_setup)
+
+    def _set_permission_setup(
+        self,
+        state: str,
+        *,
+        accessibility: str | None = None,
+        screen_recording: str | None = None,
+        restart_required: bool = False,
+        message: str = "",
+    ) -> dict[str, Any]:
+        self._permission_setup = {
+            "state": str(state or "error"),
+            "accessibility": str(accessibility or self._permission_setup.get("accessibility") or "unknown"),
+            "screen_recording": str(
+                screen_recording or self._permission_setup.get("screen_recording") or "unknown"
+            ),
+            "restart_required": bool(restart_required),
+            "message": str(message or ""),
+        }
+        if state == "checking":
+            self._set_status(_ARMING_STATUS, error=message)
+        elif state in {"accessibility_required", "screen_recording_required"}:
+            self._set_status("approval required", error=message)
+        elif state == "restart_required":
+            self._set_status("restart required", error=message)
+        elif state == "ready":
+            self._set_status("active" if any(item.active for item in self._sessions.values()) else self.trust_mode)
+        elif state == "error":
+            self._set_status("error", error=message)
+        return self._permission_snapshot()
+
+    async def _fresh_permission_request(
+        self,
+        session: _HelperSession,
+        action: str,
+        *,
+        timeout: float = _MACOS_PERMISSION_HELPER_TIMEOUT_SECONDS,
+    ) -> dict[str, Any]:
+        await self._close_helper_session(session)
+        try:
+            return await self._helper_request(
+                session,
+                {
+                    "action": action,
+                    "context_id": session.context_id,
+                    "request_timeout_seconds": max(0.1, float(timeout)),
+                },
+            )
+        finally:
+            await self._close_helper_session(session)
+
+    async def _prepare_macos_permissions(
+        self,
+        session: _HelperSession,
+        *,
+        prompt: bool,
+        timeout: float,
+    ) -> dict[str, Any]:
+        requested_timeout = max(0.0, min(float(timeout), _MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS))
+        active_timeout = min(
+            requested_timeout,
+            _MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS - _MACOS_PERMISSION_CLEANUP_MARGIN_SECONDS,
+        )
+        if active_timeout <= 0.0:
+            return self._set_permission_setup(
+                "error",
+                message="Timed out waiting for macOS permissions.",
+            ) | {"code": _APPROVAL_TIMEOUT_ERROR}
+        try:
+            return await asyncio.wait_for(
+                self._run_macos_permission_setup(
+                    session,
+                    prompt=prompt,
+                    timeout=active_timeout,
+                ),
+                timeout=active_timeout,
+            )
+        except asyncio.TimeoutError:
+            await self._close_helper_session(session)
+            snapshot = self._permission_snapshot()
+            state = str(snapshot.get("state") or "")
+            if state == "accessibility_required":
+                message = "Timed out waiting for macOS Accessibility permission."
+            elif state == "screen_recording_required":
+                message = "Timed out waiting for macOS Screen Recording permission."
+            else:
+                message = "Timed out waiting for macOS permissions."
+            return self._set_permission_setup(
+                "error",
+                accessibility=str(snapshot.get("accessibility") or "unknown"),
+                screen_recording=str(snapshot.get("screen_recording") or "unknown"),
+                message=message,
+            ) | {"code": _APPROVAL_TIMEOUT_ERROR}
+
+    async def _run_macos_permission_setup(
+        self,
+        session: _HelperSession,
+        *,
+        prompt: bool,
+        timeout: float,
+    ) -> dict[str, Any]:
+        timeout_seconds = max(0.0, min(float(timeout), _MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS))
+        deadline = time.monotonic() + timeout_seconds
+        prompted_accessibility = False
+        prompted_screen_recording = False
+        screen_restart_candidate = False
+        self._set_permission_setup("checking", message="Checking macOS permissions…")
+
+        while True:
+            response = await self._fresh_permission_request(session, "permission_status")
+            if not bool(response.get("ok")):
+                message = str(response.get("error") or "Unable to check macOS permissions.")
+                return self._set_permission_setup("error", message=message) | {
+                    "code": str(response.get("code") or "COMPUTER_USE_SETUP_FAILED")
+                }
+            result = response.get("result")
+            status = dict(result) if isinstance(result, dict) else {}
+            accessibility = str(status.get("accessibility") or "unknown")
+            screen_recording = str(status.get("screen_recording") or "unknown")
+
+            if accessibility != "granted":
+                message = "Allow Agent Zero Launcher in macOS Accessibility settings."
+                snapshot = self._set_permission_setup(
+                    "accessibility_required",
+                    accessibility=accessibility,
+                    screen_recording=screen_recording,
+                    message=message,
+                )
+                if not prompt:
+                    return snapshot
+                if not prompted_accessibility:
+                    requested = await self._fresh_permission_request(session, "request_accessibility")
+                    prompted_accessibility = True
+                    if not bool(requested.get("ok")):
+                        failure = str(requested.get("error") or message)
+                        return self._set_permission_setup("error", message=failure) | {
+                            "code": str(requested.get("code") or "COMPUTER_USE_SETUP_FAILED")
+                        }
+                if time.monotonic() >= deadline:
+                    return self._set_permission_setup(
+                        "error",
+                        accessibility=accessibility,
+                        screen_recording=screen_recording,
+                        message="Timed out waiting for macOS Accessibility permission.",
+                    ) | {"code": _APPROVAL_TIMEOUT_ERROR}
+                await asyncio.sleep(_MACOS_PERMISSION_POLL_INTERVAL_SECONDS)
+                continue
+
+            if screen_recording != "granted":
+                message = "Allow Agent Zero Launcher in macOS Screen Recording settings."
+                snapshot = self._set_permission_setup(
+                    "screen_recording_required",
+                    accessibility="granted",
+                    screen_recording=screen_recording,
+                    message=message,
+                )
+                if not prompt:
+                    return snapshot
+                if screen_restart_candidate:
+                    return self._set_permission_setup(
+                        "restart_required",
+                        accessibility="granted",
+                        screen_recording=screen_recording,
+                        restart_required=True,
+                        message="Restart Agent Zero Launcher to finish Screen Recording setup.",
+                    )
+                if not prompted_screen_recording:
+                    remaining = max(0.1, deadline - time.monotonic())
+                    requested = await self._fresh_permission_request(
+                        session,
+                        "request_screen_recording",
+                        timeout=min(remaining, 110.0),
+                    )
+                    prompted_screen_recording = True
+                    if not bool(requested.get("ok")):
+                        failure = str(requested.get("error") or message)
+                        return self._set_permission_setup("error", message=failure) | {
+                            "code": str(requested.get("code") or "COMPUTER_USE_SETUP_FAILED")
+                        }
+                    request_result = requested.get("result")
+                    request_status = dict(request_result) if isinstance(request_result, dict) else {}
+                    screen_restart_candidate = request_status.get("restart_required") is True
+                if time.monotonic() >= deadline:
+                    return self._set_permission_setup(
+                        "error",
+                        accessibility="granted",
+                        screen_recording=screen_recording,
+                        message="Timed out waiting for macOS Screen Recording permission.",
+                    ) | {"code": _APPROVAL_TIMEOUT_ERROR}
+                await asyncio.sleep(_MACOS_PERMISSION_POLL_INTERVAL_SECONDS)
+                continue
+
+            return self._set_permission_setup(
+                "ready",
+                accessibility="granted",
+                screen_recording="granted",
+            )
 
     async def handle_op(self, payload: dict[str, Any]) -> dict[str, Any]:
         op_id = str(payload.get("op_id", "")).strip()
@@ -1215,6 +1570,12 @@ class ComputerUseManager:
         return self._normalize_helper_response(op_id, session, response, action=str(request.get("action", "")))
 
     async def _start_session(self, op_id: str, session: _HelperSession) -> dict[str, Any]:
+        if self._uses_macos_permission_setup():
+            async with self._macos_setup_lock:
+                return await self._start_session_unlocked(op_id, session)
+        return await self._start_session_unlocked(op_id, session)
+
+    async def _start_session_unlocked(self, op_id: str, session: _HelperSession) -> dict[str, Any]:
         restore_token = self._current_restore_token()
         self._debug(
             "start_session.begin",
@@ -1239,6 +1600,26 @@ class ComputerUseManager:
             self._set_status("active")
             return self._success(op_id, result)
 
+        allow_prompt = self.trust_mode != "allow"
+        if self._uses_macos_permission_setup() and allow_prompt:
+            prepared = await self._prepare_macos_permissions(
+                session,
+                prompt=True,
+                timeout=_MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS,
+            )
+            if prepared.get("state") != "ready":
+                state = str(prepared.get("state") or "error")
+                if state == "restart_required":
+                    code = _RESTART_REQUIRED_ERROR
+                else:
+                    code = str(prepared.get("code") or _REARM_REQUIRED_ERROR)
+                return self._error(
+                    op_id,
+                    code,
+                    message=str(prepared.get("message") or _REARM_REQUIRED_MESSAGE),
+                    result=prepared,
+                )
+
         request = {
             "action": "start_session",
             "context_id": session.context_id,
@@ -1246,6 +1627,9 @@ class ComputerUseManager:
             "restore_token": restore_token,
         }
         if self.trust_mode == "allow":
+            request["allow_prompt"] = False
+            request["request_timeout_seconds"] = 2.0
+        elif self._uses_macos_permission_setup():
             request["allow_prompt"] = False
             request["request_timeout_seconds"] = 2.0
         else:
