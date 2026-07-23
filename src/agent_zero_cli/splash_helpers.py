@@ -199,6 +199,8 @@ def show_notice(app: AgentZeroCLI, message: str, *, error: bool = False) -> None
         return
 
     log = app.query_one("#chat-log", ChatLog)
+    if not getattr(log, "is_attached", True):
+        return
     log.write(Text(message, style="red") if error else message)
 
 

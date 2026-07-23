@@ -1347,7 +1347,7 @@ class AgentZeroCLI(App):
     def _apply_model_switcher_state(self, payload: dict[str, Any]) -> None:
         from agent_zero_cli.model_config import apply_model_switcher_state
         allowed, state_kwargs = apply_model_switcher_state(payload)
-        self._model_switcher_signature = state_sync.snapshot_signature(payload)
+        self._model_switcher_signature = state_sync.model_switcher_signature(payload)
         self._model_switch_allowed = allowed
         try:
             widget = self.query_one("#model-switcher-bar", ModelSwitcherBar)

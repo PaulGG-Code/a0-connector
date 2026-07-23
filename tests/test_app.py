@@ -11,7 +11,7 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.selection import SELECT_ALL
 
-from agent_zero_cli import __version__, chat_commands, connection, event_handlers, self_update
+from agent_zero_cli import __version__, chat_commands, connection, event_handlers, model_commands, self_update, splash_helpers
 from agent_zero_cli.app import AgentZeroCLI
 from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
@@ -3215,6 +3215,140 @@ async def test_state_snapshot_applies_changed_model_switcher_state(
     assert len(switcher.state_calls) == 2
     assert switcher.state_calls[-1]["selected_preset"] == "deep"
     assert token_refreshes == 2
+
+
+async def test_state_snapshot_ignores_preset_fields_the_switcher_does_not_render(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"model_switcher"}
+    payloads = [
+        {
+            "ok": True,
+            "allowed": True,
+            "override": {"preset_name": "Balanced"},
+            "configured_preset": "Default",
+            "effective_preset": "Balanced",
+            "presets": [
+                {
+                    "name": "Balanced",
+                    "chat": {"provider": "openai", "name": "gpt-5.4", "ctx_length": 128000},
+                    "utility": {"provider": "openai", "name": "gpt-5.4-mini"},
+                }
+            ],
+            "main_model": {"provider": "openai", "name": "gpt-5.4", "has_api_key": False},
+        },
+        {
+            "ok": True,
+            "allowed": True,
+            "override": {"preset_name": "Balanced"},
+            "configured_preset": "Default",
+            "effective_preset": "Balanced",
+            "presets": [
+                {
+                    "name": "Balanced",
+                    "chat": {"provider": "openai", "name": "gpt-5.4", "ctx_length": 200000},
+                    "utility": {"provider": "anthropic", "name": "claude-haiku-4-5"},
+                    "embedding": {"provider": "openai", "name": "text-embedding-3-large"},
+                }
+            ],
+            "main_model": {"provider": "openai", "name": "gpt-5.4", "has_api_key": True},
+        },
+    ]
+
+    async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return payloads.pop(0)
+
+    async def fake_refresh_goal_bar(*args: object, **kwargs: object) -> bool:
+        return False
+
+    monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", fake_refresh_goal_bar)
+
+    await dummy_app._refresh_state_snapshot()
+    await dummy_app._refresh_state_snapshot()
+
+    switcher = dummy_app._test_widgets["#model-switcher-bar"]  # type: ignore[index]
+    assert len(switcher.state_calls) == 1
+
+
+async def test_closed_client_preset_error_is_ignored_during_shutdown(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"model_switcher"}
+    calls = 0
+    notices: list[str] = []
+
+    async def closed_client(*args: object, **kwargs: object) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("Cannot send a request, as the client has been closed.")
+
+    dummy_app.client.http = SimpleNamespace(is_closed=True)
+    monkeypatch.setattr(dummy_app.client, "set_model_preset", closed_client)
+    monkeypatch.setattr(dummy_app, "_show_notice", lambda message, **_: notices.append(message))
+
+    await model_commands.set_model_preset(dummy_app, None)
+
+    switcher = dummy_app._test_widgets["#model-switcher-bar"]  # type: ignore[index]
+    assert calls == 1
+    assert switcher.busy is False
+    assert notices == []
+
+
+async def test_model_preset_response_matches_the_next_poll_signature(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_app.connected = True
+    dummy_app.current_context = "ctx-1"
+    dummy_app.connector_features = {"model_switcher"}
+    payload = {
+        "ok": True,
+        "allowed": True,
+        "override": {"preset_name": "Balanced"},
+        "configured_preset": "Default",
+        "effective_preset": "Balanced",
+        "presets": [{"name": "Balanced", "chat": {"provider": "openai", "name": "gpt-5.4"}}],
+        "main_model": {"provider": "openai", "name": "gpt-5.4"},
+    }
+
+    async def fake_set_model_preset(*args: object, **kwargs: object) -> dict[str, object]:
+        return payload
+
+    async def fake_get_model_switcher(context_id: str) -> dict[str, object]:
+        assert context_id == "ctx-1"
+        return payload
+
+    async def async_noop(*args: object, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(dummy_app.client, "set_model_preset", fake_set_model_preset)
+    monkeypatch.setattr(dummy_app.client, "get_model_switcher", fake_get_model_switcher)
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
+
+    await model_commands.set_model_preset(dummy_app, "Balanced")
+    await dummy_app._refresh_state_snapshot()
+
+    switcher = dummy_app._test_widgets["#model-switcher-bar"]  # type: ignore[index]
+    assert len(switcher.state_calls) == 1
+
+
+def test_show_notice_ignores_an_unmounted_chat_log(dummy_app: DummyAgentZeroCLI) -> None:
+    dummy_app.connected = False
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    log.is_attached = False
+
+    splash_helpers.show_notice(dummy_app, "This must not try to mount a message.", error=True)
+
+    assert log.writes == []
 
 
 async def test_model_runtime_main_change_does_not_pin_default_utility(

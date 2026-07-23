@@ -10,7 +10,7 @@ from agent_zero_cli.model_config import (
     collect_provider_api_key_status,
     override_main_model,
 )
-from agent_zero_cli.state_sync import snapshot_signature
+from agent_zero_cli.state_sync import model_switcher_signature
 from agent_zero_cli.screens.model_presets import ModelPresetsResult, ModelPresetsScreen
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult, ModelRuntimeScreen
 from agent_zero_cli.widgets.model_switcher_bar import ModelSwitcherBar
@@ -43,7 +43,7 @@ async def refresh_model_switcher(app: AgentZeroCLI, *, silent: bool = True) -> N
         return
 
     allowed, state_kwargs = apply_model_switcher_state(payload)
-    app._model_switcher_signature = snapshot_signature(payload)
+    app._model_switcher_signature = model_switcher_signature(payload)
     app._model_switch_allowed = allowed
     widget.set_state(**state_kwargs)
     widget.set_busy(False)
@@ -77,12 +77,15 @@ async def set_model_preset(
     except Exception as exc:
         if target_bar is not None:
             target_bar.set_busy(False)
+        if not app.connected or app.client.http.is_closed:
+            return
         await refresh_model_switcher(app)
-        app._show_notice(f"Failed to update model preset: {exc}", error=True)
+        if app.connected and not app.client.http.is_closed:
+            app._show_notice(f"Failed to update model preset: {exc}", error=True)
         return
 
     allowed, state_kwargs = apply_model_switcher_state(payload)
-    app._model_switcher_signature = snapshot_signature(payload)
+    app._model_switcher_signature = model_switcher_signature(payload)
     app._model_switch_allowed = allowed
     if target_bar is not None:
         target_bar.set_state(**state_kwargs)
@@ -109,7 +112,7 @@ async def cmd_model_presets(app: AgentZeroCLI) -> None:
         return
 
     allowed, state_kwargs = apply_model_switcher_state(switcher_payload)
-    app._model_switcher_signature = snapshot_signature(switcher_payload)
+    app._model_switcher_signature = model_switcher_signature(switcher_payload)
     app._model_switch_allowed = allowed
     try:
         app.query_one("#model-switcher-bar", ModelSwitcherBar).set_state(**state_kwargs)
@@ -167,7 +170,7 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
         return
 
     allowed, state_kwargs = apply_model_switcher_state(switcher_payload)
-    app._model_switcher_signature = snapshot_signature(switcher_payload)
+    app._model_switcher_signature = model_switcher_signature(switcher_payload)
     app._model_switch_allowed = allowed
     try:
         app.query_one("#model-switcher-bar", ModelSwitcherBar).set_state(**state_kwargs)
@@ -256,7 +259,7 @@ async def cmd_models(app: AgentZeroCLI, *, focus_target: str = "main") -> None:
         return
 
     allowed, state_kwargs = apply_model_switcher_state(payload)
-    app._model_switcher_signature = snapshot_signature(payload)
+    app._model_switcher_signature = model_switcher_signature(payload)
     app._model_switch_allowed = allowed
     try:
         app.query_one("#model-switcher-bar", ModelSwitcherBar).set_state(**state_kwargs)

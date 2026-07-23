@@ -4,6 +4,7 @@ import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Mapping
 
+from agent_zero_cli.model_config import apply_model_switcher_state
 from agent_zero_cli.widgets.model_switcher_bar import ModelSwitcherBar
 
 if TYPE_CHECKING:
@@ -18,6 +19,34 @@ def snapshot_signature(payload: object) -> str:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     except TypeError:
         return repr(payload)
+
+
+def model_switcher_signature(payload: Mapping[str, Any]) -> str:
+    """Return a signature for state that the compact switcher can actually render."""
+    _, state = apply_model_switcher_state(dict(payload))
+    main_model = state.get("main_model")
+    visible_model = (
+        {
+            "provider": str(main_model.get("provider") or "").strip(),
+            "name": str(main_model.get("name") or "").strip(),
+            "label": str(main_model.get("label") or "").strip(),
+        }
+        if isinstance(main_model, Mapping)
+        else {}
+    )
+    visible_presets = [
+        (
+            {
+                "name": str(preset.get("name") or preset.get("value") or "").strip(),
+                "label": str(preset.get("label") or preset.get("title") or "").strip(),
+                "description": str(preset.get("description") or preset.get("summary") or "").strip(),
+            }
+            if isinstance(preset, Mapping)
+            else str(preset or "").strip()
+        )
+        for preset in state["presets"]
+    ]
+    return snapshot_signature({**state, "main_model": visible_model, "presets": visible_presets})
 
 
 def _settings_from_payload(payload: Mapping[str, Any] | None) -> Mapping[str, Any]:
@@ -79,7 +108,7 @@ async def refresh_model_switcher_snapshot(app: AgentZeroCLI, *, silent: bool = T
             app._show_notice(f"Failed to refresh model switcher: {exc}", error=True)
         return False
 
-    signature = snapshot_signature(payload)
+    signature = model_switcher_signature(payload)
     if signature == app._model_switcher_signature:
         return False
 
