@@ -215,7 +215,7 @@ class ModelSwitcherBar(Horizontal):
         self._update_select_state()
 
     def _sync_summary_labels(self) -> None:
-        self._main_button.label = f"Main {self._main_model_text}"
+        self._main_button.label = self._main_model_text
         # Textual doesn't always re-measure auto-width buttons after a label swap
         # until the next resize event, so force a layout refresh here.
         self._main_button.refresh(layout=True)

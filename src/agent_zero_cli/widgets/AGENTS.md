@@ -21,7 +21,7 @@
 - Transcript renderable caches must use A0-owned attribute names and must not
   shadow Textual's internal widget render cache.
 - Footer/command palette behavior must not duplicate the command palette entry. The `ctrl+p` binding remains `show=False` in `app.py`.
-- The compact model switcher bar shows only the effective Main model pill. Its preset selector shows the effective preset and uses `Use preset from settings (<name>)` when a chat override can be cleared.
+- The compact model switcher bar shows the effective model pill without a `Main` role prefix. Its preset selector shows the effective preset and uses `Use preset from settings (<name>)` when a chat override can be cleared.
 
 ## Work Guidance
 

@@ -1661,7 +1661,7 @@ async def test_message_queue_bar_sits_directly_below_model_switcher() -> None:
 
         queue_bar = app.query_one("#message-queue-bar", MessageQueueBar)
         assert len(model_bar.query(".model-switcher-chip")) == 1
-        assert str(model_bar._main_button.label) == "Main codex/gpt-5.5"
+        assert str(model_bar._main_button.label) == "codex/gpt-5.5"
         assert queue_bar.region.y == model_bar.region.y + model_bar.region.height
 
 
