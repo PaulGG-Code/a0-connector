@@ -12,6 +12,7 @@ from textual import events
 from textual.binding import Binding
 from textual.containers import VerticalScroll
 from textual.content import Content
+from textual.message import Message
 from textual.style import Style
 from textual.widgets import Static
 
@@ -350,13 +351,44 @@ class SelectableStatic(Static):
             disabled=disabled,
         )
         self._renderable = content
+        self._render_cache: tuple[tuple[int, int, int], Content] | None = None
 
     def render(self) -> Content:
-        return _renderable_to_content(self, self._renderable)
+        cache_key = self._render_cache_key()
+        if self._render_cache is not None and self._render_cache[0] == cache_key:
+            return self._render_cache[1]
+
+        content = _renderable_to_content(self, self._renderable)
+        self._render_cache = (cache_key, content)
+        return content
 
     def update(self, content: RenderableType = "", *, layout: bool = True) -> None:
         self._renderable = content
+        self._render_cache = None
         self.refresh(layout=layout)
+
+    def _render_cache_key(self) -> tuple[int, int, int]:
+        parent_width = 0
+        if self.parent is not None:
+            parent_width = max(self.parent.content_region.width, self.parent.size.width)
+        app_width = 0
+        try:
+            app_width = self.app.size.width
+        except Exception:
+            pass
+        return (
+            max(self.content_region.width, self.size.width),
+            parent_width,
+            app_width,
+        )
+
+    def on_resize(self, event: events.Resize) -> None:
+        del event
+        self._render_cache = None
+
+    def notify_style_update(self) -> None:
+        self._render_cache = None
+        super().notify_style_update()
 
     def copy_text(self) -> str:
         return _renderable_to_clipboard_text(self, self._renderable)
@@ -549,6 +581,13 @@ class AgentZeroBanner(Static):
 class ChatLog(VerticalScroll):
     """A log widget that updates its children based on sequence tracking."""
 
+    class HistoryRequested(Message):
+        """Posted when scrolling reaches the oldest loaded chat entry."""
+
+        def __init__(self, before: int) -> None:
+            super().__init__()
+            self.before = before
+
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._seq_to_widget: dict[int, SelectableStatic] = {}
@@ -558,6 +597,9 @@ class ChatLog(VerticalScroll):
         self._local_workspace = ""
         self._remote_workspace = ""
         self._auto_follow = True
+        self._history_before = 0
+        self._has_more_history = False
+        self._history_load_pending = False
 
         # Shimmer state
         self._active_seq: int | None = None
@@ -574,6 +616,17 @@ class ChatLog(VerticalScroll):
     def _resume_auto_follow_if_at_bottom(self) -> None:
         if self.is_at_bottom():
             self._auto_follow = True
+
+    def _request_older_history_if_needed(self, *, force: bool = False) -> None:
+        if (
+            not self._has_more_history
+            or self._history_load_pending
+            or self._history_before <= 0
+            or (not force and self.scroll_y > 1)
+        ):
+            return
+        self._history_load_pending = True
+        self.post_message(self.HistoryRequested(self._history_before))
 
     def _should_auto_scroll(self, scroll: bool) -> bool:
         if not scroll:
@@ -594,6 +647,7 @@ class ChatLog(VerticalScroll):
         previous_scroll_y = self.scroll_y
         super()._on_mouse_scroll_up(event)
         self._pause_auto_follow_if_scrolled_up(previous_scroll_y)
+        self._request_older_history_if_needed()
 
     def _on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
         super()._on_mouse_scroll_down(event)
@@ -603,16 +657,19 @@ class ChatLog(VerticalScroll):
         previous_scroll_y = self.scroll_y
         super().action_scroll_up()
         self._pause_auto_follow_if_scrolled_up(previous_scroll_y)
+        self._request_older_history_if_needed()
 
     def action_page_up(self) -> None:
         previous_scroll_y = self.scroll_y
         super().action_page_up()
         self._pause_auto_follow_if_scrolled_up(previous_scroll_y)
+        self._request_older_history_if_needed()
 
     def action_scroll_home(self) -> None:
         previous_scroll_y = self.scroll_y
         super().action_scroll_home()
         self._pause_auto_follow_if_scrolled_up(previous_scroll_y)
+        self._request_older_history_if_needed(force=True)
 
     def action_scroll_down(self) -> None:
         super().action_scroll_down()
@@ -677,6 +734,22 @@ class ChatLog(VerticalScroll):
         self.append_or_update(self._sys_seq, renderable, scroll=True)
         self._sys_seq -= 1
 
+    def set_history_page(self, *, before: int, has_more: bool) -> None:
+        """Record the oldest available cursor after a paged history snapshot."""
+        self._history_before = max(int(before), 0)
+        self._has_more_history = bool(has_more)
+        self._history_load_pending = False
+
+    def history_load_failed(self, before: int) -> None:
+        if self._history_before == before:
+            self._history_load_pending = False
+
+    def _first_timeline_child(self) -> SelectableStatic | None:
+        return next(
+            (child for child in self.children if isinstance(child, SelectableStatic)),
+            None,
+        )
+
     def _child_plain_text(self, child: Static) -> str:
         copy_text = getattr(child, "copy_text", None)
         if callable(copy_text):
@@ -734,7 +807,12 @@ class ChatLog(VerticalScroll):
         return self.scroll_y >= self.max_scroll_y - 1
 
     def append_or_update(
-        self, sequence: int, renderable: RenderableType, scroll: bool = True
+        self,
+        sequence: int,
+        renderable: RenderableType,
+        scroll: bool = True,
+        *,
+        prepend: bool = False,
     ) -> None:
         """Add a new renderable or update an existing one bounded to `sequence`.
 
@@ -756,7 +834,7 @@ class ChatLog(VerticalScroll):
         else:
             widget = SelectableStatic(renderable)
             self._seq_to_widget[sequence] = widget
-            self.mount(widget)
+            self.mount(widget, before=self._first_timeline_child() if prepend else None)
             if should_scroll:
                 self._schedule_scroll_end()
 
@@ -769,6 +847,7 @@ class ChatLog(VerticalScroll):
         *,
         active: bool = False,
         scroll: bool = True,
+        prepend: bool = False,
     ) -> None:
         """Add or update a structured status widget bounded to `sequence`."""
         should_scroll = self._should_auto_scroll(scroll)
@@ -780,7 +859,7 @@ class ChatLog(VerticalScroll):
         if not isinstance(widget, StatusEntry):
             widget = StatusEntry()
             self._seq_to_widget[sequence] = widget
-            self.mount(widget)
+            self.mount(widget, before=self._first_timeline_child() if prepend else None)
 
         widget.set_status(
             label,
@@ -802,6 +881,7 @@ class ChatLog(VerticalScroll):
         *,
         active: bool = False,
         scroll: bool = True,
+        prepend: bool = False,
     ) -> None:
         """Add or update an expandable code widget bounded to `sequence`."""
         should_scroll = self._should_auto_scroll(scroll)
@@ -813,7 +893,7 @@ class ChatLog(VerticalScroll):
         if not isinstance(widget, CodeEntry):
             widget = CodeEntry()
             self._seq_to_widget[sequence] = widget
-            self.mount(widget)
+            self.mount(widget, before=self._first_timeline_child() if prepend else None)
 
         widget.set_code(
             label,
@@ -892,6 +972,9 @@ class ChatLog(VerticalScroll):
         self._active_seq = None
         self._active_meta = {}
         self._auto_follow = True
+        self._history_before = 0
+        self._has_more_history = False
+        self._history_load_pending = False
         for child in self.children:
             child.remove()
 

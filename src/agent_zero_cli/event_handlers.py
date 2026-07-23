@@ -71,7 +71,15 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
     if isinstance(queue_items, list):
         app._set_message_queue(queue_items)
 
-    for event in events:
+    prepend = "history_before" in data and bool(log._seq_to_widget)
+    if "history_before" in data:
+        log.set_history_page(
+            before=int(data.get("history_before") or 0),
+            has_more=bool(data.get("has_more_history")),
+        )
+
+    event_items = reversed(events) if prepend and isinstance(events, list) else events
+    for event in event_items:
         event_type = event.get("event", "")
         category = _EVENT_CATEGORY.get(event_type, "info")
 
@@ -81,10 +89,16 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
 
         if category in ("user", "response", "warning", "error", "code", "info"):
             app._show_chat_intro(log, category)
-            render_connector_event(log, event)
+            if prepend:
+                render_connector_event(log, event, prepend=True)
+            else:
+                render_connector_event(log, event)
         elif category == "util":
             if app.show_utility_messages:
-                render_connector_event(log, event)
+                if prepend:
+                    render_connector_event(log, event, prepend=True)
+                else:
+                    render_connector_event(log, event)
         else:
             label = _STATUS_LABEL.get(event_type)
             if label:
@@ -97,6 +111,7 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
                     detail,
                     event_data.get("meta"),
                     active=False,
+                    **({"prepend": True} if prepend else {}),
                 )
 
     app._sync_body_mode()

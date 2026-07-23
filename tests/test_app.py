@@ -59,10 +59,12 @@ class FakeChatLog:
         self.cleared = False
         self.writes: list[object] = []
         self.status_entries: dict[int, dict[str, object]] = {}
+        self._seq_to_widget: dict[int, object] = {}
         self._active_seq: int | None = None
         self._active_meta: dict[str, object] = {}
         self.copy_text = "visible transcript"
         self.copy_visible_only: bool | None = None
+        self.history_pages: list[tuple[int, bool]] = []
 
     def write(self, message: object) -> None:
         self.writes.append(message)
@@ -107,6 +109,9 @@ class FakeChatLog:
         self.status_entries.clear()
         self._active_seq = None
         self._active_meta = {}
+
+    def set_history_page(self, *, before: int, has_more: bool) -> None:
+        self.history_pages.append((before, has_more))
 
     def copyable_text(self, *, visible_only: bool = True) -> str:
         self.copy_visible_only = visible_only
@@ -1302,7 +1307,8 @@ async def test_begin_connection_to_protected_instance_uses_environment_credentia
         async def create_chat(self) -> str:
             return "ctx-env"
 
-        async def subscribe_context(self, context_id: str) -> dict[str, object]:
+        async def subscribe_context(self, context_id: str, **kwargs) -> dict[str, object]:
+            del kwargs
             self.subscribed_contexts.append(context_id)
             return {}
 
@@ -1405,7 +1411,8 @@ async def test_begin_connection_to_protected_instance_reuses_remembered_session(
         async def create_chat(self) -> str:
             return "ctx-remembered"
 
-        async def subscribe_context(self, context_id: str) -> dict[str, object]:
+        async def subscribe_context(self, context_id: str, **kwargs) -> dict[str, object]:
+            del kwargs
             self.subscribed_contexts.append(context_id)
             return {}
 
@@ -1597,6 +1604,24 @@ def test_context_snapshot_updates_message_queue(
     assert dummy_app.message_queue[0]["id"] == "item-1"
     assert input_widget.queue_active is True
     assert queue_bar.display is True
+
+
+def test_context_snapshot_tracks_older_history_cursor(
+    dummy_app: DummyAgentZeroCLI,
+) -> None:
+    dummy_app.current_context = "ctx-1"
+
+    dummy_app._handle_context_snapshot(
+        {
+            "context_id": "ctx-1",
+            "events": [],
+            "history_before": 150,
+            "has_more_history": True,
+        }
+    )
+
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    assert log.history_pages == [(150, True)]
 
 
 def test_message_queue_update_ignores_other_context(
@@ -1823,7 +1848,7 @@ async def test_switch_context_persists_last_context(
     dummy_app.agent_active = True
 
     unsubscribed: list[str] = []
-    subscribed: list[tuple[str, int]] = []
+    subscribed: list[tuple[str, int, str | None]] = []
     remembered: list[str] = []
     published: list[bool] = []
 
@@ -1833,8 +1858,13 @@ async def test_switch_context_persists_last_context(
     async def fake_unsubscribe_context(context_id: str) -> None:
         unsubscribed.append(context_id)
 
-    async def fake_subscribe_context(context_id: str, from_seq: int = 0) -> None:
-        subscribed.append((context_id, from_seq))
+    async def fake_subscribe_context(
+        context_id: str,
+        from_seq: int = 0,
+        *,
+        history: str | None = None,
+    ) -> None:
+        subscribed.append((context_id, from_seq, history))
 
     async def fake_publish_remote_tree_snapshot(*, force: bool = False) -> None:
         published.append(force)
@@ -1855,7 +1885,7 @@ async def test_switch_context_persists_last_context(
     await dummy_app._switch_context("ctx-2", has_messages_hint=True)
 
     assert unsubscribed == ["ctx-old"]
-    assert subscribed == [("ctx-2", 0)]
+    assert subscribed == [("ctx-2", 0, "tail")]
     assert published == [True]
     assert remembered == ["ctx-2"]
     assert dummy_app.current_context == "ctx-2"
@@ -4696,7 +4726,8 @@ async def test_recover_websocket_preserves_active_context(
             self.hello_calls.append(dict(payload))
             return {"exec_config": {"version": 1}}
 
-        async def subscribe_context(self, context_id: str) -> dict[str, object]:
+        async def subscribe_context(self, context_id: str, **kwargs) -> dict[str, object]:
+            del kwargs
             self.subscribe_calls.append(context_id)
             return {}
 
@@ -4890,6 +4921,69 @@ async def test_chat_log_regular_entries_copy_selected_text() -> None:
         app.screen.action_copy_text()
 
         assert "Copy me from the live transcript" in app.clipboard
+
+
+async def test_chat_log_caches_rendered_content_until_updated() -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test() as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        log.append_or_update(1, Panel("First version", padding=(0, 1)))
+        await pilot.pause()
+
+        widget = log._seq_to_widget[1]
+        first = widget.render()
+        assert widget.render() is first
+
+        widget.update(Panel("Second version", padding=(0, 1)))
+        assert widget.render() is not first
+
+
+async def test_chat_log_prepends_older_history_before_loaded_entries() -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test() as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        log.append_or_update(3, Panel("newer message", padding=(0, 1)))
+        for sequence in reversed((1, 2)):
+            log.append_or_update(
+                sequence,
+                Panel(f"older message {sequence}", padding=(0, 1)),
+                prepend=True,
+            )
+        await pilot.pause()
+
+        timeline = [child for child in log.children if isinstance(child, SelectableStatic)]
+        assert "older message 1" in timeline[0].copy_text()
+        assert "older message 2" in timeline[1].copy_text()
+        assert "newer message" in timeline[2].copy_text()
+
+
+async def test_chat_log_requests_another_history_page_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test() as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        for sequence in range(10):
+            log.append_or_update(sequence, Panel(f"message {sequence}", padding=(0, 1)))
+        await pilot.pause()
+
+        requests: list[int] = []
+        original_post_message = log.post_message
+
+        def capture_history_request(message):
+            if isinstance(message, ChatLog.HistoryRequested):
+                requests.append(message.before)
+            return original_post_message(message)
+
+        monkeypatch.setattr(log, "post_message", capture_history_request)
+        log.set_history_page(before=100, has_more=True)
+        log.action_scroll_home()
+        log.action_scroll_home()
+
+        assert requests == [100]
 
 
 async def test_chat_log_copyable_text_prefers_visible_children() -> None:

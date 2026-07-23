@@ -6,7 +6,7 @@ import json
 import ssl
 from contextlib import asynccontextmanager
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 from aiohttp import web
 import aiohttp
@@ -1516,3 +1516,17 @@ def test_ensure_aiohttp_ws_timeout_compat_returns_ws_close_on_old_aiohttp(
     assert aiohttp.ClientWSTimeout(ws_close=12.5) == 12.5
     assert aiohttp.ClientWSTimeout(ws_close=None) is None
     assert aiohttp.ClientWSTimeout(ws_close=sentinel) is sentinel
+
+
+async def test_subscribe_context_sends_optional_history_hints() -> None:
+    client = A0Client("http://127.0.0.1:50001")
+    client._call = AsyncMock(return_value={})  # type: ignore[method-assign]
+
+    await client.subscribe_context("ctx-1", history="tail")
+    await client.subscribe_context("ctx-1", history_before=100)
+
+    assert client._call.await_args_list == [
+        call("connector_subscribe_context", {"context_id": "ctx-1", "from": 0, "history": "tail"}),
+        call("connector_subscribe_context", {"context_id": "ctx-1", "from": 0, "history_before": 100}),
+    ]
+    await client.http.aclose()

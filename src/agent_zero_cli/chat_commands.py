@@ -231,7 +231,7 @@ async def switch_context(app: AgentZeroCLI, context_id: str, *, has_messages_hin
     app._set_idle()
     app._clear_project_state()
     app._sync_body_mode()
-    await app.client.subscribe_context(context_id, from_seq=0)
+    await app.client.subscribe_context(context_id, from_seq=0, history="tail")
     await app._refresh_context_tab_metadata(context_id, has_messages_hint=has_messages_hint)
     await app._refresh_remote_tool_metadata()
     await app._publish_remote_tree_snapshot(force=True)

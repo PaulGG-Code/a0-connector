@@ -113,6 +113,12 @@ Both public `capabilities` and `connector_hello` include `agent_zero_version`.
 The CLI compares that value with its own package version and surfaces a warning
 when the connected Agent Zero Core is newer than the installed CLI.
 
+The interactive TUI subscribes with `history: "tail"`, which returns the newest
+100 log-output entries and a `history_before` cursor. When the user reaches the
+top of the visible transcript, it requests the preceding page with that cursor;
+the snapshot includes `has_more_history` until the beginning of the chat. The
+headless frontend omits the hint and retains its complete replay behavior.
+
 ## Headless frontend
 
 `a0 headless` is a plain stdin/stdout connector frontend. It does not import

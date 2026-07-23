@@ -881,10 +881,22 @@ class A0Client:
             payload["gateway"] = dict(gateway)
         return await self._call(_EVENT_HELLO, payload)
 
-    async def subscribe_context(self, context_id: str, from_seq: int = 0) -> dict[str, Any]:
+    async def subscribe_context(
+        self,
+        context_id: str,
+        from_seq: int = 0,
+        *,
+        history: str | None = None,
+        history_before: int | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"context_id": context_id, "from": from_seq}
+        if history:
+            payload["history"] = history
+        if history_before is not None:
+            payload["history_before"] = history_before
         return await self._call(
             _EVENT_SUBSCRIBE,
-            {"context_id": context_id, "from": from_seq},
+            payload,
         )
 
     async def send_remote_tree_update(self, payload: dict[str, Any]) -> dict[str, Any]:

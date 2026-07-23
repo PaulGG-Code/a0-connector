@@ -6,6 +6,8 @@ This note lists files that define the **Textual** terminal UI (layout, widgets, 
 
 When you run the CLI inside Cursor or VS Code, it appears in the **integrated terminal** at the bottom of the window. You get the same full-screen TUI as in an external terminal: chat log, multiline input (`Enter` sends, `Ctrl+J` inserts a newline, and `Ctrl+A` selects the full draft; placeholder shows normal help when idle; while the agent works it shows in-input progress text like the core WebUI), image attachment support through `Ctrl+V` for clipboard images or `/attach <image-path>`, top chat tabs, and a compact footer with shortcuts (for example `F3` local file access toggle, `F4` remote-exec toggle, `F6` Chats, `F7` Nudge, `F8` Pause or Resume, and `^P` Commands). In the local instance picker, use Up/Down to change the selected endpoint and Enter or Space to connect.
 
+The interactive TUI opens a long chat at its newest 100 log entries. Scroll to the top (or press `Home`) to load the next older page; the full transcript remains available without mounting it all at once.
+
 Clipboard images use Pillow's native reader on macOS and Windows. Linux uses
 `wl-paste` from `wl-clipboard` on Wayland or `xclip` on X11; the Unix installer
 prints the matching package commands when neither helper is available.
@@ -27,6 +29,7 @@ Focus the top chat tab strip with `Tab` first, then use:
 |------|------|
 | `src/agent_zero_cli/styles/app.tcss` | Global TUI styling (colors, borders, splash surface, `#chat-log`, `#message-input`, footer). |
 | `src/agent_zero_cli/widgets/chat_input.py` | Multiline input (`Enter` to send, `Ctrl+J` for a new line, `Ctrl+A` to select the draft, grows up to a few lines; agent progress as placeholder inside the field when empty). |
+| `src/agent_zero_cli/widgets/chat_log.py` | Selectable chat rows, expandable status/code details, cached Rich conversion, and paged older-history loading. |
 | `src/agent_zero_cli/widgets/__init__.py` | Re-exports widgets (small; part of the UI package). |
 | `src/agent_zero_cli/widgets/splash_view.py` | Staged connection surface for arrow-key local instance picking, single-instance auto-connect, manual URL fallback, login with detected-instance context, refreshed `Change URL` back-navigation, connecting/error states, and empty ready-state actions. |
 | `src/agent_zero_cli/screens/chat_list.py` | Chat list picker (TUI overlay). |
@@ -37,7 +40,7 @@ These are not “layout only,” but they drive or support what you see:
 
 | Path | Role |
 |------|------|
-| `src/agent_zero_cli/app.py` | Main `App`: composes the main screen (`RichLog`, `ChatInput`, `Footer`) and owns WebSocket handling, commands, and most state. |
+| `src/agent_zero_cli/app.py` | Main `App`: composes the main screen (`ChatLog`, `ChatInput`, `Footer`) and owns WebSocket handling, commands, and most state. |
 | `src/agent_zero_cli/__main__.py` | Entry point that starts the app. |
 | `src/agent_zero_cli/client.py` | HTTP/WebSocket client (no widgets). |
 | `src/agent_zero_cli/config.py` | Configuration and env (no widgets). |

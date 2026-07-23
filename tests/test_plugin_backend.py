@@ -1309,6 +1309,123 @@ def test_ws_connector_replays_large_history_in_snapshot_pages() -> None:
     asyncio.run(_scenario())
 
 
+def test_ws_connector_loads_tail_history_and_older_pages_on_demand() -> None:
+    _install_fake_helpers()
+    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    _reset_ws_runtime_state(ws_runtime_mod)
+    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+
+    class FakeLog:
+        updates = list(range(250))
+
+        def output(self, start=None, end=None):
+            normalized_start = int(start or 0)
+            normalized_end = (
+                len(self.updates)
+                if end is None
+                else min(int(end), len(self.updates))
+            )
+            return types.SimpleNamespace(
+                items=[
+                    {
+                        "no": no,
+                        "type": "response",
+                        "heading": "Assistant",
+                        "content": f"history chunk {no}",
+                        "kvps": {},
+                        "timestamp": "2026-04-01T00:00:00Z",
+                    }
+                    for no in range(normalized_start, normalized_end)
+                ],
+                end=normalized_end,
+            )
+
+    class FakeContext:
+        id = "ctx-long"
+        log = FakeLog()
+        agent0 = types.SimpleNamespace(config=types.SimpleNamespace(profile="agent0"))
+
+        def is_running(self) -> bool:
+            return False
+
+        def get_data(self, key: str) -> object:
+            del key
+            return None
+
+    context = FakeContext()
+    agent_mod = types.ModuleType("agent")
+    agent_mod.AgentContext = types.SimpleNamespace(
+        get=lambda context_id: context if context_id == context.id else None
+    )
+    sys.modules["agent"] = agent_mod
+
+    class CapturingConnector(ws_connector_mod.WsConnector):
+        def __init__(self) -> None:
+            super().__init__(None, None)
+            self.emitted: list[tuple[str, str, dict[str, object]]] = []
+
+        async def emit_to(
+            self,
+            sid: str,
+            event: str,
+            payload: dict,
+            correlation_id: str | None = None,
+        ) -> None:
+            del correlation_id
+            self.emitted.append((sid, event, dict(payload)))
+
+    async def _scenario() -> None:
+        ws_runtime_mod.register_sid("sid-cli")
+        handler = CapturingConnector()
+
+        result = await handler.process(
+            "connector_subscribe_context",
+            {"context_id": context.id, "history": "tail"},
+            "sid-cli",
+        )
+        assert result["last_sequence"] == 250
+        assert result["history_before"] == 150
+        assert result["has_more_history"] is True
+
+        snapshots = [
+            payload
+            for _, event, payload in handler.emitted
+            if event == "connector_context_snapshot"
+        ]
+        assert [len(snapshot["events"]) for snapshot in snapshots] == [100]
+        assert snapshots[0]["history_before"] == 150
+        assert snapshots[0]["has_more_history"] is True
+
+        second = await handler.process(
+            "connector_subscribe_context",
+            {"context_id": context.id, "history_before": 150},
+            "sid-cli",
+        )
+        assert second["history_before"] == 50
+        assert second["has_more_history"] is True
+
+        third = await handler.process(
+            "connector_subscribe_context",
+            {"context_id": context.id, "history_before": 50},
+            "sid-cli",
+        )
+        assert third["history_before"] == 0
+        assert third["has_more_history"] is False
+
+        snapshots = [
+            payload
+            for _, event, payload in handler.emitted
+            if event == "connector_context_snapshot"
+        ]
+        assert [len(snapshot["events"]) for snapshot in snapshots] == [100, 100, 50]
+        assert [snapshot["history_before"] for snapshot in snapshots] == [150, 50, 0]
+
+        handler._cancel_streaming("sid-cli", context.id)
+        await asyncio.sleep(0)
+
+    asyncio.run(_scenario())
+
+
 def test_ws_connector_hello_advertises_remote_exec_and_tree_features() -> None:
     _install_fake_helpers(
         code_execution_config={

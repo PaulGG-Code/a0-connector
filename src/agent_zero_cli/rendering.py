@@ -233,7 +233,12 @@ def describe_connector_event(event: dict[str, Any]) -> ConnectorEventParts:
     )
 
 
-def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
+def render_connector_event(
+    log: ChatLog,
+    event: dict[str, Any],
+    *,
+    prepend: bool = False,
+) -> bool:
     """Render a connector event to the chat log.
     
     Returns:
@@ -248,7 +253,7 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
     if category == "user":
         if text:
             panel = Panel(_plain_text(text), border_style="#555555", padding=(0, 1))
-            log.append_or_update(seq, Align.right(panel))
+            log.append_or_update(seq, Align.right(panel), prepend=prepend)
             return True
         return False
 
@@ -256,31 +261,39 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
         if text:
             # Add markdown render inside Left aligned or normal layout
             panel = Panel(Markdown(str(text)), border_style="#233e54", padding=(0, 1))
-            log.append_or_update(seq, panel)
+            log.append_or_update(seq, panel, prepend=prepend)
             return True
         return False
 
     if category == "warning":
         msg = parts.message
-        log.append_or_update(seq, _plain_text(msg, style="yellow"))
+        log.append_or_update(seq, _plain_text(msg, style="yellow"), prepend=prepend)
         return True
 
     if category == "error":
         msg = parts.message
-        log.append_or_update(seq, _plain_text(msg, style="red"))
+        log.append_or_update(seq, _plain_text(msg, style="red"), prepend=prepend)
         return True
 
     if category == "info":
         msg = parts.message
         if msg:
-            log.append_or_update(seq, Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)))
+            log.append_or_update(
+                seq,
+                Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)),
+                prepend=prepend,
+            )
             return True
         return False
 
     if category == "util":
         msg = parts.message
         if msg:
-            log.append_or_update(seq, Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)))
+            log.append_or_update(
+                seq,
+                Padding(_plain_text(msg, style="dim"), (0, 0, 0, 2)),
+                prepend=prepend,
+            )
             return True
         return False
 
@@ -305,6 +318,7 @@ def render_connector_event(log: ChatLog, event: dict[str, Any]) -> bool:
                     style="on #202124",
                     expand=False,
                 ),
+                prepend=prepend,
             )
             return True
         return False

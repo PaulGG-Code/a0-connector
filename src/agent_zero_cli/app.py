@@ -1554,6 +1554,26 @@ class AgentZeroCLI(App):
     def _handle_context_snapshot(self, data: dict[str, Any]) -> None:
         event_handlers.handle_context_snapshot(self, data)
 
+    def on_chat_log_history_requested(self, event: ChatLog.HistoryRequested) -> None:
+        event.stop()
+        context_id = str(self.current_context or "").strip()
+        if not context_id:
+            self.query_one("#chat-log", ChatLog).history_load_failed(event.before)
+            return
+        self.run_worker(
+            self._load_older_history(context_id, event.before),
+            exclusive=True,
+            name="load-older-history",
+        )
+
+    async def _load_older_history(self, context_id: str, before: int) -> None:
+        try:
+            await self.client.subscribe_context(context_id, history_before=before)
+        except Exception as exc:
+            if self.current_context == context_id:
+                self.query_one("#chat-log", ChatLog).history_load_failed(before)
+                self._show_notice(f"Could not load older chat messages: {exc}", error=True)
+
     def _handle_context_event(self, data: dict[str, Any]) -> None:
         event_handlers.handle_context_event(self, data)
 

@@ -310,7 +310,7 @@ async def begin_connection(
     app._set_message_queue([])
 
     try:
-        await app.client.subscribe_context(context_id)
+        await app.client.subscribe_context(context_id, history="tail")
         await app._refresh_remote_tool_metadata()
     except Exception as exc:
         await _silently_disconnect_websocket(app)
@@ -441,7 +441,7 @@ async def _recover_websocket(app: AgentZeroCLI) -> None:
                 )
                 exec_config = hello.get("exec_config") if isinstance(hello, dict) else None
                 app._python_tty.set_exec_config(exec_config)
-                await app.client.subscribe_context(context_id)
+                await app.client.subscribe_context(context_id, history="tail")
                 await app._publish_remote_tree_snapshot(force=True)
             except asyncio.CancelledError:
                 raise
