@@ -206,13 +206,13 @@ address directly, for example `/browser localhost:9222`. A0 CLI resolves
 `/json/version` on the host; full `ws://` or `wss://` DevTools endpoints remain
 supported.
 
-If the selected profile must be launched by A0 and is already locked by a normal browser window, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses Python Playwright in the A0 CLI host environment against an installed Chromium-family executable.
+If the selected profile must be launched by A0 and is already locked by a normal browser window, A0 reports `relaunch_required`; close that browser and retry the agent request or run `/browser relaunch` manually. This launch path uses the Python Playwright client installed with A0 CLI against an installed Chromium-family executable.
 
 Chrome 136+ blocks Playwright remote debugging against the default personal Chrome data directory. If Chrome's own Remote debugging consent path is not available, A0 exposes and auto-selects a separate local profile such as `chrome-a0 Default` under the user's data directory. Site data stays in that local browser profile, and the user may need to sign in once there. You can still select it manually with `/browser profile chrome-a0 Default`.
 
 The Playwright runtime and Chromium binary under the Agent Zero Docker container, such as `/a0/tmp/playwright`, belong to the container browser backend. They are useful when Browser settings use `container`, but they cannot control a host Chrome-family profile from inside Docker.
 
-When automatic host-browser preparation, `/browser host on`, or `/browser relaunch` finds that Python Playwright is missing, the TUI shows the install command and runs the same repair automatically. You can also trigger it directly:
+The A0 CLI installation includes the Python Playwright client, but it does not download a separate Chromium binary. If an older or damaged installation is missing that client, Launcher Browser setup, automatic host-browser preparation, `/browser host on`, and `/browser relaunch` repair it automatically. You can also trigger the repair directly:
 
 ```bash
 /browser repair

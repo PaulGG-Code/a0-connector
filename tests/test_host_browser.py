@@ -920,7 +920,8 @@ def test_hello_metadata_marks_missing_playwright_as_preparable(tmp_path: Path) -
     assert metadata["supported"] is False
     assert metadata["can_prepare"] is True
     assert metadata["status"] == "unsupported"
-    assert "Python Playwright" in metadata["support_reason"]
+    assert "Browser support is incomplete" in metadata["support_reason"]
+    assert "Browser setup action" in metadata["support_reason"]
 
 
 def test_hello_metadata_marks_restricted_saved_profile_as_preparable(

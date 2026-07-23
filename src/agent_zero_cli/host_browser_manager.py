@@ -842,9 +842,8 @@ class HostBrowserManager:
             return self._profile_support_reason(profile)
         if not self._has_playwright():
             return (
-                f"Python Playwright is not installed in the A0 CLI host environment ({sys.executable}). "
-                "Run /browser repair in the A0 CLI, or install it with: "
-                f"{' '.join(self.playwright_install_command())}. "
+                f"Browser support is incomplete in the A0 CLI host environment ({sys.executable}). "
+                "Use the current Browser setup action, or run /browser repair in the A0 CLI. "
                 "The Playwright runtime inside the Agent Zero Docker container is used by the "
                 "container browser backend and cannot control host Chromium-family profiles."
             )

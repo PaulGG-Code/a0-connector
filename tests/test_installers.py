@@ -82,6 +82,7 @@ def test_release_dependency_locks_are_checked_in() -> None:
     assert "--hash=sha256" in runtime_lock
     assert "--hash=sha256" in build_lock
     assert "textual==" in runtime_lock
+    assert "playwright==" in runtime_lock
     assert "hatchling==" in build_lock
 
     assert all("==" in requirement for requirement in pyproject["build-system"]["requires"])
@@ -108,6 +109,7 @@ def test_root_package_embeds_platform_backends() -> None:
     assert "pillow==12.3.0 ; sys_platform == 'darwin' or sys_platform == 'win32'" in dependencies
     assert "pywinauto==0.6.9 ; sys_platform == 'win32'" in dependencies
     assert "textual-serve==1.1.3" in dependencies
+    assert any(requirement.startswith("playwright==") for requirement in dependencies)
 
     entry_points = pyproject["project"]["entry-points"]["a0.computer_use_backends"]
     assert entry_points == {

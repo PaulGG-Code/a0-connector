@@ -220,15 +220,16 @@ full DevTools WebSocket URLs. The connector resolves discovery addresses via
 `/json/version` on the host before opening the WebSocket, so Agent Zero Core
 does not need direct network access to the host browser.
 
-The local-profile launch path requires Python Playwright in the A0 CLI host
-environment. The Playwright runtime under the Agent Zero Docker container,
+The local-profile launch path uses the Python Playwright client installed as a
+normal A0 CLI runtime dependency. It does not install a separate Chromium
+binary. The Playwright runtime under the Agent Zero Docker container,
 including `/a0/tmp/playwright`, powers the container browser backend and cannot
 control a host Chromium-family profile from inside Docker. User-authorized
 remote debugging does not require the Chrome DevTools MCP package or Playwright
-CDP attach; the connector carries the small CDP helper directly. If the host
-Python dependency is missing for the launch path, `/browser host on`,
-`/browser relaunch`, and `/browser repair` surface the install command in the
-TUI and run `uv pip install --python <a0-python> playwright` when uv is
+CDP attach; the connector carries the small CDP helper directly. If an older or
+damaged A0 installation is missing the host Python dependency, Launcher Browser
+setup, `/browser host on`, `/browser relaunch`, and `/browser repair` run the
+same repair with `uv pip install --python <a0-python> playwright` when uv is
 available. Manual/non-uv installs fall back to `python -m pip install
 playwright`, bootstrapping `pip` with `ensurepip` if the interpreter supports it.
 This matters for uv-managed tool environments, which may not include a `pip`

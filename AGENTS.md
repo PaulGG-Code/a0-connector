@@ -39,6 +39,10 @@
 - Gateway release 2.6 adds `computer_use_setup_v1`: correlated setup commands,
   staged macOS Accessibility then Screen Recording approval, and fresh-helper
   polling bounded to 120 seconds so the initiating agent tool call can resume.
+- Release installs include the Python Playwright client needed to launch a host
+  Chromium-family profile. They do not download a separate Chromium binary;
+  Browser setup and `/browser repair` remain recovery paths for older or damaged
+  CLI environments.
 - Use Linux commands and paths by default. Prefer `./.venv/bin/python`, not Windows-only virtualenv paths.
 - UI preview is the primary loop for TUI work: `./.venv/bin/python devtools/serve.py` at `http://localhost:8566`.
 - The CLI talks to Agent Zero through the connector protocol `a0-connector.v1`, HTTP routes under `/api/plugins/_a0_connector/v1/`, and Socket.IO events on namespace `/ws` with `connector_*` event names.
