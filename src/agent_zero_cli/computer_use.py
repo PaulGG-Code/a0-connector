@@ -653,22 +653,6 @@ class ComputerUseManager:
         # Re-arming is an intentional user-approved flow. Do not try to
         # silently revive the old token; force the backend to ask the platform.
         self.restore_token = ""
-        async with self._macos_setup_lock:
-            return await self._setup_macos_permissions(
-                op_id,
-                context_id,
-                prompt=prompt,
-                timeout=timeout,
-            )
-
-    async def _setup_macos_permissions(
-        self,
-        op_id: str,
-        context_id: str,
-        *,
-        prompt: bool,
-        timeout: float,
-    ) -> dict[str, Any]:
         session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
         if session.active or session.session_id:
             await self._close_helper_session(session)
@@ -728,6 +712,22 @@ class ComputerUseManager:
                 result=self._permission_snapshot(),
             )
 
+        async with self._macos_setup_lock:
+            return await self._setup_macos_permissions(
+                op_id,
+                context_id,
+                prompt=prompt,
+                timeout=timeout,
+            )
+
+    async def _setup_macos_permissions(
+        self,
+        op_id: str,
+        context_id: str,
+        *,
+        prompt: bool,
+        timeout: float,
+    ) -> dict[str, Any]:
         session = self._sessions.setdefault(context_id, _HelperSession(context_id=context_id))
         prepared = await self._prepare_macos_permissions(
             session,

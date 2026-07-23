@@ -413,6 +413,58 @@ async def test_macos_start_session_resumes_original_request_after_permission_set
     assert request["request_timeout_seconds"] == 2.0
 
 
+async def test_macos_rearm_runs_staged_setup_and_keeps_the_approved_session(
+    _temp_env: Path,
+) -> None:
+    old_restore_token = "123e4567-e89b-12d3-a456-426614174000"
+    new_restore_token = "123e4567-e89b-12d3-a456-426614174001"
+    manager = _manager(
+        enabled=True,
+        trust_mode="allow",
+        restore_token=old_restore_token,
+        backend_selection=_selection(backend_id="macos", backend_family="macos"),
+    )
+    manager._prepare_macos_permissions = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "state": "ready",
+            "accessibility": "granted",
+            "screen_recording": "granted",
+        }
+    )
+    manager._helper_request = AsyncMock(  # type: ignore[method-assign]
+        return_value={
+            "ok": True,
+            "result": {
+                "active": True,
+                "status": "active",
+                "session_id": "sess-mac-rearm",
+                "restore_token": new_restore_token,
+                "width": 1280,
+                "height": 720,
+            },
+        }
+    )
+
+    result = await manager.rearm("ctx-mac")
+
+    assert result["ok"] is True
+    manager._prepare_macos_permissions.assert_awaited_once()
+    setup_call = manager._prepare_macos_permissions.await_args
+    assert setup_call.kwargs == {
+        "prompt": True,
+        "timeout": computer_use_mod._MACOS_PERMISSION_SETUP_TIMEOUT_SECONDS,
+    }
+    request = manager._helper_request.await_args.args[1]
+    assert request["action"] == "start_session"
+    assert request["trust_mode"] == "persistent"
+    assert request["allow_prompt"] is False
+    assert request["restore_token"] == ""
+    assert manager.trust_mode == "allow"
+    assert manager.status_label == "active"
+    assert manager.restore_token == new_restore_token
+    assert manager._sessions["ctx-mac"].session_id == "sess-mac-rearm"
+
+
 async def test_macos_setup_runs_a_harmless_start_capture_stop_probe(
     _temp_env: Path,
 ) -> None:
