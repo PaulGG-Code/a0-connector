@@ -212,6 +212,7 @@ class _FakeAtspiAccessible:
 
     def grab_focus(self) -> bool:
         self.focused = True
+        self.states.add("FOCUSED")
         return True
 
     def get_character_count(self) -> int:
@@ -354,6 +355,9 @@ def test_wayland_backend_spec_exposes_expected_metadata() -> None:
     assert "atspi-structural-targeting" in spec.features
     assert "native-window-list" in spec.features
     assert "window-state" in spec.features
+    assert "window-scoped-tree-snapshot" in spec.features
+    assert "verified-window-focus" in spec.features
+    assert "target-verified-keyboard-input" in spec.features
     assert "element-index-targeting" in spec.features
     assert "background-dispatch" in spec.features
     assert "foreground-dispatch-fallback" in spec.features
@@ -434,9 +438,22 @@ def test_wayland_shortcut_dispatch_falls_back_to_keysyms_for_unknown_keys(
 def test_wayland_text_dispatch_still_uses_keysyms(
     wayland_helper_module,
 ) -> None:
+    window = _FakeAtspiAccessible(
+        role="frame",
+        name="Focused App",
+        states={"VISIBLE", "SHOWING", "ENABLED", "ACTIVE"},
+        frame=(0, 0, 800, 600),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[window])],
+    )
     helper, remote_desktop = _portal_helper(wayland_helper_module)
+    window_id = helper.list_windows({"session_id": "sess-1"})["windows"][0]["window_id"]
 
-    helper.type_text({"session_id": "sess-1", "text": "T", "submit": True})
+    result = helper.type_text(
+        {"session_id": "sess-1", "window_id": window_id, "text": "T", "submit": True}
+    )
 
     assert remote_desktop.calls == [
         ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", ord("T"), 1),
@@ -444,6 +461,8 @@ def test_wayland_text_dispatch_still_uses_keysyms(
         ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 1),
         ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 0),
     ]
+    assert result["window_id"] == window_id
+    assert result["focus_verified"] is True
 
 
 def test_wayland_ax_snapshot_returns_linux_atspi_tree(
@@ -580,6 +599,136 @@ def test_wayland_window_state_indexes_elements_for_background_actions(
     assert typed["actual_dispatch"] == "background"
 
 
+def test_wayland_window_list_returns_frames_and_skips_services(
+    wayland_helper_module,
+) -> None:
+    frame = _FakeAtspiAccessible(
+        role="frame",
+        name="#general | Agent Zero - Discord",
+        states={"VISIBLE", "SHOWING", "ENABLED", "ACTIVE"},
+        frame=(69, 50, 1851, 1030),
+        pid=57929,
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[
+            _FakeAtspiAccessible(role="application", name="gsd-color", pid=3554),
+            _FakeAtspiAccessible(role="application", name="Discord", children=[frame], pid=57929),
+        ],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    result = helper.list_windows({"session_id": "sess-1"})
+
+    assert result["count"] == 1
+    assert result["windows"] == [
+        {
+            "window_id": "atspi-pid:57929:path:1.0",
+            "pid": 57929,
+            "app_name": "Discord",
+            "title": "#general | Agent Zero - Discord",
+            "role": "frame",
+            "frame": {
+                "x": 69,
+                "y": 50,
+                "width": 1851,
+                "height": 1030,
+                "normalized_x": 69 / 1920,
+                "normalized_y": 50 / 1080,
+                "normalized_width": 1851 / 1920,
+                "normalized_height": 1030 / 1080,
+            },
+            "active": True,
+            "focused": False,
+            "visible": True,
+            "path": [1, 0],
+        }
+    ]
+
+
+def test_wayland_press_rejects_unrecognized_action_instead_of_using_index_zero(
+    wayland_helper_module,
+) -> None:
+    button = _FakeAtspiAccessible(
+        role="push button",
+        name="Mystery",
+        actions=["doDefault"],
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[button])],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    with pytest.raises(wayland_helper_module.PortalError) as exc_info:
+        helper.ax_action({"session_id": "sess-1", "path": [0, 0], "operation": "press"})
+
+    assert exc_info.value.code == "COMPUTER_USE_AX_ACTION_UNAVAILABLE"
+    assert button.performed_actions == []
+
+
+def test_wayland_press_rejects_window_activation(wayland_helper_module) -> None:
+    window = _FakeAtspiAccessible(
+        role="frame",
+        name="Discord",
+        actions=["activate"],
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Discord", children=[window])],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+
+    with pytest.raises(wayland_helper_module.PortalError) as exc_info:
+        helper.ax_action({"session_id": "sess-1", "path": [0, 0], "operation": "press"})
+
+    assert exc_info.value.code == "COMPUTER_USE_WINDOW_ACTIVATION_REQUIRED"
+    assert window.performed_actions == []
+
+
+def test_wayland_ax_snapshot_can_be_scoped_to_one_window(
+    wayland_helper_module,
+) -> None:
+    noise = _FakeAtspiAccessible(
+        role="frame",
+        name="GNOME Shell",
+        children=[_FakeAtspiAccessible(role="panel", name=f"Panel {index}") for index in range(20)],
+        frame=(0, 0, 1920, 1080),
+        pid=3350,
+    )
+    composer = _FakeAtspiAccessible(
+        role="text",
+        name="Message #general",
+        states={"VISIBLE", "SHOWING", "ENABLED", "FOCUSABLE", "EDITABLE"},
+    )
+    discord = _FakeAtspiAccessible(
+        role="frame",
+        name="#general | Agent Zero - Discord",
+        children=[composer],
+        frame=(69, 50, 1851, 1030),
+        pid=57929,
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[
+            _FakeAtspiAccessible(role="application", name="gnome-shell", children=[noise], pid=3350),
+            _FakeAtspiAccessible(role="application", name="Discord", children=[discord], pid=57929),
+        ],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+    window_id = helper.list_windows({"session_id": "sess-1"})["windows"][1]["window_id"]
+
+    result = helper.ax_snapshot(
+        {"session_id": "sess-1", "window_id": window_id, "max_depth": 3, "max_nodes": 5}
+    )
+
+    assert result["scoped"] is True
+    assert result["window_id"] == window_id
+    assert result["node_count"] == 2
+    assert result["tree"]["title"] == "#general | Agent Zero - Discord"
+    assert result["tree"]["children"][0]["title"] == "Message #general"
+
+
 def test_wayland_background_focus_reports_unavailable_and_auto_falls_back(
     wayland_helper_module,
 ) -> None:
@@ -591,7 +740,14 @@ def test_wayland_background_focus_reports_unavailable_and_auto_falls_back(
     )
     _FakeAtspi.desktop = _FakeAtspiAccessible(
         role="desktop",
-        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[text_field])],
+        children=[
+            _FakeAtspiAccessible(
+                role="application",
+                name="Fake App",
+                children=[text_field],
+                frame=(0, 0, 800, 600),
+            )
+        ],
     )
     helper, _remote_desktop = _portal_helper(wayland_helper_module)
     state = helper.get_window_state({"session_id": "sess-1", "max_depth": 2})
@@ -620,6 +776,124 @@ def test_wayland_background_focus_reports_unavailable_and_auto_falls_back(
     assert text_field.focused is True
     assert auto["actual_dispatch"] == "foreground"
     assert auto["foreground_fallback_used"] is True
+    assert auto["focus_verified"] is True
+
+
+def test_wayland_foreground_focus_can_target_window_id(
+    wayland_helper_module,
+) -> None:
+    window = _FakeAtspiAccessible(
+        role="frame",
+        name="#general | Agent Zero - Discord",
+        frame=(69, 50, 1851, 1030),
+        pid=57929,
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[
+            _FakeAtspiAccessible(
+                role="application",
+                name="Discord",
+                children=[window],
+                pid=57929,
+            )
+        ],
+    )
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+    window_id = helper.list_windows({"session_id": "sess-1"})["windows"][0]["window_id"]
+
+    result = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "window_id": window_id,
+            "operation": "focus",
+            "dispatch": "foreground",
+        }
+    )
+
+    assert window.focused is True
+    assert result["target"]["window_id"] == window_id
+    assert result["target"]["role"] == "frame"
+    assert result["focus_verified"] is True
+    assert result["actual_dispatch"] == "foreground"
+
+
+def test_wayland_window_focus_falls_back_to_verified_wmctrl_activation(
+    wayland_helper_module,
+    monkeypatch,
+) -> None:
+    window = _FakeAtspiAccessible(
+        role="frame",
+        name="#general | Agent Zero - Discord",
+        frame=(69, 50, 1851, 1030),
+        pid=57929,
+    )
+    window.grab_focus = lambda: False  # type: ignore[method-assign]
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[
+            _FakeAtspiAccessible(
+                role="application",
+                name="Discord",
+                children=[window],
+                pid=57929,
+            )
+        ],
+    )
+    calls: list[list[str]] = []
+
+    def fake_run(args: list[str], **kwargs: object) -> types.SimpleNamespace:
+        del kwargs
+        calls.append(args)
+        if args == ["wmctrl", "-lp"]:
+            return types.SimpleNamespace(
+                returncode=0,
+                stdout="0x01e0000a  0 57929 host #general | Agent Zero - Discord\n",
+            )
+        window.states.add("ACTIVE")
+        return types.SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(wayland_helper_module.subprocess, "run", fake_run)
+    helper, _remote_desktop = _portal_helper(wayland_helper_module)
+    window_id = helper.list_windows({"session_id": "sess-1"})["windows"][0]["window_id"]
+
+    result = helper.element_action(
+        {
+            "session_id": "sess-1",
+            "window_id": window_id,
+            "operation": "focus",
+            "dispatch": "foreground",
+        }
+    )
+
+    assert calls == [["wmctrl", "-lp"], ["wmctrl", "-ia", "0x01e0000a"]]
+    assert result["focus_verified"] is True
+    assert result["actual_dispatch"] == "foreground"
+
+
+def test_wayland_type_fails_closed_without_verified_target_focus(
+    wayland_helper_module,
+) -> None:
+    window = _FakeAtspiAccessible(
+        role="frame",
+        name="Inactive App",
+        frame=(0, 0, 800, 600),
+    )
+    _FakeAtspi.desktop = _FakeAtspiAccessible(
+        role="desktop",
+        children=[_FakeAtspiAccessible(role="application", name="Fake App", children=[window])],
+    )
+    helper, remote_desktop = _portal_helper(wayland_helper_module)
+    window_id = helper.list_windows({"session_id": "sess-1"})["windows"][0]["window_id"]
+
+    with pytest.raises(wayland_helper_module.PortalError) as missing:
+        helper.type_text({"session_id": "sess-1", "text": "wrong target"})
+    with pytest.raises(wayland_helper_module.PortalError) as unfocused:
+        helper.type_text({"session_id": "sess-1", "window_id": window_id, "text": "wrong target"})
+
+    assert missing.value.code == "COMPUTER_USE_WINDOW_REQUIRED"
+    assert unfocused.value.code == "COMPUTER_USE_TARGET_NOT_FOCUSED"
+    assert remote_desktop.calls == []
 
 
 def test_wayland_ax_action_sets_text_by_semantic_target(

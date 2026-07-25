@@ -1144,11 +1144,22 @@ class ComputerUseManager:
                 "element_index" not in request
                 and "path" not in request
                 and not isinstance(request.get("target"), dict)
+                and not (
+                    request.get("window_id")
+                    and str(request.get("operation") or "").casefold() == "focus"
+                )
             ):
-                raise ValueError("element_action requires element_index, path, or target")
+                raise ValueError(
+                    "element_action requires element_index, path, target, "
+                    "or window_id for focus"
+                )
             return request
 
         if action == "ax_snapshot":
+            if payload.get("pid") is not None:
+                request["pid"] = _coerce_int(payload.get("pid"), name="pid")
+            if payload.get("window_id") is not None:
+                request["window_id"] = str(payload.get("window_id") or "").strip()
             if payload.get("max_depth") is not None:
                 request["max_depth"] = _coerce_int(payload.get("max_depth"), name="max_depth")
             if payload.get("max_nodes") is not None:
@@ -1241,6 +1252,8 @@ class ComputerUseManager:
             if not text:
                 raise ValueError("type requires text")
             request["text"] = text
+            if payload.get("window_id") is not None:
+                request["window_id"] = str(payload.get("window_id") or "").strip()
             if _coerce_bool(payload.get("submit")):
                 request["submit"] = True
             return request

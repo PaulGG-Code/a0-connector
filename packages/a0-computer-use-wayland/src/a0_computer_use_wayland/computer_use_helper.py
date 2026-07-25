@@ -5,6 +5,7 @@ import base64
 import io
 import json
 import os
+import subprocess
 import sys
 import threading
 import time
@@ -225,6 +226,9 @@ _AT_SPI_PRESS_ACTION_NAMES = (
     "open",
     "invoke",
 )
+_AT_SPI_WINDOW_ROLES = {"alert", "dialog", "file chooser", "frame", "window"}
+_AT_SPI_WINDOW_ACTIVATION_ROLES = {"application", *_AT_SPI_WINDOW_ROLES}
+_AT_SPI_FOCUS_SEARCH_MAX_NODES = 500
 
 _DBUS_NATIVE_TYPES = (
     dbus.Boolean,
@@ -416,9 +420,14 @@ def _parse_ax_path(value: object) -> list[int] | None:
         if not text:
             return None
         try:
-            raw = json.loads(text)
+            decoded = json.loads(text)
         except json.JSONDecodeError:
-            raw = [part for part in text.replace("/", ".").split(".") if part.strip()]
+            decoded = None
+        raw = (
+            decoded
+            if isinstance(decoded, (list, tuple))
+            else [part for part in text.replace("/", ".").split(".") if part.strip()]
+        )
     if not isinstance(raw, (list, tuple)):
         return None
     path: list[int] = []
@@ -707,6 +716,136 @@ def _atspi_node_is_offscreen(node: dict[str, Any]) -> bool:
     except (TypeError, ValueError):
         return False
     return x + width <= 0 or y + height <= 0 or x >= 1 or y >= 1
+
+
+def _atspi_focus_state(Atspi: Any, element: object) -> tuple[bool, bool]:
+    active = False
+    focused = False
+    queue = [element]
+    visited = 0
+    while queue and visited < _AT_SPI_FOCUS_SEARCH_MAX_NODES:
+        current = queue.pop(0)
+        visited += 1
+        states = set(_atspi_states(Atspi, current))
+        active = active or "active" in states
+        focused = focused or "focused" in states
+        if active or focused:
+            return active, focused
+        for index in range(_atspi_child_count(current)):
+            child = _atspi_child_at(current, index)
+            if child is not None:
+                queue.append(child)
+    return active, focused
+
+
+def _atspi_wait_for_focus(Atspi: Any, element: object, *, timeout: float = 0.25) -> bool:
+    deadline = time.monotonic() + timeout
+    while True:
+        if any(_atspi_focus_state(Atspi, element)):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+
+
+def _activate_xwayland_window(target: dict[str, Any]) -> bool:
+    try:
+        pid = int(target.get("pid"))
+    except (TypeError, ValueError):
+        return False
+    try:
+        listed = subprocess.run(
+            ["wmctrl", "-lp"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if listed.returncode != 0:
+        return False
+
+    candidates: list[tuple[str, str]] = []
+    for line in listed.stdout.splitlines():
+        parts = line.split(maxsplit=4)
+        if len(parts) < 3:
+            continue
+        try:
+            window_pid = int(parts[2])
+        except ValueError:
+            continue
+        if window_pid == pid:
+            candidates.append((parts[0], parts[4] if len(parts) == 5 else ""))
+    title = str(target.get("title") or "").strip()
+    exact = [candidate for candidate in candidates if title and candidate[1] == title]
+    selected = exact[0] if len(exact) == 1 else candidates[0] if len(candidates) == 1 else None
+    if selected is None:
+        return False
+    try:
+        activated = subprocess.run(
+            ["wmctrl", "-ia", selected[0]],
+            check=False,
+            capture_output=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return activated.returncode == 0
+
+
+def _focus_atspi_element(Atspi: Any, element: object, *, target: dict[str, Any]) -> None:
+    accepted = _safe_call(element, "grab_focus") is not False
+    if accepted and _atspi_wait_for_focus(Atspi, element):
+        return
+    role = str(target.get("role") or "").strip().casefold()
+    if role in _AT_SPI_WINDOW_ACTIVATION_ROLES and _activate_xwayland_window(target):
+        accepted = True
+        if _atspi_wait_for_focus(Atspi, element):
+            return
+    if accepted:
+        raise PortalError(
+            "COMPUTER_USE_WINDOW_FOCUS_UNVERIFIED",
+            "The focus request was accepted but the target did not report active or focused.",
+        )
+    raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI focus action failed.")
+
+
+def _atspi_window_candidates(
+    Atspi: Any,
+    application: object,
+    *,
+    application_path: list[int],
+    session: PortalSession,
+) -> list[tuple[object, list[int], dict[str, Any]]]:
+    application_node = _atspi_node_metadata(
+        Atspi,
+        application,
+        path=application_path,
+        session=session,
+    )
+    candidates: list[tuple[object, list[int], dict[str, Any]]] = []
+    queue = [
+        (child, [*application_path, index], 1)
+        for index in range(_atspi_child_count(application))
+        if (child := _atspi_child_at(application, index)) is not None
+    ]
+    while queue:
+        element, path, depth = queue.pop(0)
+        node = _atspi_node_metadata(Atspi, element, path=path, session=session)
+        if str(node.get("role") or "").casefold() in _AT_SPI_WINDOW_ROLES:
+            candidates.append((element, path, node))
+            continue
+        if depth < 2:
+            for index in range(_atspi_child_count(element)):
+                child = _atspi_child_at(element, index)
+                if child is not None:
+                    queue.append((child, [*path, index], depth + 1))
+    if candidates:
+        return candidates
+    if application_node.get("frame"):
+        return [(application, application_path, application_node)]
+    return []
 
 
 def _node_text_fields(node: dict[str, Any], keys: tuple[str, ...]) -> list[str]:
@@ -1072,29 +1211,45 @@ class PortalComputerUseHelper:
         include_hidden = _bool_param(params.get("include_hidden"), default=False)
         include_offscreen = _bool_param(params.get("include_offscreen"), default=False)
         windows: list[dict[str, Any]] = []
-        for index in range(_atspi_child_count(desktop)):
-            child = _atspi_child_at(desktop, index)
-            if child is None:
+        for application_index in range(_atspi_child_count(desktop)):
+            application = _atspi_child_at(desktop, application_index)
+            if application is None:
                 continue
-            path = [index]
-            node = _atspi_node_metadata(Atspi, child, path=path, session=session)
-            if not include_hidden and not _atspi_node_is_visible(node):
-                continue
-            if not include_offscreen and _atspi_node_is_offscreen(node):
-                continue
-            window_id = _atspi_window_id(node, path=path)
-            windows.append(
-                {
-                    "window_id": window_id,
-                    "pid": node.get("pid"),
-                    "app_name": node.get("title") or node.get("name"),
-                    "title": node.get("title") or node.get("name"),
-                    "role": node.get("role", "application"),
-                    "frame": node.get("frame"),
-                    "visible": _atspi_node_is_visible(node),
-                    "path": path,
-                }
+            application_path = [application_index]
+            application_node = _atspi_node_metadata(
+                Atspi,
+                application,
+                path=application_path,
+                session=session,
             )
+            app_name = application_node.get("title") or application_node.get("name")
+            for element, path, node in _atspi_window_candidates(
+                Atspi,
+                application,
+                application_path=application_path,
+                session=session,
+            ):
+                if not include_hidden and not _atspi_node_is_visible(node):
+                    continue
+                if not include_offscreen and _atspi_node_is_offscreen(node):
+                    continue
+                active, focused = _atspi_focus_state(Atspi, element)
+                windows.append(
+                    {
+                        "window_id": _atspi_window_id(node, path=path),
+                        "pid": node.get("pid") or application_node.get("pid"),
+                        "app_name": app_name,
+                        "title": node.get("title") or node.get("name") or app_name,
+                        "role": node.get("role", "window"),
+                        "frame": node.get("frame"),
+                        "active": active,
+                        "focused": focused,
+                        "visible": _atspi_node_is_visible(node),
+                        "path": path,
+                    }
+                )
+                if len(windows) >= max_windows:
+                    break
             if len(windows) >= max_windows:
                 break
         return {
@@ -1137,6 +1292,9 @@ class PortalComputerUseHelper:
             budget=budget,
         ) or {}
         window_id = _atspi_window_id(window, path=path)
+        active, focused = _atspi_focus_state(Atspi, element)
+        window["active"] = active
+        window["focused"] = focused
         self._cache_element_indices(tree, window_id=window_id)
         window["window_id"] = window_id
         return {
@@ -1179,6 +1337,7 @@ class PortalComputerUseHelper:
 
         if dispatch in {"background", "auto"}:
             background_result = self._try_background_atspi_action(
+                Atspi,
                 element,
                 target=target,
                 operation=operation,
@@ -1192,6 +1351,7 @@ class PortalComputerUseHelper:
                 return background_result
 
         foreground_result = self._perform_atspi_element_action(
+            Atspi,
             element,
             target=target,
             operation=operation,
@@ -1224,6 +1384,41 @@ class PortalComputerUseHelper:
             "max_nodes": max_nodes,
             "truncated": False,
         }
+        if params.get("window_id") or params.get("pid") is not None:
+            element, path, window = self._resolve_atspi_window_root(
+                Atspi,
+                desktop,
+                session=session,
+                params=params,
+            )
+            tree = _serialize_atspi_element(
+                Atspi,
+                element,
+                path=path,
+                session=session,
+                depth=0,
+                max_depth=max_depth,
+                budget=budget,
+            ) or {}
+            window_id = _atspi_window_id(window, path=path)
+            active, focused = _atspi_focus_state(Atspi, element)
+            window.update({"window_id": window_id, "active": active, "focused": focused})
+            return {
+                "session_id": session.session_id,
+                "context_id": session.context_id,
+                "app": {
+                    "name": window.get("title") or window.get("name") or "Linux window",
+                    "backend": "at-spi",
+                },
+                "window_id": window_id,
+                "window": window,
+                "tree": tree,
+                "node_count": budget["count"],
+                "truncated": bool(budget["truncated"]),
+                "max_depth": max_depth,
+                "max_nodes": max_nodes,
+                "scoped": True,
+            }
         tree = {
             "path": [],
             "role": "Desktop",
@@ -1274,6 +1469,7 @@ class PortalComputerUseHelper:
             "truncated": bool(budget["truncated"]),
             "max_depth": max_depth,
             "max_nodes": max_nodes,
+            "scoped": False,
         }
 
     def ax_action(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1305,8 +1501,7 @@ class PortalComputerUseHelper:
         if operation == "press":
             self._press_atspi_element(element, target=target, requested=params)
         elif operation == "focus":
-            if _safe_call(element, "grab_focus") is False:
-                raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI focus action failed.")
+            _focus_atspi_element(Atspi, element, target=target)
         else:
             value = params.get("value", params.get("text"))
             if value is None:
@@ -1323,6 +1518,7 @@ class PortalComputerUseHelper:
                 path=list(target.get("path", [])),
                 session=session,
             ),
+            **({"focus_verified": True} if operation == "focus" else {}),
         }
 
     def move(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -1416,6 +1612,26 @@ class PortalComputerUseHelper:
         submit = bool(params.get("submit"))
         if not text:
             raise PortalError("COMPUTER_USE_TEXT_REQUIRED", "type requires text")
+        window_id = str(params.get("window_id") or "").strip()
+        if not window_id:
+            raise PortalError(
+                "COMPUTER_USE_WINDOW_REQUIRED",
+                "Linux type requires window_id from list_windows so focus can be verified before injection.",
+            )
+        Atspi = _load_atspi_module()
+        element, path, window = self._resolve_atspi_window_root(
+            Atspi,
+            _atspi_desktop(Atspi),
+            session=session,
+            params={"window_id": window_id},
+        )
+        active, focused = _atspi_focus_state(Atspi, element)
+        if not (active or focused):
+            raise PortalError(
+                "COMPUTER_USE_TARGET_NOT_FOCUSED",
+                "Refusing keyboard injection because the requested Linux window is not active or focused.",
+            )
+        verified_window_id = _atspi_window_id(window, path=path)
         for character in text:
             keysym = self._keysym(character)
             self._remote_desktop.NotifyKeyboardKeysym(
@@ -1444,7 +1660,14 @@ class PortalComputerUseHelper:
                 dbus.Int32(enter_keysym),
                 dbus.UInt32(0),
             )
-        return {"text": text, "submitted": submit, "session_id": session.session_id}
+        return {
+            "text": text,
+            "submitted": submit,
+            "session_id": session.session_id,
+            "window_id": verified_window_id,
+            "focus_verified": True,
+            "input_scope": "verified_foreground_window",
+        }
 
     def stop_session(self, params: dict[str, Any]) -> dict[str, Any]:
         del params
@@ -1654,25 +1877,25 @@ class PortalComputerUseHelper:
                 pid_matches = requested_pid is None or str(node.get("pid") or "") == str(requested_pid)
                 if pid_matches:
                     return element, parsed_path, node
-        for index in range(_atspi_child_count(desktop)):
-            child = _atspi_child_at(desktop, index)
-            if child is None:
+        for application_index in range(_atspi_child_count(desktop)):
+            application = _atspi_child_at(desktop, application_index)
+            if application is None:
                 continue
-            path = [index]
-            node = _atspi_node_metadata(Atspi, child, path=path, session=session)
-            if requested_pid is not None and str(node.get("pid") or "") != str(requested_pid):
-                continue
-            if requested_window_id and _atspi_window_id(node, path=path) != requested_window_id:
-                continue
-            return child, path, node
-        if not requested_window_id and requested_pid is None and _atspi_child_count(desktop) > 0:
-            child = _atspi_child_at(desktop, 0)
-            if child is not None:
-                path = [0]
-                return child, path, _atspi_node_metadata(Atspi, child, path=path, session=session)
+            application_path = [application_index]
+            for element, path, node in _atspi_window_candidates(
+                Atspi,
+                application,
+                application_path=application_path,
+                session=session,
+            ):
+                if requested_pid is not None and str(node.get("pid") or "") != str(requested_pid):
+                    continue
+                if requested_window_id and _atspi_window_id(node, path=path) != requested_window_id:
+                    continue
+                return element, path, node
         raise PortalError(
             "COMPUTER_USE_WINDOW_NOT_FOUND",
-            "No matching AT-SPI top-level window/application was found.",
+            "No matching AT-SPI top-level window was found.",
         )
 
     def _cache_element_indices(self, tree: dict[str, Any], *, window_id: str) -> None:
@@ -1743,6 +1966,21 @@ class PortalComputerUseHelper:
             node = _atspi_node_metadata(Atspi, element, path=path, session=session)
             node["element_index"] = index
             return element, node
+        if (
+            operation == "focus"
+            and params.get("path") is None
+            and not params.get("target")
+            and (params.get("window_id") or params.get("pid") is not None)
+        ):
+            element, path, window = self._resolve_atspi_window_root(
+                Atspi,
+                desktop,
+                session=session,
+                params=params,
+            )
+            target = _atspi_node_metadata(Atspi, element, path=path, session=session)
+            target["window_id"] = _atspi_window_id(window, path=path)
+            return element, target
         return self._resolve_atspi_target(
             Atspi,
             desktop,
@@ -1773,6 +2011,7 @@ class PortalComputerUseHelper:
 
     def _try_background_atspi_action(
         self,
+        Atspi: Any,
         element: object,
         *,
         target: dict[str, Any],
@@ -1807,6 +2046,7 @@ class PortalComputerUseHelper:
             )
         try:
             result = self._perform_atspi_element_action(
+                Atspi,
                 element,
                 target=target,
                 operation=operation,
@@ -1828,6 +2068,7 @@ class PortalComputerUseHelper:
 
     def _perform_atspi_element_action(
         self,
+        Atspi: Any,
         element: object,
         *,
         target: dict[str, Any],
@@ -1835,11 +2076,12 @@ class PortalComputerUseHelper:
         params: dict[str, Any],
         session: PortalSession,
     ) -> dict[str, Any]:
+        focus_verified = False
         if operation == "press":
             self._press_atspi_element(element, target=target, requested=params)
         elif operation == "focus":
-            if _safe_call(element, "grab_focus") is False:
-                raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI focus action failed.")
+            _focus_atspi_element(Atspi, element, target=target)
+            focus_verified = True
         elif operation == "set_value":
             value = params.get("value", params.get("text"))
             if value is None:
@@ -1855,6 +2097,7 @@ class PortalComputerUseHelper:
             "context_id": session.context_id,
             "operation": operation,
             "target": target,
+            **({"focus_verified": True} if focus_verified else {}),
         }
 
     def _keysym(self, value: str) -> int:
@@ -1962,6 +2205,12 @@ class PortalComputerUseHelper:
         target: dict[str, Any],
         requested: dict[str, Any],
     ) -> None:
+        role = str(target.get("role") or "").strip().casefold()
+        if role in _AT_SPI_WINDOW_ACTIVATION_ROLES:
+            raise PortalError(
+                "COMPUTER_USE_WINDOW_ACTIVATION_REQUIRED",
+                "Window/application nodes cannot be pressed; use foreground focus and require focus verification.",
+            )
         action_name = ""
         target_action = target.get("action")
         if isinstance(target_action, str):
@@ -1987,7 +2236,11 @@ class PortalComputerUseHelper:
                 chosen_index = action_names.index(preferred)
                 break
         if chosen_index is None:
-            chosen_index = 0
+            available = ", ".join(name for name in action_names if name) or "none"
+            raise PortalError(
+                "COMPUTER_USE_AX_ACTION_UNAVAILABLE",
+                f"The target exposes no recognized press action; available actions: {available}.",
+            )
         if _safe_call(element, "do_action", chosen_index) is False:
             raise PortalError("COMPUTER_USE_AX_ACTION_FAILED", "AT-SPI press action failed.")
 

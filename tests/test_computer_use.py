@@ -1396,7 +1396,11 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     )
     scroll = manager._normalize_action_payload("scroll", {"dx": 1, "dy": -2}, context_id="ctx-1")
     key = manager._normalize_action_payload("key", {"key": "ctrl+alt+t"}, context_id="ctx-1")
-    typed = manager._normalize_action_payload("type", {"text": "hello"}, context_id="ctx-1")
+    typed = manager._normalize_action_payload(
+        "type",
+        {"text": "hello", "window_id": "atspi-pid:123:path:0.0"},
+        context_id="ctx-1",
+    )
     capture = manager._normalize_action_payload(
         "capture",
         {"fresh": True, "fresh_after": 123.5, "fresh_timeout_seconds": 0.25},
@@ -1404,7 +1408,12 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     )
     ax_snapshot = manager._normalize_action_payload(
         "ax_snapshot",
-        {"max_depth": 3, "max_nodes": 50},
+        {
+            "pid": "123",
+            "window_id": "atspi-pid:123:path:0.0",
+            "max_depth": 3,
+            "max_nodes": 50,
+        },
         context_id="ctx-1",
     )
     ax_action = manager._normalize_action_payload(
@@ -1446,9 +1455,18 @@ async def test_move_click_scroll_key_type_normalize_payloads(
         },
         context_id="ctx-1",
     )
+    window_focus = manager._normalize_action_payload(
+        "element_action",
+        {
+            "window_id": "atspi-pid:57929:path:20.0",
+            "operation": "focus",
+            "dispatch": "foreground",
+        },
+        context_id="ctx-1",
+    )
     submitted = manager._normalize_action_payload(
         "type",
-        {"text": "hello", "submit": True},
+        {"text": "hello", "window_id": "atspi-pid:123:path:0.0", "submit": True},
         context_id="ctx-1",
     )
 
@@ -1457,11 +1475,14 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     assert scroll["dx"] == 1 and scroll["dy"] == -2
     assert key["keys"] == ["ctrl", "alt", "t"]
     assert typed["text"] == "hello"
+    assert typed["window_id"] == "atspi-pid:123:path:0.0"
     assert capture["fresh"] is True
     assert capture["fresh_after"] == 123.5
     assert capture["fresh_timeout_seconds"] == 0.25
     assert ax_snapshot["max_depth"] == 3
     assert ax_snapshot["max_nodes"] == 50
+    assert ax_snapshot["pid"] == 123
+    assert ax_snapshot["window_id"] == "atspi-pid:123:path:0.0"
     assert ax_action["target"]["title"] == "Save"
     assert ax_action["operation"] == "press"
     assert uia_snapshot["max_depth"] == 4
@@ -1479,7 +1500,11 @@ async def test_move_click_scroll_key_type_normalize_payloads(
     assert element_action["element_index"] == 3
     assert element_action["operation"] == "invoke"
     assert element_action["dispatch"] == "background"
+    assert window_focus["window_id"] == "atspi-pid:57929:path:20.0"
+    assert window_focus["operation"] == "focus"
+    assert window_focus["dispatch"] == "foreground"
     assert submitted["submit"] is True
+    assert submitted["window_id"] == "atspi-pid:123:path:0.0"
 
 
 async def test_normalized_coordinates_are_clamped_to_unit_interval(

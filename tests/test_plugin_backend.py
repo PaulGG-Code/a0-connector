@@ -3382,7 +3382,8 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
     )
 
     assert response.message == (
-        f"Typed 21 character(s) and submitted. Latest screen attached: "
+        "Sent 21 global keyboard character(s) and submitted; destination was not verified. "
+        "Inspect the attached screen before claiming where the text landed. Latest screen attached: "
         f"{_expected_capture_summary(fresh=True)} {_capture_verification_note(tool_mod)}"
     )
     assert shared_ws_manager.calls[0]["payload"]["submit"] is True
