@@ -1324,7 +1324,9 @@ async def test_remote_debugging_session_opens_lists_and_reads_content(
     assert instances[0].closed is True
 
 
-async def test_ensure_action_enables_and_starts_host_browser(tmp_path: Path) -> None:
+async def test_remote_ensure_respects_disabled_state_while_local_preparation_can_enable(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "Chrome"
     (root / "Default").mkdir(parents=True)
     executable = tmp_path / "chrome"
@@ -1344,7 +1346,7 @@ async def test_ensure_action_enables_and_starts_host_browser(tmp_path: Path) -> 
         playwright_starter=lambda: FakeStarter(playwright),
     )
 
-    result = await manager.handle_op(
+    remote_result = await manager.handle_op(
         {
             "op_id": "op-ensure",
             "context_id": "chat-1",
@@ -1353,9 +1355,15 @@ async def test_ensure_action_enables_and_starts_host_browser(tmp_path: Path) -> 
         }
     )
 
-    assert result["ok"] is True
+    assert remote_result["ok"] is False
+    assert remote_result["code"] == "HOST_BROWSER_DISABLED"
+    assert manager.enabled is False
+    assert manager._sessions == {}
+
+    local_result = await manager.ensure_available(profile_mode="agent")
+
     assert manager.enabled is True
-    assert result["result"]["status"] == "active"
+    assert local_result["status"] == "active"
     assert RELAUNCH_CONTEXT_ID in manager._sessions
 
 
@@ -1375,7 +1383,7 @@ async def test_ensure_existing_mode_reports_restricted_saved_profile(
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(
-            host_browser_enabled=False,
+            host_browser_enabled=True,
             host_browser_family="chrome",
             host_browser_profile_path=str(default_root),
             host_browser_profile_label="Default",
@@ -1420,7 +1428,7 @@ async def test_ensure_agent_mode_auto_selects_supported_managed_profile(
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(
-            host_browser_enabled=False,
+            host_browser_enabled=True,
             host_browser_family="chrome",
             host_browser_profile_path=str(default_root),
             host_browser_profile_label="Default",

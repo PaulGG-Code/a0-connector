@@ -535,6 +535,15 @@ class HostBrowserManager:
             return {"op_id": "", "ok": False, "error": "op_id is required", "code": "MISSING_OP_ID"}
         if action not in _SUPPORTED_ACTIONS:
             return self._error(op_id, "UNKNOWN_ACTION", f"Unknown host browser action: {action!r}")
+        if action == "status":
+            snapshot = self.status_snapshot(
+                profile_mode=profile_mode,
+                browser_selection=browser_selection,
+            )
+            snapshot["context_id"] = context_id
+            return self._success(op_id, snapshot)
+        if not self.enabled:
+            return self._error(op_id, "HOST_BROWSER_DISABLED", "Host browser is disabled in the A0 CLI.")
         try:
             self._apply_helper_payloads(payload)
         except ValueError as exc:
@@ -567,15 +576,6 @@ class HostBrowserManager:
             except Exception as exc:
                 self.last_error = str(exc)
                 return self._error(op_id, "HOST_BROWSER_ERROR", str(exc))
-        if action == "status":
-            snapshot = self.status_snapshot(
-                profile_mode=profile_mode,
-                browser_selection=browser_selection,
-            )
-            snapshot["context_id"] = context_id
-            return self._success(op_id, snapshot)
-        if not self.enabled:
-            return self._error(op_id, "HOST_BROWSER_DISABLED", "Host browser is disabled in the A0 CLI.")
 
         profile = self.selected_profile(
             profile_mode=profile_mode,
