@@ -140,7 +140,6 @@ class ProjectMenuPopover(Vertical):
                         action="activate",
                         project_name=name,
                         disabled=name == self._current_project_name,
-                        id=f"project-menu-switch-{name}",
                         classes="project-menu-item project-menu-project",
                     )
             else:

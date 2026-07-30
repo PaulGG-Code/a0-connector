@@ -35,6 +35,7 @@ from agent_zero_cli.widgets import (
     ModelSwitcherBar,
     ProfileMenuItem,
     ProjectMenuItem,
+    ProjectMenuPopover,
     SplashState,
     context_tab_from_metadata,
 )
@@ -715,6 +716,18 @@ def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
     assert stopped == [True]
     assert len(captured) == 1
     assert isinstance(captured[0], ProjectMenuItem.Selected)
+
+
+async def test_project_menu_accepts_human_readable_project_names() -> None:
+    class ProjectMenuApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ProjectMenuPopover([{"name": "Project Showreel", "title": "Project Showreel"}])
+
+    app = ProjectMenuApp()
+    async with app.run_test():
+        item = app.query_one(ProjectMenuItem)
+
+    assert item.project_name == "Project Showreel"
 
 
 async def test_escape_dismisses_open_profile_menu_when_focus_is_elsewhere(
