@@ -245,6 +245,8 @@ class ModelSwitcherBar(Horizontal):
             return
         if self._busy:
             return
+        if event.value != event.select.value:
+            return
         value = str(event.value)
         if value == _CUSTOM_OVERRIDE_VALUE:
             return

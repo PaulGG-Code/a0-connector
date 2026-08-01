@@ -22,6 +22,7 @@
   shadow Textual's internal widget render cache.
 - Footer/command palette behavior must not duplicate the command palette entry. The `ctrl+p` binding remains `show=False` in `app.py`.
 - The compact model switcher bar shows the effective model pill without a `Main` role prefix. Its preset selector shows the effective preset and uses `Use preset from settings (<name>)` when a chat override can be cleared.
+- Programmatic model-switcher refreshes must ignore queued stale `Select.Changed` events so they cannot reverse a user's preset choice.
 
 ## Work Guidance
 

@@ -11,7 +11,7 @@ from agent_zero_cli.screens.model_presets import (
     _coerce_model_preset,
     _render_preset_details,
 )
-from agent_zero_cli.widgets.model_switcher_bar import _preset_options
+from agent_zero_cli.widgets.model_switcher_bar import ModelSwitcherBar, _preset_options
 
 
 pytestmark = pytest.mark.anyio
@@ -41,6 +41,36 @@ class ModelPresetsHarness(App[None]):
         self.result = result
 
 
+class ModelSwitcherHarness(App[None]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.preset_changes: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield ModelSwitcherBar(id="model-switcher-bar")
+
+    def on_mount(self) -> None:
+        self.query_one(ModelSwitcherBar).set_state(
+            main_model={"provider": "old", "name": "old-model"},
+            presets=[{"name": "Old"}, {"name": "New"}],
+            allowed=True,
+            selected_preset="Old",
+            configured_preset="Old",
+        )
+
+    def on_model_switcher_bar_preset_changed(self, event: ModelSwitcherBar.PresetChanged) -> None:
+        self.preset_changes.append(event.value)
+        if len(self.preset_changes) == 1:
+            event.bar.set_state(
+                main_model={"provider": "new", "name": "new-model"},
+                presets=[{"name": "Old"}, {"name": "New"}],
+                allowed=True,
+                selected_preset="New",
+                configured_preset="Old",
+                override_active=True,
+            )
+
+
 async def test_model_presets_keyboard_enter_applies_highlighted_dropdown_choice() -> None:
     app = ModelPresetsHarness()
 
@@ -53,6 +83,18 @@ async def test_model_presets_keyboard_enter_applies_highlighted_dropdown_choice(
 
     assert isinstance(app.result, ModelPresetsResult)
     assert app.result.preset_name == "deep"
+
+
+async def test_model_switcher_ignores_stale_events_from_programmatic_refresh() -> None:
+    app = ModelSwitcherHarness()
+
+    async with app.run_test(size=(100, 20)) as pilot:
+        await pilot.pause()
+        await pilot.click("#model-switcher-preset")
+        await pilot.press("down", "enter")
+        await pilot.pause()
+
+    assert app.preset_changes == ["New"]
 
 
 def test_unified_preset_payload_uses_effective_name_and_clear_copy() -> None:
