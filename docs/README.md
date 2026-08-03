@@ -7,7 +7,6 @@
 | [Headless mode](headless.md) | Plain stdin/stdout connector mode, JSONL output, slash commands, exit codes |
 | [Development](development.md) | Repo layout, local setup, tests, import gotchas |
 | [TUI frontend](tui-frontend.md) | Which files define the Textual UI (widgets, styles, screens) |
-| [TUI overlay unification handoff](tui-overlay-unification-handoff.md) | Follow-up plan for making popovers, menus, modals, and palettes share one lighter visual language |
 
 ## Troubleshooting
 
