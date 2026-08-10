@@ -59,6 +59,7 @@ All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
 | `settings_get` | Session | Optional runtime settings surface |
 | `settings_set` | Session | Optional runtime settings surface |
 | `agent_profile_set` | Session | Context-scoped Agent Zero Core profile switch |
+| `agent_editor` | Session | Easy-mode agent profile load, create, and sparse save |
 | `agents_list` | Session | Optional agent-profile list |
 | `skills_list` | Session | Optional installed-skill list |
 | `skills_activate` | Session | Optional context-scoped skill activation |

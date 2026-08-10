@@ -1082,10 +1082,20 @@ class A0Client:
             data["ok"] = True
         return data
 
-    async def create_chat(self, *, current_context_id: str | None = None) -> str:
+    async def create_chat(
+        self,
+        *,
+        current_context_id: str | None = None,
+        agent_profile: str | None = None,
+        project_name: str | None = None,
+    ) -> str:
         payload = {}
         if current_context_id:
             payload["current_context"] = current_context_id
+        if agent_profile:
+            payload["agent_profile"] = agent_profile
+        if project_name:
+            payload["project_name"] = project_name
 
         response = await self._post("chat_create", payload)
         response.raise_for_status()
@@ -1365,6 +1375,19 @@ class A0Client:
                 "status_code": response.status_code,
             }
 
+        data = self._json(response)
+        if "ok" not in data:
+            data["ok"] = True
+        return data
+
+    async def agent_editor(self, action: str, **payload: Any) -> dict[str, Any]:
+        response = await self._post("agent_editor", {"action": action, **payload})
+        if response.status_code >= 400:
+            return {
+                "ok": False,
+                "message": self._response_message(response),
+                "status_code": response.status_code,
+            }
         data = self._json(response)
         if "ok" not in data:
             data["ok"] = True

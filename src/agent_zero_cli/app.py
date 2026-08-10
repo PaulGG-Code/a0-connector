@@ -422,7 +422,7 @@ class AgentZeroCLI(App):
             CommandSpec(
                 "/profile",
                 (),
-                "Pick or set the active Agent Zero Core profile.",
+                "Manage, select, or quickly create an Agent Zero Core profile.",
                 lambda app: availability.profile_availability(app),
                 lambda app: profile_commands.cmd_profile(app),
             ),
@@ -777,6 +777,7 @@ class AgentZeroCLI(App):
         popover = ProfileMenuPopover(
             options,
             current_profile=current_profile,
+            can_edit="agent_editor" in self.connector_features,
             id="profile-menu-popover",
         )
         self._profile_menu_popover = popover
@@ -878,13 +879,16 @@ class AgentZeroCLI(App):
         await self._hide_profile_menu()
         self._focus_message_input()
 
-    async def _handle_profile_menu_action(self, profile_key: str) -> None:
+    async def _handle_profile_menu_action(self, action: str, profile_key: str = "") -> None:
         options = ()
         popover = self._profile_menu_popover
         if popover is not None:
             options = getattr(popover, "_profiles", ())
         await self._hide_profile_menu()
-        await profile_commands.apply_profile_selection(self, profile_key, options=options)
+        if action == "select":
+            await profile_commands.apply_profile_selection(self, profile_key, options=options)
+        else:
+            await profile_commands.handle_profile_menu_action(self, action, profile_key)
         self._focus_message_input()
 
     def on_key(self, event: events.Key) -> None:
@@ -2418,9 +2422,9 @@ class AgentZeroCLI(App):
 
     def on_profile_menu_item_selected(self, event: ProfileMenuItem.Selected) -> None:
         self.run_worker(
-            self._handle_profile_menu_action(event.profile_key),
+            self._handle_profile_menu_action(event.action, event.profile_key),
             exclusive=True,
-            name=f"profile-menu-{event.profile_key}",
+            name=f"profile-menu-{event.action}-{event.profile_key}",
         )
 
     async def _cmd_clear(self) -> None:

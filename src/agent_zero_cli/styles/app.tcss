@@ -921,6 +921,10 @@ InstalledPluginsScreen > Center {
     opacity: 1;
 }
 
+.profile-menu-action {
+    color: #80d0ff;
+}
+
 #profile-menu-items {
     height: auto;
     max-height: 9;
@@ -930,6 +934,80 @@ InstalledPluginsScreen > Center {
     color: #7f8c98;
     min-height: 3;
     content-align: center middle;
+}
+
+ProfileEditorScreen {
+    align: left top;
+    background: $background 60%;
+}
+
+ProfileEditorScreen > Center {
+    align: left top;
+}
+
+#profile-editor-box {
+    width: 100%;
+    max-width: 100%;
+    height: 22;
+    max-height: 100%;
+    border: none;
+    background: #101820;
+    padding: 0 1;
+}
+
+#profile-editor-title {
+    text-style: bold;
+}
+
+#profile-editor-step,
+#profile-editor-tools-help {
+    color: #9aa7b4;
+}
+
+#profile-editor-pages {
+    height: 15;
+}
+
+.profile-editor-label {
+    margin-top: 1;
+    text-style: bold;
+}
+
+#profile-editor-name,
+#profile-editor-instructions,
+#profile-editor-tool-list {
+    width: 100%;
+    background: #17181a;
+    border: round #2a3a4a;
+}
+
+#profile-editor-name:focus,
+#profile-editor-instructions:focus,
+#profile-editor-tool-list:focus {
+    border: round #00b4ff;
+}
+
+#profile-editor-instructions {
+    height: 9;
+}
+
+#profile-editor-tool-list {
+    height: 1fr;
+    margin-top: 1;
+}
+
+#profile-editor-status {
+    min-height: 1;
+}
+
+#profile-editor-actions {
+    height: auto;
+    align: right middle;
+}
+
+#profile-editor-actions Button {
+    min-width: 10;
+    margin-left: 1;
 }
 
 ProjectInstructionsScreen {

@@ -1194,6 +1194,51 @@ async def test_set_agent_profile_posts_context_scoped_payload() -> None:
     }
 
 
+async def test_agent_editor_and_scoped_chat_creation_use_connector_endpoints() -> None:
+    client = A0Client("http://localhost:5080")
+    client.http = Mock()
+    client.http.post = AsyncMock(
+        side_effect=[
+            FakeResponse(json_data={"ok": True, "profile_id": "source-scout"}),
+            FakeResponse(json_data={"context_id": "ctx-2"}),
+        ]
+    )
+
+    editor = await client.agent_editor(
+        "quick_create",
+        context_id="ctx-1",
+        title="Source Scout",
+        instructions="Verify every claim.",
+    )
+    context_id = await client.create_chat(
+        current_context_id="ctx-1",
+        agent_profile="source-scout",
+        project_name="Demo",
+    )
+
+    assert editor == {"ok": True, "profile_id": "source-scout"}
+    assert context_id == "ctx-2"
+    assert client.http.post.await_args_list == [
+        call(
+            "http://localhost:5080/api/plugins/_a0_connector/v1/agent_editor",
+            json={
+                "action": "quick_create",
+                "context_id": "ctx-1",
+                "title": "Source Scout",
+                "instructions": "Verify every claim.",
+            },
+        ),
+        call(
+            "http://localhost:5080/api/plugins/_a0_connector/v1/chat_create",
+            json={
+                "current_context": "ctx-1",
+                "agent_profile": "source-scout",
+                "project_name": "Demo",
+            },
+        ),
+    ]
+
+
 async def test_set_browser_runtime_posts_host_browser_selection() -> None:
     client = A0Client("http://localhost:5080")
     client.http = Mock()
