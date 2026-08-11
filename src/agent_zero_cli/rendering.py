@@ -73,6 +73,17 @@ _PROMPT_LINE_RE = re.compile(
 )
 
 
+def format_duration(seconds: float | int) -> str:
+    total_seconds = max(0, int(float(seconds) + 0.5))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, remaining = divmod(remainder, 60)
+    return (
+        f"{hours}h{minutes}m{remaining}s"
+        if hours
+        else f"{minutes}m{remaining}s" if minutes else f"{remaining}s"
+    )
+
+
 @dataclass(frozen=True)
 class ConnectorEventParts:
     event_type: str

@@ -223,6 +223,8 @@ class AgentZeroCLI(App):
         self.show_utility_messages = False
         self._response_delivered = False
         self._context_run_complete = False
+        self._run_started_at: float | None = None
+        self._last_response_sequence: int | None = None
         self._chat_intro_pending = True
         self._remote_file_write_enabled = True
         self._remote_exec_enabled = self.config.remote_exec_enabled

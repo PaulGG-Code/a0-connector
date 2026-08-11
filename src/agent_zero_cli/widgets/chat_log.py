@@ -942,6 +942,22 @@ class ChatLog(VerticalScroll):
         self.append_or_update(self._sys_seq, renderable, scroll=True)
         self._sys_seq -= 1
 
+    def write_before(self, sequence: int, renderable: RenderableType) -> None:
+        """Write an un-updatable message immediately before a sequence entry."""
+        target = self._seq_to_widget.get(sequence)
+        if target is None:
+            self.write(renderable)
+            return
+
+        should_scroll = self._should_auto_scroll(True)
+        entry = TranscriptEntry()
+        self._seq_to_widget[self._sys_seq] = entry
+        self._sys_seq -= 1
+        self.mount(entry, before=target)
+        entry.set_primary(SelectableStatic).update(renderable)
+        if should_scroll:
+            self._schedule_scroll_end()
+
     def set_history_page(self, *, before: int, has_more: bool) -> None:
         """Record the oldest available cursor after a paged history snapshot."""
         self._history_before = max(int(before), 0)

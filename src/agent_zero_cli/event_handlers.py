@@ -4,12 +4,14 @@ import asyncio
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 
+from rich.text import Text
 from textual.css.query import NoMatches
 
 from agent_zero_cli.rendering import (
     _EVENT_CATEGORY,
     _STATUS_LABEL,
     extract_detail,
+    format_duration,
     render_connector_event,
 )
 from agent_zero_cli.media_refs import extract_image_references
@@ -87,6 +89,9 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
         app._set_message_queue(queue_items)
 
     prepend = "history_before" in data and bool(log._seq_to_widget)
+    if "history_before" not in data:
+        app._run_started_at = None
+        app._last_response_sequence = None
     if "history_before" in data:
         log.set_history_page(
             before=int(data.get("history_before") or 0),
@@ -162,6 +167,12 @@ def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:
 
     post_complete = app._context_run_complete
 
+    if event_type == "user_message":
+        app._run_started_at = monotonic()
+        app._last_response_sequence = None
+    elif not post_complete and app._run_started_at is None and category != "response":
+        app._run_started_at = monotonic()
+
     if not app._pause_latched and not post_complete:
         app.agent_active = True
         app._sync_ready_actions()
@@ -171,7 +182,11 @@ def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:
         app._focus_message_input()
         app._set_idle()
         app._show_chat_intro(log, category)
-        render_connector_event(log, data)
+        if render_connector_event(log, data):
+            try:
+                app._last_response_sequence = int(sequence)
+            except (TypeError, ValueError):
+                app._last_response_sequence = None
         _append_event_images(app, log, data)
         if app._compaction_refresh_context == context_id and event_type == "assistant_message":
             app._compaction_refresh_context = None
@@ -213,6 +228,22 @@ def handle_context_complete(app: AgentZeroCLI, data: dict[str, Any]) -> None:
     context_id = data.get("context_id", "")
     if context_id != app.current_context:
         return
+
+    started_at = app._run_started_at
+    response_sequence = app._last_response_sequence
+    app._run_started_at = None
+    app._last_response_sequence = None
+    if started_at is not None:
+        log = _chat_log_or_none(app)
+        if log is not None:
+            completion = Text(
+                f"Completed in {format_duration(monotonic() - started_at)}",
+                style="#7f8c98",
+            )
+            if response_sequence is None:
+                log.write(completion)
+            else:
+                log.write_before(response_sequence, completion)
 
     response = data.get("response")
     if not app._response_delivered and isinstance(response, str) and response.strip():

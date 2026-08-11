@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image as PILImage
 from rich.panel import Panel
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.css.query import NoMatches
@@ -29,7 +30,7 @@ from agent_zero_cli.config import CLIConfig
 from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
 from agent_zero_cli.media_refs import ImageReference
 from agent_zero_cli.image_store import ImageAsset
-from agent_zero_cli.rendering import extract_detail, render_connector_event
+from agent_zero_cli.rendering import extract_detail, format_duration, render_connector_event
 from agent_zero_cli.remote_files import RemoteTreeSnapshot
 from agent_zero_cli.screens.installed_plugins import InstalledPluginsScreen
 from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
@@ -73,6 +74,7 @@ class FakeChatLog:
         self.intro_visible = False
         self.cleared = False
         self.writes: list[object] = []
+        self.before_writes: list[tuple[int, object]] = []
         self.status_entries: dict[int, dict[str, object]] = {}
         self.image_entries: dict[int, tuple[ImageReference, ...]] = {}
         self._seq_to_widget: dict[int, object] = {}
@@ -84,6 +86,9 @@ class FakeChatLog:
 
     def write(self, message: object) -> None:
         self.writes.append(message)
+
+    def write_before(self, sequence: int, message: object) -> None:
+        self.before_writes.append((sequence, message))
 
     def ensure_intro_banner(self) -> None:
         self.intro_visible = True
@@ -2218,9 +2223,16 @@ async def test_composer_bars_stack_without_gaps() -> None:
         assert str(goal_bar._delete.label) == "× Delete"
         assert goal_bar._summary.render().plain.startswith("● Goal · ")
 
-        goal_bar.set_goal({"objective": "Ship goal support", "status": "paused"})
+        goal_bar.set_goal(
+            {
+                "objective": "Ship goal support",
+                "status": "paused",
+                "elapsed_seconds": 3_782,
+            }
+        )
         assert str(goal_bar._pause_resume.label) == "▶ Resume"
         assert goal_bar._summary.render().plain.startswith("● Goal paused · ")
+        assert goal_bar._summary.render().plain.endswith("1h3m2s")
 
 
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:
@@ -2511,6 +2523,55 @@ async def test_context_complete_surfaces_response_without_assistant_message(
     log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
     assert log.writes == ["Command completed."]
     assert dummy_app._response_delivered is True
+
+
+async def test_context_complete_inserts_muted_duration_above_final_response(
+    dummy_app: DummyAgentZeroCLI,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    times = iter((100.0, 3_882.0))
+    monkeypatch.setattr(event_handlers, "monotonic", lambda: next(times))
+    monkeypatch.setattr(dummy_app, "_refresh_token_usage", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_goal_bar", async_noop)
+    monkeypatch.setattr(dummy_app, "_refresh_context_tab_metadata", async_noop)
+    dummy_app.current_context = "ctx-alpha"
+
+    event_handlers.handle_context_event(
+        dummy_app,
+        {
+            "context_id": "ctx-alpha",
+            "event": "user_message",
+            "sequence": 1,
+            "data": {"text": "Go"},
+        },
+    )
+    event_handlers.handle_context_event(
+        dummy_app,
+        {
+            "context_id": "ctx-alpha",
+            "event": "assistant_message",
+            "sequence": 2,
+            "data": {"text": "Done"},
+        },
+    )
+    event_handlers.handle_context_complete(dummy_app, {"context_id": "ctx-alpha"})
+    await asyncio.sleep(0)
+
+    log = dummy_app._test_widgets["#chat-log"]  # type: ignore[index]
+    assert log.before_writes[0][0] == 2
+    completion = log.before_writes[0][1]
+    assert isinstance(completion, Text)
+    assert completion.plain == "Completed in 1h3m2s"
+    assert str(completion.style) == "#7f8c98"
+
+
+def test_duration_format_includes_hours_minutes_and_seconds() -> None:
+    assert format_duration(45) == "45s"
+    assert format_duration(62) == "1m2s"
+    assert format_duration(3_782) == "1h3m2s"
 
 
 async def test_context_tabs_render_in_textual() -> None:
@@ -5581,6 +5642,20 @@ async def test_chat_log_prepends_older_history_before_loaded_entries() -> None:
         assert "older message 1" in timeline[0].copy_text()
         assert "older message 2" in timeline[1].copy_text()
         assert "newer message" in timeline[2].copy_text()
+
+
+async def test_chat_log_inserts_completion_immediately_before_response() -> None:
+    app = TranscriptSelectionApp()
+
+    async with app.run_test() as pilot:
+        log = app.query_one("#chat-log", ChatLog)
+        log.append_or_update(7, Panel("Final response", padding=(0, 1)))
+        log.write_before(7, Text("Completed in 1m2s", style="#7f8c98"))
+        await pilot.pause()
+
+        timeline = [child for child in log.children if isinstance(child, TranscriptEntry)]
+        assert timeline[-2].copy_text() == "Completed in 1m2s"
+        assert "Final response" in timeline[-1].copy_text()
 
 
 async def test_chat_log_requests_another_history_page_only_once(
