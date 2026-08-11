@@ -282,8 +282,8 @@ class PermissionsScreen(ModalScreen[PermissionsResult | None]):
     def _sync_category(self) -> None:
         names = {"tools": "tools", "mcps": "MCPs", "skills": "skills"}
         for category in names:
-            self.query_one(f"#permissions-category-{category}", Button).variant = (
-                "primary" if category == self._category else "default"
+            self.query_one(f"#permissions-category-{category}", Button).set_class(
+                category == self._category, "is-active"
             )
         state = "On" if self._default_value() == "allow" else "Off"
         self.query_one("#permissions-default", Button).label = (

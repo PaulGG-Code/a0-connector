@@ -977,6 +977,23 @@ PermissionsScreen > Center {
 #permissions-categories Button {
     width: 1fr;
     min-width: 10;
+    height: 2;
+    border: none;
+    border-bottom: solid #2a3a4a;
+    background: transparent;
+    color: #9aa7b4;
+}
+
+#permissions-categories Button:focus {
+    background: #16212c;
+    color: #d9e2ec;
+}
+
+#permissions-categories Button.is-active {
+    border-bottom: solid #00b4ff;
+    background: transparent;
+    color: #e8f1fb;
+    text-style: bold;
 }
 
 #permissions-default {
@@ -994,6 +1011,8 @@ PermissionsScreen > Center {
 }
 
 #permissions-search {
+    height: 1;
+    min-height: 1;
     margin-top: 0;
     border: none;
     background: #101820;

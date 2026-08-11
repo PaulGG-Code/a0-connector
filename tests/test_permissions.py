@@ -139,6 +139,12 @@ async def test_permissions_screen_keeps_keyboard_buttons_and_rows_operable() -> 
         await pilot.press("enter")
         await pilot.pause(0.2)
         assert app.permissions._category == "mcps"
+        assert app.permissions.query_one("#permissions-category-mcps").has_class(
+            "is-active"
+        )
+        assert not app.permissions.query_one("#permissions-category-tools").has_class(
+            "is-active"
+        )
 
         app.permissions.query_one("#permissions-list").focus()
         await pilot.press("r", "e", "a", "d")
