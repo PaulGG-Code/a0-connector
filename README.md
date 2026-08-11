@@ -35,6 +35,25 @@ Clipboard image paste works natively on macOS and Windows. Linux needs one
 small system clipboard helper: install `wl-clipboard` on Wayland or `xclip` on
 X11 (for Ubuntu, `sudo apt install wl-clipboard` or `sudo apt install xclip`).
 
+### Inline terminal images
+
+The interactive TUI renders eligible browser screenshots, user attachments,
+and assistant images beneath their owning transcript entry. Browser screenshots
+stay beneath the same Browser tool metadata that produced them; they do not add
+a second transcript event. Images open in the expanded complete-aspect view,
+up to 96 by 32 terminal cells. Select an image with click, `Enter`, or `Space`
+to collapse it to a 36-by-12-cell thumbnail or expand it again.
+
+Set `A0_CLI_IMAGE_MODE` to `auto` (default), `tgp`, `sixel`, `halfcell`, or
+`off`. Keep `auto` for normal use: it combines terminal capability reporting,
+live protocol probes, and compatibility guards to choose TGP, Sixel, or the
+universal half-cell renderer. `off` keeps semantic text placeholders only.
+Apple Terminal falls back to half-cell. Warp also uses half-cell because its
+current Kitty support does not implement the Unicode virtual placements used by
+the Textual renderer. A direct iTerm session can advertise Sixel and use the
+native raster renderer automatically. Verify a capable terminal separately
+before treating forced TGP or Sixel as accepted.
+
 Computer-use backends are embedded in the `a0` wheel, so the CLI and local computer-use support install and update together. Linux host computer use uses the Wayland portal backend; X11/Xpra control belongs to Agent Zero's internal Docker Desktop tooling rather than the remote host connector.
 
 ## Manual install
@@ -133,7 +152,8 @@ echo "what is 2+2" | a0 headless --host http://localhost:32080 --print --output 
 Headless host resolution uses `--host`, then saved/env config, then Docker
 single-instance discovery. Protected instances reuse a persisted web session,
 `A0_USERNAME`/`A0_PASSWORD`, or TTY prompts; non-TTY auth failures exit with
-code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main/docs/headless.md).
+code `2`. Headless and `a0 gateway` remain text/JSONL-only: they neither import
+terminal-image rendering nor emit terminal image-protocol bytes. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main/docs/headless.md).
 
 ## Usage
 

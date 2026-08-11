@@ -12,6 +12,7 @@ from agent_zero_cli.rendering import (
     extract_detail,
     render_connector_event,
 )
+from agent_zero_cli.media_refs import extract_image_references
 from agent_zero_cli.widgets import ChatInput
 from agent_zero_cli.widgets.chat_log import ChatLog
 
@@ -44,6 +45,20 @@ def _remember_user_message(app: AgentZeroCLI, event: dict[str, Any]) -> None:
         app.query_one("#message-input", ChatInput).seed_history([text])
     except Exception:
         return
+
+
+def _append_event_images(
+    app: AgentZeroCLI,
+    log: ChatLog,
+    event: dict[str, Any],
+    *,
+    prepend: bool = False,
+) -> None:
+    """Attach normalized media after the owning event has established its entry."""
+    references = extract_image_references(event, base_url=app.client.base_url)
+    if not references:
+        return
+    log.append_or_update_images(references[0].sequence, references, prepend=prepend)
 
 
 async def _compaction_context_reload(app: AgentZeroCLI, context_id: str) -> None:
@@ -113,6 +128,7 @@ def handle_context_snapshot(app: AgentZeroCLI, data: dict[str, Any]) -> None:
                     active=False,
                     **({"prepend": True} if prepend else {}),
                 )
+        _append_event_images(app, log, event, prepend=prepend)
 
     app._sync_body_mode()
 
@@ -156,6 +172,7 @@ def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:
         app._set_idle()
         app._show_chat_intro(log, category)
         render_connector_event(log, data)
+        _append_event_images(app, log, data)
         if app._compaction_refresh_context == context_id and event_type == "assistant_message":
             app._compaction_refresh_context = None
             asyncio.create_task(_compaction_context_reload(app, context_id))
@@ -188,6 +205,8 @@ def handle_context_event(app: AgentZeroCLI, data: dict[str, Any]) -> None:
     elif category == "util" and app.show_utility_messages:
         if render_connector_event(log, data) and log._active_seq == data.get("sequence"):
             log.stop_active_status()
+
+    _append_event_images(app, log, data)
 
 
 def handle_context_complete(app: AgentZeroCLI, data: dict[str, Any]) -> None:

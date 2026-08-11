@@ -30,12 +30,15 @@ Screen {
     scrollbar-size: 1 1;
 }
 
-#chat-log > Static {
+#chat-log > TranscriptEntry {
     margin-top: 1;
+    height: auto;
 }
 
-#chat-log > StatusEntry {
-    margin-top: 1;
+TranscriptEntry > SelectableStatic,
+TranscriptEntry > StatusEntry,
+TranscriptEntry > CodeEntry {
+    height: auto;
 }
 
 .status-entry:focus {
@@ -1587,4 +1590,25 @@ SplashStatusPanel {
 
 .splash-action-card .splash-action-reason {
     color: #f0b54d;
+}
+
+ImageEntry {
+    height: auto;
+    margin-top: 1;
+    padding: 0 0 0 4;
+}
+
+ImageEntry:focus {
+    background: #1b232d;
+}
+
+.image-caption,
+.image-placeholder {
+    height: auto;
+    color: #9aa7b4;
+}
+
+.image-surface-host {
+    width: auto;
+    height: auto;
 }

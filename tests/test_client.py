@@ -100,11 +100,31 @@ class FakeResponse:
         json_data: dict | None = None,
         headers: dict | None = None,
         text: str = "",
+        content: bytes = b"",
+        chunks: list[bytes] | None = None,
+        iter_error: httpx.TransportError | None = None,
     ) -> None:
         self.status_code = status_code
         self._json_data = json_data or {}
         self.headers = headers or {}
         self.text = text
+        self.content = content
+        self.chunks = chunks
+        self.iter_error = iter_error
+        self.read_chunks = 0
+
+    async def __aenter__(self) -> "FakeResponse":
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback) -> None:
+        return None
+
+    async def aiter_bytes(self):
+        for chunk in self.chunks if self.chunks is not None else (self.content,):
+            self.read_chunks += 1
+            yield chunk
+        if self.iter_error is not None:
+            raise self.iter_error
 
     def json(self) -> dict:
         return self._json_data
@@ -114,6 +134,224 @@ class FakeResponse:
             request = httpx.Request("POST", "http://example.test")
             response = httpx.Response(self.status_code, request=request)
             raise httpx.HTTPStatusError("error", request=request, response=response)
+
+
+async def test_fetch_image_uses_authenticated_core_endpoint() -> None:
+    client = A0Client("http://agent.test")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        return_value=FakeResponse(json_data={"ok": True, "token": "csrf-1"})
+    )
+    client.http.stream = Mock(
+        return_value=FakeResponse(
+            content=b"png-bytes",
+            headers={"content-type": "image/png"},
+        )
+    )
+
+    content, mime = await client.fetch_image("/a0/usr/uploads/scan.png")
+
+    assert (content, mime) == (b"png-bytes", "image/png")
+    client.http.get.assert_awaited_once_with(
+        "http://agent.test/api/csrf_token",
+        headers={"Origin": "http://agent.test", "Referer": "http://agent.test/"},
+    )
+    client.http.stream.assert_called_once_with(
+        "GET",
+        "http://agent.test/api/image_get",
+        params={"path": "/a0/usr/uploads/scan.png"},
+        headers={
+            "Origin": "http://agent.test",
+            "Referer": "http://agent.test/",
+            "X-CSRF-Token": "csrf-1",
+        },
+        follow_redirects=False,
+    )
+
+
+async def test_fetch_image_refreshes_csrf_after_forbidden_response() -> None:
+    client = A0Client("http://agent.test")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        side_effect=[
+            FakeResponse(json_data={"ok": True, "token": "csrf-old"}),
+            FakeResponse(json_data={"ok": True, "token": "csrf-new"}),
+        ]
+    )
+    client.http.stream = Mock(
+        side_effect=[
+            FakeResponse(status_code=403, text="CSRF token missing or invalid"),
+            FakeResponse(content=b"png-bytes", headers={"content-type": "image/png"}),
+        ]
+    )
+
+    assert await client.fetch_image("/a0/usr/uploads/scan.png") == (
+        b"png-bytes",
+        "image/png",
+    )
+    assert client.http.get.await_count == 2
+    assert client.http.stream.call_count == 2
+    assert client.http.stream.call_args_list[0].kwargs["headers"]["X-CSRF-Token"] == "csrf-old"
+    assert client.http.stream.call_args_list[1].kwargs["headers"]["X-CSRF-Token"] == "csrf-new"
+
+
+async def test_fetch_image_refreshes_csrf_at_most_once() -> None:
+    client = A0Client("http://agent.test")
+    client.http = Mock()
+    client.http.get = AsyncMock(
+        side_effect=[
+            FakeResponse(json_data={"ok": True, "token": "csrf-old"}),
+            FakeResponse(json_data={"ok": True, "token": "csrf-new"}),
+        ]
+    )
+    client.http.stream = Mock(
+        side_effect=[
+            FakeResponse(status_code=403, text="first forbidden response"),
+            FakeResponse(status_code=403, text="second forbidden response"),
+        ]
+    )
+
+    with pytest.raises(A0ProtocolError, match="HTTP 403") as exc_info:
+        await client.fetch_image("/a0/usr/uploads/scan.png")
+
+    assert "forbidden response" not in str(exc_info.value)
+    assert client.http.get.await_count == 2
+    assert client.http.stream.call_count == 2
+
+
+async def test_fetch_image_normalizes_jpg_mime_type() -> None:
+    client = A0Client("http://agent.test")
+    client._csrf_token = "csrf-test"
+    client.http = Mock()
+    client.http.stream = Mock(
+        return_value=FakeResponse(content=b"jpg-bytes", headers={"content-type": "image/jpg"})
+    )
+
+    assert await client.fetch_image("/a0/usr/uploads/scan.jpg") == (b"jpg-bytes", "image/jpeg")
+
+
+@pytest.mark.parametrize(
+    ("first_response", "expected_calls"),
+    [
+        (httpx.ConnectError("offline"), 2),
+        (
+            FakeResponse(
+                headers={"content-type": "image/png"},
+                iter_error=httpx.ReadError("read failed"),
+            ),
+            2,
+        ),
+        (FakeResponse(status_code=503), 2),
+    ],
+    ids=["stream-open", "stream-read", "status"],
+)
+async def test_fetch_image_retries_one_transient_failure(
+    first_response: FakeResponse | httpx.ConnectError,
+    expected_calls: int,
+) -> None:
+    client = A0Client("http://agent.test")
+    client._csrf_token = "csrf-test"
+    client.http = Mock()
+    client.http.stream = Mock(
+        side_effect=[
+            first_response,
+            FakeResponse(content=b"png", headers={"content-type": "image/png"}),
+        ]
+    )
+
+    assert await client.fetch_image("/a0/usr/uploads/scan.png") == (b"png", "image/png")
+    assert client.http.stream.call_count == expected_calls
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        [httpx.ConnectError("first"), httpx.ConnectError("second")],
+        [
+            FakeResponse(
+                headers={"content-type": "image/png"},
+                iter_error=httpx.ReadError("first"),
+            ),
+            FakeResponse(
+                headers={"content-type": "image/png"},
+                iter_error=httpx.ReadError("second"),
+            ),
+        ],
+        *[
+            [FakeResponse(status_code=status), FakeResponse(status_code=status)]
+            for status in (502, 503, 504)
+        ],
+        [FakeResponse(status_code=302, headers={"location": "/login"})],
+        [FakeResponse(status_code=404)],
+        [FakeResponse(content=b"not image", headers={"content-type": "text/plain"})],
+        [
+            FakeResponse(
+                headers={
+                    "content-type": "image/png",
+                    "content-length": str(25 * 1024 * 1024 + 1),
+                },
+            )
+        ],
+    ],
+)
+async def test_fetch_image_rejects_unsafe_or_invalid_responses(
+    responses: list[FakeResponse | httpx.ConnectError],
+) -> None:
+    client = A0Client("http://agent.test")
+    client._csrf_token = "csrf-test"
+    client.http = Mock()
+    client.http.stream = Mock(side_effect=responses)
+
+    with pytest.raises(A0ProtocolError) as exc_info:
+        await client.fetch_image("/a0/usr/uploads/scan.png")
+
+    assert "not image" not in str(exc_info.value)
+    assert "x" * 100 not in str(exc_info.value)
+
+
+async def test_fetch_image_stops_streaming_above_limit() -> None:
+    response = FakeResponse(
+        headers={"content-type": "image/png"},
+        chunks=[b"a" * (25 * 1024 * 1024), b"b", b"not-consumed"],
+    )
+    client = A0Client("http://agent.test")
+    client._csrf_token = "csrf-test"
+    client.http = Mock()
+    client.http.stream = Mock(return_value=response)
+
+    with pytest.raises(A0ProtocolError, match="size limit"):
+        await client.fetch_image("/a0/usr/uploads/scan.png")
+
+    assert response.read_chunks == 2
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "",
+        "uploads/scan.png",
+        "/other/scan.png",
+        "//a0/usr/uploads/scan.png",
+        "/a0/usr/../secret.png",
+        "/a0/usr/%2e%2e/secret.png",
+        "/a0/usr/%252e%252e/secret.png",
+        "/a0/usr/%2525252e%2525252e/secret.png",
+        "/a0/usr/uploads/scan.png%2525253fraw=1",
+        "/a0/usr/uploads/scan.png%25252523frame",
+        "/a0/usr/uploads%2525255csecret.png",
+        "/a0/usr/uploads/scan.png?raw=1",
+        "/a0/usr/uploads/scan.png#frame",
+    ],
+)
+async def test_fetch_image_rejects_unsafe_agent_zero_paths(path: str) -> None:
+    client = A0Client("http://agent.test")
+    client.http = Mock()
+    client.http.stream = Mock()
+
+    with pytest.raises(A0ProtocolError):
+        await client.fetch_image(path)
+
+    client.http.stream.assert_not_called()
 
 
 class FakeSocketIOClient:

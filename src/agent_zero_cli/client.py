@@ -9,7 +9,7 @@ import json
 import time
 import uuid
 from typing import Any, Callable, Mapping
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import aiohttp
 import httpx
@@ -305,6 +305,112 @@ class A0Client:
 
         path = urlparse(location).path or location
         return path == "/login" or path.endswith("/login")
+
+    async def fetch_image(
+        self,
+        path: str,
+        *,
+        max_bytes: int = 25 * 1024 * 1024,
+    ) -> tuple[bytes, str]:
+        """Load one same-origin image through Agent Zero's authenticated session."""
+        self._validate_image_path(path)
+
+        transient_retry_available = True
+        csrf_retry_available = True
+        while True:
+            try:
+                async with self.http.stream(
+                    "GET",
+                    self._core_api_url("image_get"),
+                    params={"path": path},
+                    headers=await self._csrf_headers(),
+                    follow_redirects=False,
+                ) as response:
+                    if response.status_code == 403 and csrf_retry_available:
+                        csrf_retry_available = False
+                        self._csrf_token = None
+                        continue
+                    if response.status_code in {502, 503, 504}:
+                        if transient_retry_available:
+                            transient_retry_available = False
+                            continue
+                        raise A0ProtocolError(
+                            f"Image request failed with HTTP {response.status_code}."
+                        )
+                    return await self._read_image_response(response, max_bytes=max_bytes)
+            except httpx.TransportError as exc:
+                if transient_retry_available:
+                    transient_retry_available = False
+                    continue
+                raise A0ProtocolError("Image request failed.") from exc
+
+    def _validate_image_path(self, path: str) -> None:
+        if (
+            not isinstance(path, str)
+            or not path.startswith("/a0/")
+            or path.startswith("//")
+            or "?" in path
+            or "#" in path
+        ):
+            raise A0ProtocolError("Image path must be a safe Agent Zero path.")
+
+        decoded = path
+        decode_pass_limit = max(1, len(path) // 2 + 1)
+        for _ in range(decode_pass_limit):
+            expanded = unquote(decoded)
+            if expanded == decoded:
+                break
+            decoded = expanded
+        else:
+            if unquote(decoded) != decoded:
+                raise A0ProtocolError("Image path must be a safe Agent Zero path.")
+        segments = decoded.split("/")
+        if (
+            not decoded.startswith("/a0/")
+            or "\\" in decoded
+            or "?" in decoded
+            or "#" in decoded
+            or any(segment in {".", ".."} for segment in segments)
+            or any(ord(character) < 32 for character in decoded)
+        ):
+            raise A0ProtocolError("Image path must be a safe Agent Zero path.")
+
+    async def _read_image_response(
+        self,
+        response: httpx.Response,
+        *,
+        max_bytes: int,
+    ) -> tuple[bytes, str]:
+        if self._is_login_redirect(response):
+            raise A0ProtocolError("Image request requires an authenticated Agent Zero session.")
+        if 300 <= response.status_code < 400:
+            raise A0ProtocolError("Image request returned an unexpected redirect.")
+        if response.status_code >= 400:
+            raise A0ProtocolError(f"Image request failed with HTTP {response.status_code}.")
+
+        content_length = response.headers.get("content-length")
+        if content_length:
+            try:
+                declared_length = int(content_length)
+            except (TypeError, ValueError):
+                raise A0ProtocolError("Image response included an invalid Content-Length.") from None
+            if declared_length < 0 or declared_length > max_bytes:
+                raise A0ProtocolError("Image response exceeds the size limit.")
+
+        mime = response.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+        if mime == "image/jpg":
+            mime = "image/jpeg"
+        if not mime.startswith("image/"):
+            raise A0ProtocolError("Image response did not include an image MIME type.")
+
+        chunks: list[bytes] = []
+        total_bytes = 0
+        async for chunk in response.aiter_bytes():
+            total_bytes += len(chunk)
+            if total_bytes > max_bytes:
+                raise A0ProtocolError("Image response exceeds the size limit.")
+            chunks.append(chunk)
+        return b"".join(chunks), mime
 
     def _raise_for_results(self, response: dict[str, Any] | None, event: str) -> dict[str, Any]:
         if not isinstance(response, dict):

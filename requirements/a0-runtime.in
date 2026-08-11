@@ -6,6 +6,9 @@ aiohttp>=3.11.0
 pyobjc-framework-ApplicationServices; platform_system == "Darwin"
 pyobjc-framework-Quartz; platform_system == "Darwin"
 dxcam; platform_system == "Windows"
-pillow; platform_system == "Darwin" or platform_system == "Windows"
+pillow>=10.3.0
+textual-image>=0.8.5,<0.9; python_version < "3.12"
+textual-image>=0.13.2,<0.14; python_version >= "3.12"
+numpy<2.3; platform_system == "Windows"
 playwright>=1.52.0
 pywinauto; platform_system == "Windows"
