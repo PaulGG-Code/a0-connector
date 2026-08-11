@@ -127,7 +127,7 @@ class ProfileMenuPopover(Vertical):
                     action="create",
                     classes="profile-menu-item profile-menu-action",
                 )
-            if self._can_edit and self._current_profile:
+            if self._can_edit and self._current_profile and self._current_profile != "default":
                 yield ProfileMenuItem(
                     "Edit current profile",
                     profile_key=self._current_profile,

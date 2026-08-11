@@ -39,7 +39,10 @@
 - The connected TUI command palette must merge effective `_commands` entries for the active chat with its local command registry. Local commands win name collisions; only server-confirmed extension commands may be forwarded through the chat path for Core-side resolution.
 - `/profile` keeps direct profile selection, adds quoted name plus instructions
   for quick creation, and uses the connector `agent_editor` capability for its
-  create/edit screen rather than writing Agent Zero profile files locally.
+  create/edit screen rather than writing Agent Zero profile files locally. The
+  exact `default` utility profile is not selectable or editable; an existing
+  chat may still report it as current, and Create remains available when it is
+  the only profile returned by older Core versions.
 - Clipboard image paste uses `wl-paste` or `xclip` on Linux and the conditionally installed Pillow native reader on macOS and Windows.
 - The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It may consume ephemeral `A0_USERNAME` and `A0_PASSWORD` environment variables for non-interactive login, but it must not persist usernames, passwords, connector tokens, API keys, or other secrets.
 - Local Docker instance discovery should prefer launcher-owned friendly names

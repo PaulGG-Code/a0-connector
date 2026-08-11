@@ -769,7 +769,8 @@ class AgentZeroCLI(App):
     async def _open_profile_menu(self) -> None:
         await self._hide_project_menu()
         current_profile, options = await profile_commands.load_profile_menu_state(self, silent=False)
-        if not options:
+        if not options and "agent_editor" not in self.connector_features:
+            self._show_notice("No agent profiles are available from Agent Zero Core.", error=True)
             return
         if self._profile_menu_popover is not None:
             await self._hide_profile_menu()

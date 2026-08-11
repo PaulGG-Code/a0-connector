@@ -11,7 +11,16 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.selection import SELECT_ALL
 
-from agent_zero_cli import __version__, chat_commands, connection, event_handlers, model_commands, self_update, splash_helpers
+from agent_zero_cli import (
+    __version__,
+    chat_commands,
+    connection,
+    event_handlers,
+    model_commands,
+    profile_commands,
+    self_update,
+    splash_helpers,
+)
 from agent_zero_cli.app import AgentZeroCLI
 from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
 from agent_zero_cli.client import DEFAULT_HOST
@@ -34,6 +43,7 @@ from agent_zero_cli.widgets import (
     MessageQueueBar,
     ModelSwitcherBar,
     ProfileMenuItem,
+    ProfileMenuPopover,
     ProjectMenuItem,
     ProjectMenuPopover,
     SplashState,
@@ -703,6 +713,81 @@ def test_profile_menu_item_click_stops_event_and_posts_selection() -> None:
     assert len(captured) == 1
     assert isinstance(captured[0], ProfileMenuItem.Selected)
     assert captured[0].action == "select"
+
+
+def test_profile_choices_hide_default_but_keep_current_status() -> None:
+    current, profiles = profile_commands.profile_menu_state_from_settings(
+        {
+            "settings": {"agent_profile": "default"},
+            "additional": {
+                "agent_subdirs": [
+                    {"value": "default", "label": "Default"},
+                    {"value": "agent0", "label": "Agent 0"},
+                ],
+            },
+        }
+    )
+
+    assert current == "default"
+    assert profiles == [{"key": "agent0", "label": "Agent 0"}]
+    assert profile_commands.resolve_profile_selection(profiles, "default")[0] is None
+
+
+async def test_profile_menu_does_not_offer_edit_for_active_default() -> None:
+    class ProfileMenuApp(App[None]):
+        def compose(self) -> ComposeResult:
+            yield ProfileMenuPopover(
+                [{"key": "agent0", "label": "Agent 0"}],
+                current_profile="default",
+            )
+
+    app = ProfileMenuApp()
+    async with app.run_test():
+        items = list(app.query(ProfileMenuItem))
+
+    assert [(item.action, item.profile_key) for item in items] == [
+        ("create", ""),
+        ("select", "agent0"),
+    ]
+
+
+async def test_profile_menu_keeps_create_available_when_default_is_the_only_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app = AgentZeroCLI(
+        config=CLIConfig(instance_url="http://example.test"),
+        auto_connect_single_instance=False,
+        discover_instances=False,
+        connect_configured_host=False,
+    )
+
+    async def async_noop(*args, **kwargs) -> None:
+        del args, kwargs
+
+    async def fake_menu_state(*args, **kwargs):
+        del args, kwargs
+        return "default", []
+
+    monkeypatch.setattr(app, "_startup", async_noop)
+    monkeypatch.setattr(app, "_start_cli_update_check", lambda: None)
+    monkeypatch.setattr(profile_commands, "load_profile_menu_state", fake_menu_state)
+    notices: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        app,
+        "_show_notice",
+        lambda message, *, error=False: notices.append((message, error)),
+    )
+
+    async with app.run_test():
+        app.connector_features = {"agent_editor"}
+        await app._open_profile_menu()
+        item = app.query_one(ProfileMenuItem)
+        await app._hide_profile_menu()
+        app.connector_features = set()
+        await app._open_profile_menu()
+
+    assert (item.action, item.profile_key) == ("create", "")
+    assert notices == [("No agent profiles are available from Agent Zero Core.", True)]
 
 
 def test_project_menu_item_click_stops_event_and_posts_selection() -> None:

@@ -28,7 +28,7 @@ def _normalize_profile_options(raw_options: object) -> list[ProfileOption]:
         if not isinstance(raw_option, Mapping):
             continue
         key = str(raw_option.get("key") or raw_option.get("value") or "").strip()
-        if not key or key in seen:
+        if not key or key == "default" or key in seen:
             continue
         label = str(raw_option.get("label") or key).strip() or key
         options.append({"key": key, "label": label})
@@ -53,7 +53,9 @@ def profile_menu_state_from_settings(
 
     raw_options = additional.get("agent_subdirs") if isinstance(additional, Mapping) else None
     options = _normalize_profile_options(raw_options)
-    if selected_profile and selected_profile not in {option["key"] for option in options}:
+    if selected_profile and selected_profile != "default" and selected_profile not in {
+        option["key"] for option in options
+    }:
         options.insert(0, {"key": selected_profile, "label": selected_profile})
     return selected_profile, options
 
@@ -140,8 +142,6 @@ async def load_profile_menu_state(
     default_profile, options = profile_menu_state_from_settings(payload)
     current_profile = await _load_current_context_profile(app, fallback=default_profile)
     current_profile, options = profile_menu_state_from_settings(payload, current_profile=current_profile)
-    if not options and not silent:
-        app._show_notice("No agent profiles are available from Agent Zero Core.", error=True)
     return current_profile, options
 
 
@@ -212,8 +212,6 @@ async def cmd_profile(app: AgentZeroCLI, *, query: str = "") -> None:
 
         current_profile, options = await load_profile_menu_state(app, silent=False)
         del current_profile
-        if not options:
-            return
 
         exact = _exact_profile_selection(options, query)
         if len(tokens) >= 2 and exact is None:
@@ -340,6 +338,9 @@ async def _open_profile_editor(app: AgentZeroCLI, *, creating: bool) -> None:
         return
     current_profile, _ = await load_profile_menu_state(app, silent=False)
     if not creating and not current_profile:
+        return
+    if not creating and current_profile == "default":
+        app._show_notice("The Default utility profile cannot be edited.", error=True)
         return
     state = await _load_editor_state(app, "new-agent" if creating else current_profile)
     if state is None:
