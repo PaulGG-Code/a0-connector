@@ -161,6 +161,7 @@ code `2`. See [Headless mode](https://github.com/agent0ai/a0-connector/blob/main
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
 | `/profile` / `/profile <agent>` / `/profile "<name>" "<instructions>"` | Manage, select, or quickly create an agent profile |
+| `/permissions` | Edit Tools, MCP, and Skill permissions for the current agent |
 | `/computer-use on` / `/computer-use off` | Advertise or disable local Computer Use from this CLI; enabling arms the platform permission flow when needed |
 | `/browser status` | Show host-browser connector status |
 | `/browser host on` / `/browser host off` | Advertise or disable host-browser control from this CLI and sync Agent Zero Browser mode when supported |

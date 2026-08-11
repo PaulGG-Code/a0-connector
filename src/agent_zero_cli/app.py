@@ -24,6 +24,7 @@ from agent_zero_cli import (
     connection,
     event_handlers,
     goal_commands,
+    permissions_commands,
     plugin_commands,
     profile_commands,
     project_commands,
@@ -425,6 +426,13 @@ class AgentZeroCLI(App):
                 "Manage, select, or quickly create an Agent Zero Core profile.",
                 lambda app: availability.profile_availability(app),
                 lambda app: profile_commands.cmd_profile(app),
+            ),
+            CommandSpec(
+                "/permissions",
+                (),
+                "Edit Tools, MCP, and Skill permissions for the current agent.",
+                lambda app: availability.permissions_availability(app),
+                lambda app: permissions_commands.cmd_permissions(app),
             ),
             CommandSpec(
                 "/plugins",

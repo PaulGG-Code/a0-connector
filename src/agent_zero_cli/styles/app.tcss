@@ -941,6 +941,148 @@ ProfileEditorScreen {
     background: $background 60%;
 }
 
+PermissionsScreen {
+    align: left top;
+    background: $background 60%;
+}
+
+PermissionsScreen > Center {
+    align: left top;
+}
+
+#permissions-box {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    max-height: 23;
+    border: none;
+    background: #101820;
+    padding: 0 1;
+}
+
+#permissions-title {
+    text-style: bold;
+}
+
+#permissions-profile,
+#permissions-help {
+    color: #9aa7b4;
+}
+
+#permissions-categories,
+#permissions-actions {
+    height: auto;
+}
+
+#permissions-categories Button {
+    width: 1fr;
+    min-width: 10;
+}
+
+#permissions-default {
+    width: 100%;
+    height: 3;
+    margin-top: 0;
+    background: transparent;
+    border: round #2a3a4a;
+    color: #d9e2ec;
+    text-align: left;
+}
+
+#permissions-default:focus {
+    border: round #00b4ff;
+}
+
+#permissions-search {
+    margin-top: 0;
+    border: none;
+    background: #101820;
+    color: #d9e2ec;
+    padding: 0 1;
+}
+
+#permissions-search:focus {
+    border: none;
+    background: #101820;
+}
+
+#permissions-list {
+    height: auto;
+    max-height: 11;
+    border: none;
+    background: #101820;
+    padding: 0;
+}
+
+#permissions-list > ListItem {
+    margin: 0;
+    padding: 0;
+    border-bottom: none;
+}
+
+#permissions-list > ListItem.-highlight,
+#permissions-list > ListItem.-hovered {
+    background: #0f4d78;
+}
+
+.permission-row-line {
+    width: 100%;
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+.permission-marker {
+    width: 4;
+    color: #38c5d8;
+    text-style: bold;
+}
+
+.permission-name {
+    width: 1fr;
+    color: #d9e2ec;
+    text-style: bold;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+.permission-state {
+    width: 16;
+    color: #9ecfff;
+    text-align: right;
+}
+
+.permission-state-allow {
+    color: #5ee6a8;
+}
+
+.permission-state-block {
+    color: #ff8b6b;
+}
+
+.permission-description {
+    width: 100%;
+    padding: 0 1 1 5;
+    color: #7f8c98;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
+}
+
+#permissions-empty {
+    color: #7f8c98;
+    height: 3;
+    content-align: center middle;
+}
+
+#permissions-actions {
+    align: right middle;
+}
+
+#permissions-actions Button {
+    min-width: 10;
+    margin-left: 1;
+}
+
 ProfileEditorScreen > Center {
     align: left top;
 }

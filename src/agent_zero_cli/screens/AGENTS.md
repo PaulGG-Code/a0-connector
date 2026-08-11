@@ -19,6 +19,8 @@
 - `ModelPresetsScreen` shows Main, Utility, and Embedding model details and describes clearing a chat override as using the concrete preset from settings.
 - `ProfileEditorScreen` returns only Easy-mode title, instructions, and selected
   tool IDs; profile validation and persistence remain in Agent Zero Core.
+- `PermissionsScreen` returns sparse Tool/MCP and Skill policy intent; Core's
+  Agent Editor remains the persistence and runtime-policy owner.
 
 ## Work Guidance
 

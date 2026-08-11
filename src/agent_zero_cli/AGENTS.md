@@ -6,7 +6,7 @@
 
 ## Ownership
 
-- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `gateway.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `goal_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, `self_update.py`, and `textual_compat.py` are owned here.
+- Root package files such as `app.py`, `client.py`, `config.py`, `connection.py`, `session.py`, `gateway.py`, `protocol.py`, `event_handlers.py`, `chat_commands.py`, `goal_commands.py`, `browser_commands.py`, `computer_use.py`, `computer_use_backend.py`, `host_browser*.py`, `remote_files.py`, `remote_exec.py`, `model_*.py`, `project_*.py`, `profile_commands.py`, `permissions_commands.py`, `self_update.py`, and `textual_compat.py` are owned here.
 - `headless/` is owned here and must remain importable without Textual.
 - UI widgets, screens, and TCSS are owned by child docs in `widgets/`, `screens/`, and `styles/`.
 - `assets/` is currently empty; keep it root-package owned until it becomes a durable asset boundary.
@@ -43,6 +43,8 @@
   exact `default` utility profile is not selectable or editable; an existing
   chat may still report it as current, and Create remains available when it is
   the only profile returned by older Core versions.
+- `/permissions` opens a Connector-native Tools, MCPs, and Skills policy editor
+  for the current profile and persists through Core's `agent_editor` API.
 - Clipboard image paste uses `wl-paste` or `xclip` on Linux and the conditionally installed Pillow native reader on macOS and Windows.
 - The CLI may remember host/context and computer-use settings, and protected web sessions may persist browser-style session cookies through the remembered-host/session flow. It may consume ephemeral `A0_USERNAME` and `A0_PASSWORD` environment variables for non-interactive login, but it must not persist usernames, passwords, connector tokens, API keys, or other secrets.
 - Local Docker instance discovery should prefer launcher-owned friendly names
