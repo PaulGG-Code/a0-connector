@@ -165,9 +165,11 @@ def _run_app(
     connect_configured_host: bool = False,
 ) -> None:
     from agent_zero_cli.config import load_config
+    from agent_zero_cli.image_render import initialize_image_renderer
     from agent_zero_cli.textual_compat import install_textual_linux_input_decoder_guard
 
     install_textual_linux_input_decoder_guard()
+    image_renderer = initialize_image_renderer()
 
     from agent_zero_cli.app import AgentZeroCLI
 
@@ -183,6 +185,7 @@ def _run_app(
         auto_connect_single_instance=auto_connect_single,
         discover_instances=discover_instances,
         connect_configured_host=connect_configured_host,
+        image_renderer=image_renderer,
     )
     app.run()
 

@@ -46,6 +46,9 @@ from agent_zero_cli.host_browser import HostBrowserManager
 from agent_zero_cli.commands import CommandAvailability, CommandSpec
 from agent_zero_cli.config import CLIConfig, load_config, save_last_context
 from agent_zero_cli.instance_discovery import DiscoveryResult, discover_local_instances
+from agent_zero_cli.image_render import ImageRenderer
+from agent_zero_cli.image_store import ImageStore, ImageUnavailableError
+from agent_zero_cli.media_refs import ImageReference
 from agent_zero_cli.remote_exec import PythonTTYManager
 from agent_zero_cli.remote_files import RemoteFileUtility
 from agent_zero_cli.project_utils import (
@@ -79,6 +82,7 @@ from agent_zero_cli.widgets import (
     context_tab_from_metadata,
 )
 from agent_zero_cli.widgets.chat_log import ChatLog
+from agent_zero_cli.widgets.image_entry import ImageEntry
 from agent_zero_cli.model_commands import (
     cmd_model_presets,
     cmd_models,
@@ -184,6 +188,7 @@ class AgentZeroCLI(App):
         auto_connect_single_instance: bool = True,
         discover_instances: bool = True,
         connect_configured_host: bool = False,
+        image_renderer: ImageRenderer | None = None,
     ) -> None:
         super().__init__()
         self.register_theme(
@@ -198,8 +203,14 @@ class AgentZeroCLI(App):
         )
         self.theme = "a0-dark"
         self.config = config or load_config()
+        self.image_renderer = image_renderer or ImageRenderer.disabled()
         base_url = self.config.instance_url or DEFAULT_HOST
         self.client = A0Client(base_url)
+        self.image_store = ImageStore(
+            self.client,
+            max_surface_pixels=self.image_renderer.max_surface_pixels,
+        )
+        self._image_load_epoch = 0
         self.capabilities: dict[str, Any] = {}
         self.connector_features: set[str] = set()
         self.project_list: list[dict[str, str]] = []
@@ -277,7 +288,7 @@ class AgentZeroCLI(App):
         yield ContextTabs(id="context-tabs")
         with ContentSwitcher(initial="splash-view", id="body-switcher"):
             yield SplashView()
-            yield ChatLog(id="chat-log")
+            yield ChatLog(image_renderer=self.image_renderer, id="chat-log")
         yield ComputerUseBanner(id="computer-use-banner")
         yield GoalBar(id="goal-bar")
         yield ModelSwitcherBar(id="model-switcher-bar")
@@ -319,6 +330,8 @@ class AgentZeroCLI(App):
         return True
 
     async def on_mount(self) -> None:
+        if self.image_renderer.notice:
+            self._show_notice(self.image_renderer.notice)
         input_widget = self.query_one("#message-input", ChatInput)
         input_widget.disabled = True
         self.query_one("#goal-bar", GoalBar).clear()
@@ -1635,6 +1648,122 @@ class AgentZeroCLI(App):
             exclusive=True,
             name="load-older-history",
         )
+
+    def on_image_entry_load_requested(self, message: ImageEntry.LoadRequested) -> None:
+        message.stop()
+        context_id = self.current_context
+        base_url = self.client.base_url
+        client = self.client
+        store = self.image_store
+        epoch = self._image_load_epoch
+        self.run_worker(
+            self._load_image_entry(
+                message.entry,
+                message.reference,
+                message.generation,
+                context_id=context_id,
+                base_url=base_url,
+                client=client,
+                store=store,
+                epoch=epoch,
+            ),
+            exclusive=False,
+            name="load-image-entry",
+        )
+
+    def _invalidate_image_loads(self) -> None:
+        """Reject queued image workers from a superseded chat or host lifecycle."""
+        self._image_load_epoch += 1
+
+    def _image_load_is_current(
+        self,
+        entry: ImageEntry,
+        reference: ImageReference,
+        generation: int,
+        *,
+        context_id: str | None,
+        base_url: str,
+        client: A0Client,
+        store: ImageStore,
+        epoch: int,
+    ) -> bool:
+        return (
+            entry.is_mounted
+            and entry.generation == generation
+            and context_id is not None
+            and reference.context_id == context_id
+            and self.current_context == context_id
+            and self.client is client
+            and self.client.base_url == base_url
+            and self.image_store is store
+            and self._image_load_epoch == epoch
+        )
+
+    async def _load_image_entry(
+        self,
+        entry: ImageEntry,
+        reference: ImageReference,
+        generation: int,
+        *,
+        context_id: str | None,
+        base_url: str,
+        client: A0Client,
+        store: ImageStore,
+        epoch: int,
+    ) -> None:
+        if not self._image_load_is_current(
+            entry,
+            reference,
+            generation,
+            context_id=context_id,
+            base_url=base_url,
+            client=client,
+            store=store,
+            epoch=epoch,
+        ):
+            return
+        try:
+            asset = await store.load(reference)
+        except ImageUnavailableError as exc:
+            if self._image_load_is_current(
+                entry,
+                reference,
+                generation,
+                context_id=context_id,
+                base_url=base_url,
+                client=client,
+                store=store,
+                epoch=epoch,
+            ):
+                entry.set_unavailable(generation, exc.reason)
+            return
+        except Exception:
+            if self._image_load_is_current(
+                entry,
+                reference,
+                generation,
+                context_id=context_id,
+                base_url=base_url,
+                client=client,
+                store=store,
+                epoch=epoch,
+            ):
+                entry.set_unavailable(generation, "load failed")
+            return
+
+        if not self._image_load_is_current(
+            entry,
+            reference,
+            generation,
+            context_id=context_id,
+            base_url=base_url,
+            client=client,
+            store=store,
+            epoch=epoch,
+        ):
+            asset.close()
+            return
+        entry.set_asset(generation, asset)
 
     async def _load_older_history(self, context_id: str, before: int) -> None:
         try:

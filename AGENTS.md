@@ -36,6 +36,18 @@
 - Run the Launcher-owned tools-only connector with `a0 gateway`. It is a
   Textual-free, newline-delimited JSON stdin/stdout contract and must not create,
   select, or subscribe to a chat.
+- Interactive transcript images use `A0_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
+  Automatic selection combines reliable terminal capability advertisements,
+  live protocol probes, and compatibility exclusions for terminals that report
+  only a protocol subset. A false-positive native probe must fall back cleanly
+  instead of emitting protocol placeholder glyphs.
+  Images open in their expanded complete-aspect view and may be collapsed with
+  click, Enter, or Space.
+  Explicit `halfcell`, browser preview, and SVG snapshot paths use a real
+  half-cell widget without native protocol probes; pytest's ordinary TUI path
+  remains library-free. Preview output is layout evidence and does not establish
+  native TGP/Sixel acceptance. Keep automated CLI, Core deployment, and
+  capable-terminal visual evidence as separate surfaces.
 - Gateway release 2.6 adds `computer_use_setup_v1`: correlated setup commands,
   staged macOS Accessibility then Screen Recording approval, and fresh-helper
   polling bounded to 120 seconds so the initiating agent tool call can resume.
