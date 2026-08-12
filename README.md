@@ -180,7 +180,7 @@ terminal-image rendering nor emit terminal image-protocol bytes. See [Headless m
 | `/pause` / `/resume` | Pause or resume the active agent run |
 | `/presets` | Pick a model preset |
 | `/models` | Override runtime models for the current chat |
-| `/profile` / `/profile <agent>` / `/profile "<name>" "<instructions>"` | Manage, select, or quickly create an agent profile |
+| `/profile` / `/profile <agent>` / `/profile "<name>" "<instructions>"` | Select, create, or edit the current agent profile |
 | `/permissions` | Edit Tools, MCP, and Skill permissions for the current agent |
 | `/computer-use on` / `/computer-use off` | Advertise or disable local Computer Use from this CLI; enabling arms the platform permission flow when needed |
 | `/browser status` | Show host-browser connector status |
@@ -194,6 +194,45 @@ terminal-image rendering nor emit terminal image-protocol bytes. See [Headless m
 | `/disconnect` | Disconnect and return to the current host connection flow |
 | `/keys` | Toggle key help |
 | `/quit` | Exit |
+
+### Agent profiles and permissions
+
+Run `/profile` to open the profile menu. It lists profiles available from Agent
+Zero and gives you **Create profile** and **Edit current profile** actions.
+
+![A0 CLI profile menu](docs/res/usage/agent-profiles/profile-menu.png)
+
+The interactive editor asks for the profile name and instructions, then lets
+you review tool access before saving.
+
+![A0 CLI create-profile editor](docs/res/usage/agent-profiles/profile-editor.png)
+
+You can also select or create directly from the composer:
+
+```text
+/profile Developer
+/profile "Source Scout" "Verify every important claim and cite the source."
+```
+
+Use an unquoted name or profile ID when selecting an existing profile. Quick
+creation opens a fresh chat with the new profile activated.
+
+![A0 CLI quick profile creation confirmation](docs/res/usage/agent-profiles/profile-created.png)
+
+Run `/permissions` to edit Tools, MCPs, and Skills for the current profile.
+Choose a tab, change the category default if needed, and use Space or Enter on
+an item to move through **Default**, **On**, and **Off**. Press `Ctrl+S` or select
+**Save** when finished.
+
+![A0 CLI permissions editor](docs/res/usage/agent-profiles/permissions.png)
+
+Both commands use the current chat's scope: a project chat edits that project;
+a chat with no project edits Global. A0 CLI intentionally does not duplicate
+the Web UI's scope selector, availability controls, duplicate/delete actions,
+or full Advanced prompt editor. Use **Manage agents** in Agent Zero for those.
+
+The full policy and manual-file reference is in the
+[Agent Profiles guide](https://github.com/agent0ai/agent-zero/blob/main/docs/guides/agent-profiles.md).
 
 Computer Use may need platform approval before the CLI can capture or control
 the host desktop. `/computer-use on` enables the active backend; if the system

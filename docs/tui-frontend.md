@@ -61,7 +61,10 @@ Focus the top chat tab strip with `Tab` first, then use:
 | `src/agent_zero_cli/widgets/image_entry.py` | Inline image placeholder/loading/error state, focusable thumbnail/expanded rendering, and native-widget cleanup. |
 | `src/agent_zero_cli/widgets/__init__.py` | Re-exports widgets (small; part of the UI package). |
 | `src/agent_zero_cli/widgets/splash_view.py` | Staged connection surface for arrow-key local instance picking, single-instance auto-connect, manual URL fallback, login with detected-instance context, refreshed `Change URL` back-navigation, connecting/error states, and empty ready-state actions. |
+| `src/agent_zero_cli/widgets/profile_menu_popover.py` | Current-profile menu for selecting, creating, or editing profiles. |
 | `src/agent_zero_cli/screens/chat_list.py` | Chat list picker (TUI overlay). |
+| `src/agent_zero_cli/screens/profile_editor.py` | Compact two-step profile editor for identity/instructions and tool choices. |
+| `src/agent_zero_cli/screens/permissions.py` | Current-profile Tools, MCPs, and Skills permission editor. |
 
 ## Where UI meets logic
 
