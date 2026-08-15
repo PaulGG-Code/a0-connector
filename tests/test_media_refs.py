@@ -55,17 +55,17 @@ def test_extracts_browser_snapshot_uri_aj_path_and_path_in_precedence_order() ->
         (
             {
                 "uri": "img:///aj/tmp/uri.png&t=2",
-                "aj_path": "img:///aj/tmp/a0-path.png&t=2",
+                "aj_path": "img:///aj/tmp/aj-path.png&t=2",
                 "path": "img:///aj/tmp/path.png&t=2",
             },
             "/aj/tmp/uri.png",
         ),
         (
             {
-                "aj_path": "img:///aj/tmp/a0-path.png&t=2",
+                "aj_path": "img:///aj/tmp/aj-path.png&t=2",
                 "path": "img:///aj/tmp/path.png&t=2",
             },
-            "/aj/tmp/a0-path.png",
+            "/aj/tmp/aj-path.png",
         ),
         ({"path": "img:///aj/tmp/path.png&t=2"}, "/aj/tmp/path.png"),
     ]
@@ -166,7 +166,7 @@ def test_extracts_same_origin_image_get_reference() -> None:
         "sequence": 3,
         "event": "assistant_message",
         "data": {
-            "text": "![chart](https://agent.test/api/image_get?path=%2Fa0%2Fusr%2Fcharts%2Fresult.png)"
+            "text": "![chart](https://agent.test/api/image_get?path=%2Faj%2Fusr%2Fcharts%2Fresult.png)"
         },
     }
 
@@ -186,7 +186,7 @@ def test_rejects_external_url_parent_paths_and_oversized_data() -> None:
         "data": {
             "text": (
                 "![remote](https://other.test/image.png) "
-                "![wrong-origin](https://agent.test:444/api/image_get?path=%2Fa0%2Ftmp%2Fscreen.png) "
+                "![wrong-origin](https://agent.test:444/api/image_get?path=%2Faj%2Ftmp%2Fscreen.png) "
                 "![parent](img:///aj/tmp/../secret.png) "
                 f"![large](data:image/png;base64,{oversized_payload})"
             )
@@ -271,7 +271,7 @@ def test_malformed_base_url_is_ignored() -> None:
         "sequence": 4,
         "event": "assistant_message",
         "data": {
-            "text": "![image](https://agent.test/api/image_get?path=%2Fa0%2Ftmp%2Fscreen.png)"
+            "text": "![image](https://agent.test/api/image_get?path=%2Faj%2Ftmp%2Fscreen.png)"
         },
     }
 
@@ -301,7 +301,7 @@ def test_browser_snapshot_falls_back_after_invalid_first_reference() -> None:
 
 def test_browser_snapshot_accepts_direct_aj_paths() -> None:
     snapshots = [
-        ({"aj_path": "/aj/tmp/a0-path.png"}, "/aj/tmp/a0-path.png"),
+        ({"aj_path": "/aj/tmp/aj-path.png"}, "/aj/tmp/aj-path.png"),
         ({"path": "/aj/tmp/path.png"}, "/aj/tmp/path.png"),
     ]
 

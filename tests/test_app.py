@@ -1151,7 +1151,7 @@ def test_connector_version_warning_flags_newer_core() -> None:
     )
 
     assert "Agentic Job v1.18 is newer than aj CLI 1.12" in message
-    assert "a0 update" in message
+    assert "aj update" in message
 
 
 def test_connector_version_warning_ignores_equal_or_older_core() -> None:
