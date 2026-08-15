@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent_zero_cli import attachments as attachments_mod
+from agentic_job_cli import attachments as attachments_mod
 
 
 def test_attachment_label_pluralizes() -> None:
@@ -16,8 +16,8 @@ def test_save_clipboard_image_attachment_writes_exact_bytes(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("A0_CONNECTOR_UPLOADS_HOST_ROOT", str(tmp_path))
-    monkeypatch.setenv("A0_CONNECTOR_UPLOADS_CONTAINER_ROOT", "/a0/usr/uploads")
+    monkeypatch.setenv("AJ_CONNECTOR_UPLOADS_HOST_ROOT", str(tmp_path))
+    monkeypatch.setenv("AJ_CONNECTOR_UPLOADS_CONTAINER_ROOT", "/aj/usr/uploads")
     monkeypatch.setattr(
         attachments_mod,
         "read_clipboard_image_bytes",
@@ -26,7 +26,7 @@ def test_save_clipboard_image_attachment_writes_exact_bytes(
 
     attachment = attachments_mod.save_clipboard_image_attachment()
 
-    assert attachment.path.startswith("/a0/usr/uploads/clipboard-")
+    assert attachment.path.startswith("/aj/usr/uploads/clipboard-")
     assert attachment.path.endswith(".png")
     assert attachment.name == attachment.path.rsplit("/", maxsplit=1)[-1]
     assert attachment.mime_type == "image/png"
@@ -111,5 +111,5 @@ def test_create_image_file_upload_rejects_non_image(tmp_path: Path) -> None:
 def test_remote_upload_path_normalizes_server_filename() -> None:
     assert (
         attachments_mod.remote_upload_path("nested\\server-image.png")
-        == "/a0/usr/uploads/server-image.png"
+        == "/aj/usr/uploads/server-image.png"
     )

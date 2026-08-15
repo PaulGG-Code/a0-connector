@@ -4,7 +4,7 @@ from codecs import getincrementaldecoder
 
 import pytest
 
-from agent_zero_cli import textual_compat
+from agentic_job_cli import textual_compat
 
 
 def test_textual_linux_input_guard_replaces_invalid_utf8_bytes(monkeypatch) -> None:

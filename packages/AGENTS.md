@@ -7,12 +7,12 @@
 
 ## Ownership
 
-- Each `a0-computer-use-*` package owns its `pyproject.toml`, platform detection, backend spec, helper/runtime code, and package README where present.
-- The main CLI contract for backend discovery and capability mapping lives in `src/agent_zero_cli/computer_use_backend.py`.
+- Each `aj-computer-use-*` package owns its `pyproject.toml`, platform detection, backend spec, helper/runtime code, and package README where present.
+- The main CLI contract for backend discovery and capability mapping lives in `src/agentic_job_cli/computer_use_backend.py`.
 
 ## Local Contracts
 
-- Backends expose `ComputerUseBackendSpec` through the `a0.computer_use_backends` entry point group or an explicit install helper.
+- Backends expose `ComputerUseBackendSpec` through the `aj.computer_use_backends` entry point group or an explicit install helper.
 - Capability metadata must be derived from feature flags through `computer_use_capabilities_from_features(...)` where the package uses the shared contract.
 - Helper runtimes communicate through stdio JSON and must report backend ID, family, features, support reason, contract version, and capabilities when supported by the backend.
 - Mutating desktop actions must respect trust modes and platform permission/rearm semantics.
@@ -23,7 +23,7 @@
 
 - Avoid importing desktop-control libraries from cross-platform CLI modules.
 - Keep detection cheap and safe to import on unsupported systems.
-- Keep feature lists conservative. Advertising a feature is a contract with Agent Zero Core.
+- Keep feature lists conservative. Advertising a feature is a contract with Agentic Job Core.
 - Add or adjust tests whenever backend metadata, trust modes, helper protocol, or feature flags change.
 
 ## Verification
@@ -33,7 +33,7 @@
 
 ## Child DOX Index
 
-- `a0-computer-use-wayland/AGENTS.md` - Wayland portal, screencast, and AT-SPI backend package.
-- `a0-computer-use-x11/AGENTS.md` - X11 helper package and focus-risk backend.
-- `a0-computer-use-macos/AGENTS.md` - macOS Accessibility/CoreGraphics backend package.
-- `a0-computer-use-windows/AGENTS.md` - Windows UI Automation and screen capture backend package.
+- `aj-computer-use-wayland/AGENTS.md` - Wayland portal, screencast, and AT-SPI backend package.
+- `aj-computer-use-x11/AGENTS.md` - X11 helper package and focus-risk backend.
+- `aj-computer-use-macos/AGENTS.md` - macOS Accessibility/CoreGraphics backend package.
+- `aj-computer-use-windows/AGENTS.md` - Windows UI Automation and screen capture backend package.

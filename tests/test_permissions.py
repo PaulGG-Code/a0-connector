@@ -6,8 +6,8 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from agent_zero_cli import permissions_commands, profile_commands
-from agent_zero_cli.screens.permissions import PermissionsResult, PermissionsScreen
+from agentic_job_cli import permissions_commands, profile_commands
+from agentic_job_cli.screens.permissions import PermissionsResult, PermissionsScreen
 from tests.test_app import DummyAgentZeroCLI
 
 

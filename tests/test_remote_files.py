@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_zero_cli import remote_files as remote_files_module
-from agent_zero_cli.remote_files import RemoteFileUtility
+from agentic_job_cli import remote_files as remote_files_module
+from agentic_job_cli.remote_files import RemoteFileUtility
 
 
 def test_remote_file_utility_stat_returns_canonical_metadata(
@@ -219,7 +219,7 @@ def test_remote_file_utility_context_patch_can_replace_anchor_line(tmp_path: Pat
     target.write_text(
         (
             "def main():\n"
-            "    print(greet(\"Agent Zero\"))\n"
+            "    print(greet(\"Agentic Job\"))\n"
             "\n"
             "\n"
             "if __name__ == \"__main__\":\n"
@@ -236,9 +236,9 @@ def test_remote_file_utility_context_patch_can_replace_anchor_line(tmp_path: Pat
             "patch_text": (
                 "*** Begin Patch\n"
                 "*** Update File: sample.py\n"
-                "@@     print(greet(\"Agent Zero\"))\n"
-                "-    print(greet(\"Agent Zero\"))\n"
-                "+    print(greet(\"Agent Zero\").upper())\n"
+                "@@     print(greet(\"Agentic Job\"))\n"
+                "-    print(greet(\"Agentic Job\"))\n"
+                "+    print(greet(\"Agentic Job\").upper())\n"
                 "*** End Patch"
             ),
         }
@@ -248,7 +248,7 @@ def test_remote_file_utility_context_patch_can_replace_anchor_line(tmp_path: Pat
     assert patch["result"]["file"]["total_lines"] == 6
     assert target.read_text(encoding="utf-8") == (
         "def main():\n"
-        "    print(greet(\"Agent Zero\").upper())\n"
+        "    print(greet(\"Agentic Job\").upper())\n"
         "\n"
         "\n"
         "if __name__ == \"__main__\":\n"

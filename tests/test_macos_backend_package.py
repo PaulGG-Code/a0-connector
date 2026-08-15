@@ -6,12 +6,12 @@ from pathlib import Path
 import pytest
 
 
-PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages/a0-computer-use-macos/src"
+PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages/aj-computer-use-macos/src"
 if str(PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(PACKAGE_SRC))
 
-from a0_computer_use_macos import MACOS_BACKEND_SPEC
-from a0_computer_use_macos import detection as macos_detection
+from aj_computer_use_macos import MACOS_BACKEND_SPEC
+from aj_computer_use_macos import detection as macos_detection
 
 
 def test_macos_backend_spec_exposes_expected_metadata() -> None:

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aj-computer-use-macos"
+version = "1.6"
+description = "macOS computer-use backend for a0"
+requires-python = ">=3.10"
+authors = [
+    { name = "PaulGG-Code" },
+]
+dependencies = [
+    "a0>=1.5",
+    "pyobjc-framework-ApplicationServices; platform_system == 'Darwin'",
+    "pyobjc-framework-Quartz; platform_system == 'Darwin'",
+]
+
+[project.entry-points."aj.computer_use_backends"]
+macos = "aj_computer_use_macos.backend:MACOS_BACKEND_SPEC"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aj_computer_use_macos"]

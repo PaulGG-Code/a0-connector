@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_zero_cli.media_refs import extract_image_references
+from agentic_job_cli.media_refs import extract_image_references
 
 
 def test_extracts_browser_screenshot_from_webui_metadata() -> None:
@@ -11,7 +11,7 @@ def test_extracts_browser_screenshot_from_webui_metadata() -> None:
         "data": {
             "meta": {
                 "tool_name": "browser",
-                "Screenshot": "img:///a0/tmp/browser/history.jpg&t=123.4",
+                "Screenshot": "img:///aj/tmp/browser/history.jpg&t=123.4",
                 "browser_snapshot": {"mime": "image/jpeg", "browser_id": 1},
             }
         },
@@ -20,7 +20,7 @@ def test_extracts_browser_screenshot_from_webui_metadata() -> None:
     refs = extract_image_references(event, base_url="http://agent.test")
 
     assert [(ref.owner, ref.value, ref.caption) for ref in refs] == [
-        ("browser", "/a0/tmp/browser/history.jpg", "Browser screenshot")
+        ("browser", "/aj/tmp/browser/history.jpg", "Browser screenshot")
     ]
 
 
@@ -34,9 +34,9 @@ def test_extracts_browser_screenshot_from_persisted_core_tool_event() -> None:
                 "_tool_name": "browser",
                 "action": "screenshot",
                 "browser_id": 1,
-                "Screenshot": "img:///a0/tmp/browser/history.jpg&t=123.4",
+                "Screenshot": "img:///aj/tmp/browser/history.jpg&t=123.4",
                 "browser_snapshot": {
-                    "a0_path": "/a0/tmp/browser/history.jpg",
+                    "aj_path": "/aj/tmp/browser/history.jpg",
                     "browser_id": 1,
                 },
             }
@@ -46,28 +46,28 @@ def test_extracts_browser_screenshot_from_persisted_core_tool_event() -> None:
     refs = extract_image_references(event, base_url="http://agent.test")
 
     assert [(ref.owner, ref.value, ref.caption) for ref in refs] == [
-        ("browser", "/a0/tmp/browser/history.jpg", "Browser screenshot")
+        ("browser", "/aj/tmp/browser/history.jpg", "Browser screenshot")
     ]
 
 
-def test_extracts_browser_snapshot_uri_a0_path_and_path_in_precedence_order() -> None:
+def test_extracts_browser_snapshot_uri_aj_path_and_path_in_precedence_order() -> None:
     snapshots = [
         (
             {
-                "uri": "img:///a0/tmp/uri.png&t=2",
-                "a0_path": "img:///a0/tmp/a0-path.png&t=2",
-                "path": "img:///a0/tmp/path.png&t=2",
+                "uri": "img:///aj/tmp/uri.png&t=2",
+                "aj_path": "img:///aj/tmp/a0-path.png&t=2",
+                "path": "img:///aj/tmp/path.png&t=2",
             },
-            "/a0/tmp/uri.png",
+            "/aj/tmp/uri.png",
         ),
         (
             {
-                "a0_path": "img:///a0/tmp/a0-path.png&t=2",
-                "path": "img:///a0/tmp/path.png&t=2",
+                "aj_path": "img:///aj/tmp/a0-path.png&t=2",
+                "path": "img:///aj/tmp/path.png&t=2",
             },
-            "/a0/tmp/a0-path.png",
+            "/aj/tmp/a0-path.png",
         ),
-        ({"path": "img:///a0/tmp/path.png&t=2"}, "/a0/tmp/path.png"),
+        ({"path": "img:///aj/tmp/path.png&t=2"}, "/aj/tmp/path.png"),
     ]
 
     for snapshot, expected in snapshots:
@@ -93,7 +93,7 @@ def test_extracts_user_attachment_basename() -> None:
 
     refs = extract_image_references(event, base_url="http://agent.test")
 
-    assert refs[0].value == "/a0/usr/uploads/scan.png"
+    assert refs[0].value == "/aj/usr/uploads/scan.png"
     assert refs[0].copy_text == "[image: User attachment — scan.png]"
 
 
@@ -107,7 +107,7 @@ def test_extracts_attachment_paths_from_dictionaries() -> None:
 
     refs = extract_image_references(event, base_url="http://agent.test")
 
-    assert [ref.value for ref in refs] == ["/a0/usr/uploads/scan.png"]
+    assert [ref.value for ref in refs] == ["/aj/usr/uploads/scan.png"]
 
 
 def test_sanitizes_attachment_filenames_to_final_basename() -> None:
@@ -132,10 +132,10 @@ def test_sanitizes_attachment_filenames_to_final_basename() -> None:
     refs = extract_image_references(event, base_url="http://agent.test")
 
     assert [ref.value for ref in refs] == [
-        "/a0/usr/uploads/scan.png",
-        "/a0/usr/uploads/scan.jpg",
-        "/a0/usr/uploads/query.png",
-        "/a0/usr/uploads/fragment.webp",
+        "/aj/usr/uploads/scan.png",
+        "/aj/usr/uploads/scan.jpg",
+        "/aj/usr/uploads/query.png",
+        "/aj/usr/uploads/fragment.webp",
     ]
 
 
@@ -146,7 +146,7 @@ def test_extracts_assistant_markdown_and_bounded_data_image() -> None:
         "event": "assistant_message",
         "data": {
             "text": (
-                "![chart](img:///a0/usr/charts/result.png) "
+                "![chart](img:///aj/usr/charts/result.png) "
                 "![pixel](data:image/png;base64,cG5nLWJ5dGVz)"
             )
         },
@@ -155,7 +155,7 @@ def test_extracts_assistant_markdown_and_bounded_data_image() -> None:
     refs = extract_image_references(event, base_url="http://agent.test")
 
     assert [(ref.owner, ref.caption, ref.source, ref.value) for ref in refs] == [
-        ("assistant", "chart", "agent_zero_path", "/a0/usr/charts/result.png"),
+        ("assistant", "chart", "agent_zero_path", "/aj/usr/charts/result.png"),
         ("assistant", "pixel", "data_uri", "data:image/png;base64,cG5nLWJ5dGVz"),
     ]
 
@@ -173,7 +173,7 @@ def test_extracts_same_origin_image_get_reference() -> None:
     refs = extract_image_references(event, base_url="https://agent.test")
 
     assert [(ref.source, ref.value) for ref in refs] == [
-        ("agent_zero_path", "/a0/usr/charts/result.png")
+        ("agent_zero_path", "/aj/usr/charts/result.png")
     ]
 
 
@@ -187,7 +187,7 @@ def test_rejects_external_url_parent_paths_and_oversized_data() -> None:
             "text": (
                 "![remote](https://other.test/image.png) "
                 "![wrong-origin](https://agent.test:444/api/image_get?path=%2Fa0%2Ftmp%2Fscreen.png) "
-                "![parent](img:///a0/tmp/../secret.png) "
+                "![parent](img:///aj/tmp/../secret.png) "
                 f"![large](data:image/png;base64,{oversized_payload})"
             )
         },
@@ -219,15 +219,15 @@ def test_deduplicates_metadata_and_markdown_references_in_source_order() -> None
         "sequence": 3,
         "event": "assistant_message",
         "data": {
-            "text": "![duplicate](img:///a0/usr/charts/result.png)",
-            "meta": {"image": "img:///a0/usr/charts/result.png"},
+            "text": "![duplicate](img:///aj/usr/charts/result.png)",
+            "meta": {"image": "img:///aj/usr/charts/result.png"},
         },
     }
 
     refs = extract_image_references(event, base_url="https://agent.test")
 
     assert [(ref.owner, ref.caption, ref.value) for ref in refs] == [
-        ("assistant", "Assistant image", "/a0/usr/charts/result.png")
+        ("assistant", "Assistant image", "/aj/usr/charts/result.png")
     ]
 
 
@@ -237,7 +237,7 @@ def test_cache_buster_does_not_change_cache_key() -> None:
         "sequence": 8,
         "event": "tool_output",
         "data": {
-            "meta": {"tool_name": "browser", "Screenshot": "img:///a0/tmp/screen.jpg&t=1"}
+            "meta": {"tool_name": "browser", "Screenshot": "img:///aj/tmp/screen.jpg&t=1"}
         },
     }
     second = {
@@ -245,7 +245,7 @@ def test_cache_buster_does_not_change_cache_key() -> None:
         "sequence": 9,
         "event": "tool_output",
         "data": {
-            "meta": {"tool_name": "browser", "Screenshot": "img:///a0/tmp/screen.jpg&t=2"}
+            "meta": {"tool_name": "browser", "Screenshot": "img:///aj/tmp/screen.jpg&t=2"}
         },
     }
 
@@ -288,7 +288,7 @@ def test_browser_snapshot_falls_back_after_invalid_first_reference() -> None:
                 "tool_name": "browser",
                 "browser_snapshot": {
                     "uri": "https://other.test/screenshot.png",
-                    "a0_path": "img:///a0/tmp/fallback.png",
+                    "aj_path": "img:///aj/tmp/fallback.png",
                 },
             }
         },
@@ -296,13 +296,13 @@ def test_browser_snapshot_falls_back_after_invalid_first_reference() -> None:
 
     refs = extract_image_references(event, base_url="https://agent.test")
 
-    assert [ref.value for ref in refs] == ["/a0/tmp/fallback.png"]
+    assert [ref.value for ref in refs] == ["/aj/tmp/fallback.png"]
 
 
-def test_browser_snapshot_accepts_direct_a0_paths() -> None:
+def test_browser_snapshot_accepts_direct_aj_paths() -> None:
     snapshots = [
-        ({"a0_path": "/a0/tmp/a0-path.png"}, "/a0/tmp/a0-path.png"),
-        ({"path": "/a0/tmp/path.png"}, "/a0/tmp/path.png"),
+        ({"aj_path": "/aj/tmp/a0-path.png"}, "/aj/tmp/a0-path.png"),
+        ({"path": "/aj/tmp/path.png"}, "/aj/tmp/path.png"),
     ]
 
     for snapshot, expected in snapshots:
@@ -326,8 +326,8 @@ def test_non_browser_tool_output_does_not_extract_browser_images() -> None:
         "data": {
             "meta": {
                 "tool_name": "code_execution_tool",
-                "Screenshot": "img:///a0/tmp/unrelated.png",
-                "browser_snapshot": {"a0_path": "/a0/tmp/unrelated.png"},
+                "Screenshot": "img:///aj/tmp/unrelated.png",
+                "browser_snapshot": {"aj_path": "/aj/tmp/unrelated.png"},
             }
         },
     }
@@ -343,8 +343,8 @@ def test_tool_thought_metadata_does_not_extract_browser_images() -> None:
         "data": {
             "meta": {
                 "_tool_name": "browser",
-                "Screenshot": "img:///a0/tmp/unrelated.png",
-                "browser_snapshot": {"a0_path": "/a0/tmp/unrelated.png"},
+                "Screenshot": "img:///aj/tmp/unrelated.png",
+                "browser_snapshot": {"aj_path": "/aj/tmp/unrelated.png"},
             }
         },
     }

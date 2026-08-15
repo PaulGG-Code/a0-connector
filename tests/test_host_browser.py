@@ -5,10 +5,10 @@ from pathlib import Path
 
 import pytest
 
-import agent_zero_cli.host_browser_common as host_browser_common
-import agent_zero_cli.host_browser_manager as host_browser_manager_module
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.host_browser import (
+import agentic_job_cli.host_browser_common as host_browser_common
+import agentic_job_cli.host_browser_manager as host_browser_manager_module
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.host_browser import (
     BrowserCandidate,
     BrowserProfile,
     CONTENT_HELPER_PATH,
@@ -240,14 +240,14 @@ def test_discover_profiles_reads_local_state_names(tmp_path: Path) -> None:
 
 
 def test_discover_profiles_exposes_a0_managed_profile_without_existing_root(tmp_path: Path) -> None:
-    root = tmp_path / "a0-chrome"
+    root = tmp_path / "aj-chrome"
 
     profiles = discover_profiles(
-        BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", "/bin/echo", root)
+        BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", "/bin/echo", root)
     )
 
     assert len(profiles) == 1
-    assert profiles[0].family == "chrome-a0"
+    assert profiles[0].family == "chrome-aj"
     assert profiles[0].profile_label == "Default"
     assert profiles[0].profile_path == root
 
@@ -261,7 +261,7 @@ def test_a0_managed_user_data_dir_is_separate_from_default_chrome_dir(
 
     path = a0_managed_user_data_dir("chrome")
 
-    assert path == tmp_path / "data" / "a0/browser-profiles/chrome"
+    assert path == tmp_path / "data" / "aj/browser-profiles/chrome"
     assert path != tmp_path / "config" / "google-chrome"
 
 
@@ -286,7 +286,7 @@ def test_linux_candidate_detection_includes_major_chromium_browsers(
     assert candidates["brave"].user_data_dir == config_root / "BraveSoftware/Brave-Browser"
     assert candidates["opera"].user_data_dir == config_root / "opera"
     assert candidates["vivaldi"].user_data_dir == config_root / "vivaldi"
-    assert {"chrome-a0", "brave-a0", "opera-a0", "vivaldi-a0"} <= set(candidates)
+    assert {"chrome-aj", "brave-aj", "opera-aj", "vivaldi-aj"} <= set(candidates)
 
 
 def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
@@ -301,7 +301,7 @@ def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
         / "browser-page-content.js"
     )
     if not agent_zero_asset.exists():
-        pytest.skip("Agent Zero sibling repo is not available for content-helper contract")
+        pytest.skip("Agentic Job sibling repo is not available for content-helper contract")
 
     agent_zero_source = agent_zero_asset.read_text(encoding="utf-8")
     agent_zero_hash = content_helper_sha256(agent_zero_source)
@@ -368,7 +368,7 @@ def test_content_helper_source_is_owned_by_agent_zero_browser_plugin() -> None:
 def test_host_browser_accepts_only_agent_zero_normalized_urls() -> None:
     assert normalize_url("https://example.com/") == "https://example.com/"
     assert normalize_url("about:blank") == "about:blank"
-    with pytest.raises(ValueError, match="Agent Zero-normalized"):
+    with pytest.raises(ValueError, match="Agentic Job-normalized"):
         normalize_url("example.com")
 
 
@@ -425,7 +425,7 @@ def test_remote_debugging_discovery_reads_active_port_without_network_probe(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_cdp as host_browser_cdp_module
+    import agentic_job_cli.host_browser_cdp as host_browser_cdp_module
 
     root = tmp_path / "google-chrome"
     root.mkdir()
@@ -446,7 +446,7 @@ def test_remote_debugging_discovery_reads_active_port_without_network_probe(
 
 
 async def test_cdp_connection_resolves_discovery_address(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_zero_cli.host_browser_cdp as host_browser_cdp_module
+    import agentic_job_cli.host_browser_cdp as host_browser_cdp_module
 
     class FakeResponse:
         async def __aenter__(self):
@@ -508,9 +508,9 @@ def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_manager as host_browser_manager_module
+    import agentic_job_cli.host_browser_manager as host_browser_manager_module
 
-    a0_root = tmp_path / "a0-chrome"
+    aj_root = tmp_path / "aj-chrome"
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     remote_profile = BrowserProfile(
@@ -525,12 +525,12 @@ def test_selected_profile_prefers_user_allowed_remote_debugging_over_a0_profile(
     monkeypatch.setattr(host_browser_manager_module, "discover_remote_debugging_profiles", lambda *_: [remote_profile])
     manager = HostBrowserManager(
         CLIConfig(
-            host_browser_family="chrome-a0",
-            host_browser_profile_path=str(a0_root),
+            host_browser_family="chrome-aj",
+            host_browser_profile_path=str(aj_root),
             host_browser_profile_label="Default",
         ),
         candidate_provider=lambda: [
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), a0_root)
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), aj_root)
         ],
         playwright_available=True,
     )
@@ -567,12 +567,12 @@ def test_playwright_install_command_targets_a0_python_with_uv(
         lambda name: "/opt/uv/bin/uv" if name == "uv" else None,
     )
 
-    assert host_browser_common.playwright_python_install_command("/tmp/a0-python") == [
+    assert host_browser_common.playwright_python_install_command("/tmp/aj-python") == [
         "/opt/uv/bin/uv",
         "pip",
         "install",
         "--python",
-        "/tmp/a0-python",
+        "/tmp/aj-python",
         "playwright",
     ]
 
@@ -582,8 +582,8 @@ def test_playwright_install_command_falls_back_to_python_pip(
 ) -> None:
     monkeypatch.setattr(host_browser_common.shutil, "which", lambda name: None)
 
-    assert host_browser_common.playwright_python_install_command("/tmp/a0-python") == [
-        "/tmp/a0-python",
+    assert host_browser_common.playwright_python_install_command("/tmp/aj-python") == [
+        "/tmp/aj-python",
         "-m",
         "pip",
         "install",
@@ -742,7 +742,7 @@ def test_profile_lock_detection_reports_singleton_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     lock = tmp_path / "SingletonLock"
     try:
@@ -763,7 +763,7 @@ def test_profile_lock_detection_ignores_stale_singleton_owner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     lock = tmp_path / "SingletonLock"
     try:
@@ -784,7 +784,7 @@ def test_profile_lock_detection_ignores_stale_singleton_owner(
 def test_chromium_launch_args_do_not_request_a_devtools_port(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("A0_HOST_BROWSER_OZONE_PLATFORM", raising=False)
+    monkeypatch.delenv("AJ_HOST_BROWSER_OZONE_PLATFORM", raising=False)
     monkeypatch.setenv("DISPLAY", ":0")
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
 
@@ -797,7 +797,7 @@ def test_chromium_launch_args_do_not_request_a_devtools_port(
 def test_chromium_launch_args_use_wayland_only_without_x_display(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.delenv("A0_HOST_BROWSER_OZONE_PLATFORM", raising=False)
+    monkeypatch.delenv("AJ_HOST_BROWSER_OZONE_PLATFORM", raising=False)
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
 
@@ -810,7 +810,7 @@ def test_remote_debugging_restriction_blocks_default_chrome_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
@@ -823,17 +823,17 @@ def test_remote_debugging_restriction_blocks_default_chrome_profile(
     assert "blocks Playwright remote debugging" in reason
     assert "chrome://inspect/#remote-debugging" in reason
     assert "Allow remote debugging for this browser instance" in reason
-    assert "/browser profile chrome-a0 Default" in reason
+    assert "/browser profile chrome-aj Default" in reason
 
 
 def test_remote_debugging_restriction_allows_a0_managed_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
-    profile = BrowserProfile("chrome-a0", "Chrome", "/bin/chrome", tmp_path, "Default", "Default")
+    profile = BrowserProfile("chrome-aj", "Chrome", "/bin/chrome", tmp_path, "Default", "Default")
 
     assert remote_debugging_restriction_reason(profile) == ""
 
@@ -842,21 +842,21 @@ def test_selected_profile_keeps_existing_profile_as_default_when_restricted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     (default_root / "Default").mkdir(parents=True)
-    a0_root = tmp_path / "a0-chrome"
+    aj_root = tmp_path / "aj-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(),
         candidate_provider=lambda: [
             BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), a0_root),
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), aj_root),
         ],
         playwright_available=True,
     )
@@ -865,28 +865,28 @@ def test_selected_profile_keeps_existing_profile_as_default_when_restricted(
 
     assert selected is not None
     assert selected.family == "chrome"
-    assert "A0-controlled local profile" in manager._profile_support_reason(selected)
+    assert "AJ-controlled local profile" in manager._profile_support_reason(selected)
 
 
 def test_agent_profile_mode_selects_supported_a0_profile_when_default_is_restricted(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     (default_root / "Default").mkdir(parents=True)
-    a0_root = tmp_path / "a0-chrome"
+    aj_root = tmp_path / "aj-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
         CLIConfig(),
         candidate_provider=lambda: [
             BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), a0_root),
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), aj_root),
         ],
         playwright_available=True,
     )
@@ -894,7 +894,7 @@ def test_agent_profile_mode_selects_supported_a0_profile_when_default_is_restric
     selected = manager.selected_profile(profile_mode="agent")
 
     assert selected is not None
-    assert selected.family == "chrome-a0"
+    assert selected.family == "chrome-aj"
 
 
 def test_hello_metadata_marks_missing_playwright_as_preparable(tmp_path: Path) -> None:
@@ -905,12 +905,12 @@ def test_hello_metadata_marks_missing_playwright_as_preparable(tmp_path: Path) -
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=False,
-            host_browser_family="chrome-a0",
+            host_browser_family="chrome-aj",
             host_browser_profile_path=str(root),
             host_browser_profile_label="Default",
         ),
         candidate_provider=lambda: [
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), root)
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), root)
         ],
         playwright_available=False,
     )
@@ -929,14 +929,14 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     (default_root / "Default").mkdir(parents=True)
-    managed_root = tmp_path / "a0-chrome"
+    managed_root = tmp_path / "aj-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
@@ -948,7 +948,7 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
         ),
         candidate_provider=lambda: [
             BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), managed_root),
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), managed_root),
         ],
         playwright_available=True,
     )
@@ -958,7 +958,7 @@ def test_hello_metadata_marks_restricted_saved_profile_as_preparable(
     assert metadata["supported"] is False
     assert metadata["can_prepare"] is True
     assert metadata["browser_family"] == "chrome"
-    assert "A0-controlled local profile" in metadata["support_reason"]
+    assert "AJ-controlled local profile" in metadata["support_reason"]
 
 
 async def test_host_browser_manager_dispatches_open_and_screenshot_artifact(tmp_path: Path) -> None:
@@ -1052,7 +1052,7 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     root = tmp_path / "Chrome"
     (root / "Default").mkdir(parents=True)
@@ -1062,12 +1062,12 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=True,
-            host_browser_family="chrome-a0",
+            host_browser_family="chrome-aj",
             host_browser_profile_path=str(root),
             host_browser_profile_label="Default",
         ),
         candidate_provider=lambda: [
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), root)
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), root)
         ],
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(playwright),
@@ -1098,7 +1098,7 @@ async def test_relaunch_session_is_adopted_by_first_browser_context(
 async def test_remote_debugging_session_attaches_without_closing_user_context(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser_session as host_browser_session_module
+    import agentic_job_cli.host_browser_session as host_browser_session_module
 
     instances = []
 
@@ -1171,7 +1171,7 @@ async def test_remote_debugging_session_attaches_without_closing_user_context(
 async def test_remote_debugging_connection_failure_reports_enable_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser_session as host_browser_session_module
+    import agentic_job_cli.host_browser_session as host_browser_session_module
 
     instances = []
 
@@ -1212,7 +1212,7 @@ async def test_remote_debugging_connection_failure_reports_enable_hint(
 async def test_remote_debugging_session_opens_lists_and_reads_content(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.host_browser_session as host_browser_session_module
+    import agentic_job_cli.host_browser_session as host_browser_session_module
 
     instances = []
 
@@ -1335,12 +1335,12 @@ async def test_remote_ensure_respects_disabled_state_while_local_preparation_can
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=False,
-            host_browser_family="chrome-a0",
+            host_browser_family="chrome-aj",
             host_browser_profile_path=str(root),
             host_browser_profile_label="Default",
         ),
         candidate_provider=lambda: [
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), root)
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), root)
         ],
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(playwright),
@@ -1371,14 +1371,14 @@ async def test_ensure_existing_mode_reports_restricted_saved_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     (default_root / "Default").mkdir(parents=True)
-    managed_root = tmp_path / "a0-chrome"
+    managed_root = tmp_path / "aj-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
@@ -1390,7 +1390,7 @@ async def test_ensure_existing_mode_reports_restricted_saved_profile(
         ),
         candidate_provider=lambda: [
             BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), managed_root),
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), managed_root),
         ],
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(FakePlaywright()),
@@ -1407,7 +1407,7 @@ async def test_ensure_existing_mode_reports_restricted_saved_profile(
 
     assert result["ok"] is False
     assert result["code"] == "HOST_BROWSER_ERROR"
-    assert "A0-controlled local profile" in result["error"]
+    assert "AJ-controlled local profile" in result["error"]
     assert manager.config.host_browser_family == "chrome"
     assert manager.config.host_browser_profile_path == str(default_root)
 
@@ -1416,14 +1416,14 @@ async def test_ensure_agent_mode_auto_selects_supported_managed_profile(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     executable = tmp_path / "chrome"
     executable.write_text("#!/bin/sh\n", encoding="utf-8")
     config_root = tmp_path / "config"
     default_root = config_root / "google-chrome"
     (default_root / "Default").mkdir(parents=True)
-    managed_root = tmp_path / "a0-chrome"
+    managed_root = tmp_path / "aj-chrome"
     monkeypatch.setenv("XDG_CONFIG_HOME", str(config_root))
     monkeypatch.setattr(host_browser_common_module, "browser_major_version", lambda _: 147)
     manager = HostBrowserManager(
@@ -1435,7 +1435,7 @@ async def test_ensure_agent_mode_auto_selects_supported_managed_profile(
         ),
         candidate_provider=lambda: [
             BrowserCandidate("chrome", "Google Chrome", str(executable), default_root),
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), managed_root),
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), managed_root),
         ],
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(FakePlaywright()),
@@ -1451,8 +1451,8 @@ async def test_ensure_agent_mode_auto_selects_supported_managed_profile(
     )
 
     assert result["ok"] is True
-    assert result["result"]["browser_family"] == "chrome-a0"
-    assert manager.config.host_browser_family == "chrome-a0"
+    assert result["result"]["browser_family"] == "chrome-aj"
+    assert manager.config.host_browser_family == "chrome-aj"
     assert manager.config.host_browser_profile_path == str(managed_root)
 
 
@@ -1460,7 +1460,7 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    import agent_zero_cli.host_browser_common as host_browser_common_module
+    import agentic_job_cli.host_browser_common as host_browser_common_module
 
     root = tmp_path / "Chrome"
     (root / "Default").mkdir(parents=True)
@@ -1470,12 +1470,12 @@ async def test_locked_profile_owned_by_active_context_reports_context_conflict(
     manager = HostBrowserManager(
         CLIConfig(
             host_browser_enabled=True,
-            host_browser_family="chrome-a0",
+            host_browser_family="chrome-aj",
             host_browser_profile_path=str(root),
             host_browser_profile_label="Default",
         ),
         candidate_provider=lambda: [
-            BrowserCandidate("chrome-a0", "Google Chrome (A0 controlled profile)", str(executable), root)
+            BrowserCandidate("chrome-aj", "Google Chrome (AJ controlled profile)", str(executable), root)
         ],
         playwright_available=True,
         playwright_starter=lambda: FakeStarter(playwright),

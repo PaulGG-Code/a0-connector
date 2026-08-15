@@ -1,17 +1,17 @@
-# Agent Zero Attachment History Metadata Implementation Plan
+# Agentic Job Attachment History Metadata Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make user image attachments sent through `_a0_connector`'s WebSocket path replay with sanitized attachment filenames, matching the metadata available from the HTTP message path.
+**Goal:** Make user image attachments sent through `_aj_connector`'s WebSocket path replay with sanitized attachment filenames, matching the metadata available from the HTTP message path.
 
-**Architecture:** Add one pure filename-to-log-metadata helper beside `WsConnector`, use it only when logging an accepted WebSocket user message, and prove the resulting log entry passes through the existing event bridge unchanged. This is an Agent Zero Core change; no image bytes, upload behavior, event type, or connector protocol field changes.
+**Architecture:** Add one pure filename-to-log-metadata helper beside `WsConnector`, use it only when logging an accepted WebSocket user message, and prove the resulting log entry passes through the existing event bridge unchanged. This is an Agentic Job Core change; no image bytes, upload behavior, event type, or connector protocol field changes.
 
-**Tech Stack:** Agent Zero Core Python 3.12+, builtin `plugins/_a0_connector`, Socket.IO WebSocket handler, pytest.
+**Tech Stack:** Agentic Job Core Python 3.12+, builtin `plugins/_aj_connector`, Socket.IO WebSocket handler, pytest.
 
 ## Global Constraints
 
-- Implement in the tracked Agent Zero Core repository, not in `a0-connector` and not only in an ignored live `usr/` copy.
-- Read the Core root, `plugins/`, `plugins/_a0_connector/`, and `tests/` AGENTS files again in the execution worktree before editing.
+- Implement in the tracked Agentic Job Core repository, not in `aj-connector` and not only in an ignored live `usr/` copy.
+- Read the Core root, `plugins/`, `plugins/_aj_connector/`, and `tests/` AGENTS files again in the execution worktree before editing.
 - Preserve authentication, attachment validation, and existing `connector_send_message` result behavior.
 - Store only sanitized attachment basenames in user log metadata.
 - Strip directory components, URL query strings, and fragments so credentials or local paths cannot enter replay metadata.
@@ -19,16 +19,16 @@
 - Do not modify browser screenshot capture, materialization, consent, or privacy behavior.
 - A message without attachments must retain `kvps={}`.
 - Run focused Core tests before any runtime synchronization.
-- Ask before committing, pushing, or changing/restarting a live Agent Zero runtime.
+- Ask before committing, pushing, or changing/restarting a live Agentic Job runtime.
 - Report tracked implementation, live-runtime synchronization, and cross-client replay as separate evidence surfaces.
 
 ---
 
 ## File Structure
 
-- Modify: `plugins/_a0_connector/api/ws_connector.py` — sanitize accepted attachment refs and place basenames in the user log `kvps` only when non-empty.
-- Create: `tests/test_a0_connector_attachment_metadata.py` — pure sanitization, handler logging, event bridge replay, no-attachment, and invalid-attachment regressions.
-- Modify: `plugins/_a0_connector/AGENTS.md` — state that accepted WebSocket user attachments enter replay metadata as sanitized basenames only.
+- Modify: `plugins/_aj_connector/api/ws_connector.py` — sanitize accepted attachment refs and place basenames in the user log `kvps` only when non-empty.
+- Create: `tests/test_aj_connector_attachment_metadata.py` — pure sanitization, handler logging, event bridge replay, no-attachment, and invalid-attachment regressions.
+- Modify: `plugins/_aj_connector/AGENTS.md` — state that accepted WebSocket user attachments enter replay metadata as sanitized basenames only.
 
 ## Interface
 
@@ -56,9 +56,9 @@ or, when no safe names remain:
 ### Task 1: Preserve Sanitized WebSocket Attachment Names in Replay Metadata
 
 **Files:**
-- Modify: `plugins/_a0_connector/api/ws_connector.py`
-- Create: `tests/test_a0_connector_attachment_metadata.py`
-- Modify: `plugins/_a0_connector/AGENTS.md`
+- Modify: `plugins/_aj_connector/api/ws_connector.py`
+- Create: `tests/test_aj_connector_attachment_metadata.py`
+- Modify: `plugins/_aj_connector/AGENTS.md`
 
 **Interfaces:**
 - Consumes: the already normalized `attachments: list[str]` returned by `WsConnector._normalize_attachment_refs()`.
@@ -78,21 +78,21 @@ from unittest.mock import AsyncMock
 import pytest
 
 from helpers.ws_manager import WsResult
-from plugins._a0_connector.api import ws_connector as ws_module
-from plugins._a0_connector.api.ws_connector import (
+from plugins._aj_connector.api import ws_connector as ws_module
+from plugins._aj_connector.api.ws_connector import (
     WsConnector,
     _attachment_log_metadata,
 )
-from plugins._a0_connector.helpers.event_bridge import log_entry_to_connector_event
+from plugins._aj_connector.helpers.event_bridge import log_entry_to_connector_event
 
 
 def test_attachment_log_metadata_keeps_only_safe_basenames() -> None:
     assert _attachment_log_metadata(
         [
-            "/a0/usr/uploads/scan.png",
+            "/aj/usr/uploads/scan.png",
             r"C:\\Users\\person\\result.jpg",
-            "https://agent.test/api/image_get?path=/a0/usr/uploads/chart.webp&token=secret#view",
-            "/a0/usr/uploads/",
+            "https://agent.test/api/image_get?path=/aj/usr/uploads/chart.webp&token=secret#view",
+            "/aj/usr/uploads/",
             "",
         ]
     ) == {
@@ -105,7 +105,7 @@ def test_attachment_log_metadata_omits_empty_metadata() -> None:
     assert _attachment_log_metadata(["", "/"]) == {}
 ```
 
-The URL test intentionally records `image_get`, not its `path` query value: query strings are removed wholesale so secret-bearing parameters never become log metadata. Normal A0 CLI uploads arrive as `/a0/usr/uploads/<filename>` and retain the uploaded filename.
+The URL test intentionally records `image_get`, not its `path` query value: query strings are removed wholesale so secret-bearing parameters never become log metadata. Normal AJ CLI uploads arrive as `/aj/usr/uploads/<filename>` and retain the uploaded filename.
 
 - [ ] **Step 2: Write the failing handler and replay test**
 
@@ -153,8 +153,8 @@ async def test_websocket_attachment_names_reach_replayed_user_event(
             "context_id": "ctx-1",
             "message": "Review these",
             "attachments": [
-                "/a0/usr/uploads/scan.png",
-                "/a0/usr/uploads/result.jpg",
+                "/aj/usr/uploads/scan.png",
+                "/aj/usr/uploads/result.jpg",
             ],
             "client_message_id": "client-1",
         },
@@ -252,10 +252,10 @@ For rejected cases no context patch is required because validation returns befor
 
 - [ ] **Step 4: Run the focused test and verify the helper is missing**
 
-Run from the Agent Zero Core worktree:
+Run from the Agentic Job Core worktree:
 
 ```bash
-pytest tests/test_a0_connector_attachment_metadata.py -v
+pytest tests/test_aj_connector_attachment_metadata.py -v
 ```
 
 Expected: collection fails because `_attachment_log_metadata` is not defined.
@@ -299,15 +299,15 @@ Do not change `_normalize_attachment_refs()`, `_run_message()`, `UserMessage.att
 - [ ] **Step 6: Run focused connector regressions**
 
 ```bash
-pytest tests/test_a0_connector_attachment_metadata.py -v
-pytest tests/test_a0_connector_launcher_gateway.py tests/test_a0_connector_computer_use_metadata.py tests/test_a0_connector_prompt_gating.py -v
+pytest tests/test_aj_connector_attachment_metadata.py -v
+pytest tests/test_aj_connector_launcher_gateway.py tests/test_aj_connector_computer_use_metadata.py tests/test_aj_connector_prompt_gating.py -v
 ```
 
 Expected: all tests pass; the new test shows replay metadata contains basenames and rejected attachments remain rejected.
 
 - [ ] **Step 7: Run the DOX pass and broader test suite**
 
-Re-read the applicable AGENTS chain. Add the accepted-WebSocket-attachment replay rule to `plugins/_a0_connector/AGENTS.md`; the existing tests DOX already owns all focused connector tests and needs no change. Then run:
+Re-read the applicable AGENTS chain. Add the accepted-WebSocket-attachment replay rule to `plugins/_aj_connector/AGENTS.md`; the existing tests DOX already owns all focused connector tests and needs no change. Then run:
 
 ```bash
 pytest
@@ -320,7 +320,7 @@ Expected: full Core tests pass, diff check is clean, and only the handler, focus
 - [ ] **Step 8: Commit the tracked Core correction after approval**
 
 ```bash
-git add plugins/_a0_connector/api/ws_connector.py plugins/_a0_connector/AGENTS.md tests/test_a0_connector_attachment_metadata.py
+git add plugins/_aj_connector/api/ws_connector.py plugins/_aj_connector/AGENTS.md tests/test_aj_connector_attachment_metadata.py
 git commit -m "fix: preserve connector attachment history metadata"
 ```
 
@@ -330,7 +330,7 @@ git commit -m "fix: preserve connector attachment history metadata"
 
 **Files:**
 - No tracked source changes.
-- Runtime target: the exact Agent Zero Core installation named and approved by the user at execution time.
+- Runtime target: the exact Agentic Job Core installation named and approved by the user at execution time.
 
 **Interfaces:**
 - Consumes: the tested Core commit from Task 1 and the intended runtime's existing plugin/restart workflow.
@@ -338,7 +338,7 @@ git commit -m "fix: preserve connector attachment history metadata"
 
 - [ ] **Step 1: Obtain the exact runtime target and restart authority**
 
-Before copying or restarting anything, record the user-approved runtime identity, tracked Core checkout path, live `plugins/_a0_connector/api/ws_connector.py` path, and runtime-specific restart command. If any of these four values is unknown or multiple candidates exist, stop this task and ask the user; do not select a container or installation by port guessing.
+Before copying or restarting anything, record the user-approved runtime identity, tracked Core checkout path, live `plugins/_aj_connector/api/ws_connector.py` path, and runtime-specific restart command. If any of these four values is unknown or multiple candidates exist, stop this task and ask the user; do not select a container or installation by port guessing.
 
 - [ ] **Step 2: Compare tracked and live source before mutation**
 
@@ -347,7 +347,7 @@ Run read-only checks using the exact paths established in Step 1:
 ```bash
 git rev-parse --show-toplevel
 git rev-parse HEAD
-shasum -a 256 plugins/_a0_connector/api/ws_connector.py
+shasum -a 256 plugins/_aj_connector/api/ws_connector.py
 read -r -p "Approved live ws_connector.py path: " a0_live_connector_file
 test "${a0_live_connector_file#/}" != "$a0_live_connector_file"
 test -f "$a0_live_connector_file"
@@ -368,7 +368,7 @@ Run the restart command approved in Step 1. Discover the actual WebUI/connector 
 
 With the updated runtime:
 
-1. Upload an image through the A0 CLI and send it in a user message.
+1. Upload an image through the AJ CLI and send it in a user message.
 2. Confirm the live user event contains `data.meta.attachments == [<sanitized filename>]` and contains no bytes, base64, local directory, query, cookie, or token.
 3. Disconnect and reconnect the CLI to the same chat.
 4. Confirm the replayed user message contains the same attachment filename.
@@ -384,7 +384,7 @@ Report:
 - CLI reconnect/history replay result; and
 - WebUI regression result.
 
-Do not report the A0 CLI native TGP/Sixel/half-cell rendering as accepted from this Core-only task.
+Do not report the AJ CLI native TGP/Sixel/half-cell rendering as accepted from this Core-only task.
 
 ---
 

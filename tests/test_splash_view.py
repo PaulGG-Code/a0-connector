@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import pytest
 from textual.app import App, ComposeResult
 
-from agent_zero_cli.instance_discovery import DiscoveredInstance
-from agent_zero_cli.widgets import SplashState, SplashView
-from agent_zero_cli.widgets.splash_view import (
+from agentic_job_cli.instance_discovery import DiscoveredInstance
+from agentic_job_cli.widgets import SplashState, SplashView
+from agentic_job_cli.widgets.splash_view import (
     SplashHostPanel,
     SplashHostRow,
     _normalize_connection_target,
@@ -85,7 +85,7 @@ def test_empty_host_panel_mentions_agent_zero_install_url() -> None:
 
     message = panel._status_message()
 
-    assert "Install Agent Zero: http://agent-zero.ai" in message.plain
+    assert "Install Agentic Job: http://agent-zero.ai" in message.plain
 
 
 @pytest.mark.anyio

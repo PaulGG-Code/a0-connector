@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.css.query import NoMatches
 from textual.selection import SELECT_ALL
 
-from agent_zero_cli import (
+from agentic_job_cli import (
     __version__,
     chat_commands,
     connection,
@@ -23,22 +23,22 @@ from agent_zero_cli import (
     self_update,
     splash_helpers,
 )
-from agent_zero_cli.app import AgentZeroCLI
-from agent_zero_cli.attachments import AttachmentRef, AttachmentUpload
-from agent_zero_cli.client import DEFAULT_HOST
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
-from agent_zero_cli.media_refs import ImageReference
-from agent_zero_cli.image_store import ImageAsset
-from agent_zero_cli.rendering import extract_detail, format_duration, render_connector_event
-from agent_zero_cli.remote_files import RemoteTreeSnapshot
-from agent_zero_cli.screens.installed_plugins import InstalledPluginsScreen
-from agent_zero_cli.screens.model_runtime import ModelRuntimeResult
-from agent_zero_cli.widgets import computer_use_banner as computer_use_banner_mod
-from agent_zero_cli.widgets.command_palette import is_raw_skill_command, is_raw_slash_command
-from agent_zero_cli.widgets.chat_log import ChatLog, SelectableStatic, TranscriptEntry
-from agent_zero_cli.widgets.image_entry import ImageEntry
-from agent_zero_cli.widgets import (
+from agentic_job_cli.app import AgentZeroCLI
+from agentic_job_cli.attachments import AttachmentRef, AttachmentUpload
+from agentic_job_cli.client import DEFAULT_HOST
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.instance_discovery import DiscoveredInstance, DiscoveryResult
+from agentic_job_cli.media_refs import ImageReference
+from agentic_job_cli.image_store import ImageAsset
+from agentic_job_cli.rendering import extract_detail, format_duration, render_connector_event
+from agentic_job_cli.remote_files import RemoteTreeSnapshot
+from agentic_job_cli.screens.installed_plugins import InstalledPluginsScreen
+from agentic_job_cli.screens.model_runtime import ModelRuntimeResult
+from agentic_job_cli.widgets import computer_use_banner as computer_use_banner_mod
+from agentic_job_cli.widgets.command_palette import is_raw_skill_command, is_raw_slash_command
+from agentic_job_cli.widgets.chat_log import ChatLog, SelectableStatic, TranscriptEntry
+from agentic_job_cli.widgets.image_entry import ImageEntry
+from agentic_job_cli.widgets import (
     ChatInput,
     ComputerUseBanner,
     ConnectionStatus,
@@ -298,13 +298,13 @@ class FakeComputerUseBanner:
             self.message = "Computer Use is checking host permissions."
         elif status == "Approval Required":
             self.message = (
-                "Computer Use is enabled. Ask Agent Zero to perform the desktop task; "
+                "Computer Use is enabled. Ask Agentic Job to perform the desktop task; "
                 "the system permission portal will appear."
             )
         elif status == "Rearm Required":
-            self.message = "Computer use needs re-arming before Agent Zero can control your computer again."
+            self.message = "Computer use needs re-arming before Agentic Job can control your computer again."
         else:
-            self.message = "Agent Zero CLI can control your computer in this session."
+            self.message = "Agentic Job CLI can control your computer in this session."
         self.display = True
 
 
@@ -438,7 +438,7 @@ class FakeComputerUseManager:
             "status": self.status_label,
             "last_error": self.status_detail,
             "restore_token_present": False,
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         }
         if self.backend_id:
             metadata["backend_id"] = self.backend_id
@@ -678,12 +678,12 @@ def dummy_app(monkeypatch: pytest.MonkeyPatch) -> DummyAgentZeroCLI:
     app._test_widgets = widgets  # type: ignore[attr-defined]
     app._computer_use.set_status_callback(lambda label, detail: app._apply_computer_use_status(label, detail))
     monkeypatch.setattr(
-        "agent_zero_cli.app.render_connector_event",
+        "agentic_job_cli.app.render_connector_event",
         lambda log, event: app.rendered_events.append(event) or True,
         raising=False,
     )
     monkeypatch.setattr(
-        "agent_zero_cli.event_handlers.render_connector_event",
+        "agentic_job_cli.event_handlers.render_connector_event",
         lambda log, event: app.rendered_events.append(event) or True,
     )
     return app
@@ -826,7 +826,7 @@ async def test_profile_menu_keeps_create_available_when_default_is_the_only_prof
         await app._open_profile_menu()
 
     assert (item.action, item.profile_key) == ("create", "")
-    assert notices == [("No agent profiles are available from Agent Zero Core.", True)]
+    assert notices == [("No agent profiles are available from Agentic Job Core.", True)]
 
 
 def test_project_menu_item_click_stops_event_and_posts_selection() -> None:
@@ -1082,7 +1082,7 @@ async def test_cli_update_check_surfaces_available_release(
         )
 
     monkeypatch.setattr(
-        "agent_zero_cli.app.self_update.check_for_update",
+        "agentic_job_cli.app.self_update.check_for_update",
         fake_check_for_update,
     )
     monkeypatch.setattr(
@@ -1099,15 +1099,15 @@ async def test_cli_update_check_surfaces_available_release(
     await dummy_app._check_for_cli_update()
 
     message = (
-        f"a0 CLI update available: 99.0 (installed {__version__}). "
-        "Run `a0 update` after exiting to upgrade."
+        f"aj CLI update available: 99.0 (installed {__version__}). "
+        "Run `aj update` after exiting to upgrade."
     )
     assert notices == [(message, False)]
     assert notifications == [
         (
             message,
             {
-                "title": "a0 CLI update available",
+                "title": "aj CLI update available",
                 "severity": "information",
                 "timeout": 12,
                 "markup": False,
@@ -1124,7 +1124,7 @@ async def test_cli_update_check_stays_quiet_when_no_update(
     notifications: list[tuple[str, dict[str, object]]] = []
 
     monkeypatch.setattr(
-        "agent_zero_cli.app.self_update.check_for_update",
+        "agentic_job_cli.app.self_update.check_for_update",
         lambda current_version: None,
     )
     monkeypatch.setattr(
@@ -1150,7 +1150,7 @@ def test_connector_version_warning_flags_newer_core() -> None:
         client_version="1.12",
     )
 
-    assert "Agent Zero v1.18 is newer than a0 CLI 1.12" in message
+    assert "Agentic Job v1.18 is newer than aj CLI 1.12" in message
     assert "a0 update" in message
 
 
@@ -1367,9 +1367,9 @@ async def test_begin_connection_to_protected_instance_advances_to_login(
         del args, kwargs
 
     capabilities = {
-        "protocol": "a0-connector.v1",
+        "protocol": "aj-connector.v1",
         "websocket_namespace": "/ws",
-        "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+        "websocket_handlers": ["plugins/_aj_connector/ws_connector"],
         "auth": ["session"],
         "auth_required": True,
         "features": [],
@@ -1461,9 +1461,9 @@ async def test_begin_connection_to_protected_instance_uses_environment_credentia
         del args, kwargs
 
     capabilities = {
-        "protocol": "a0-connector.v1",
+        "protocol": "aj-connector.v1",
         "websocket_namespace": "/ws",
-        "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+        "websocket_handlers": ["plugins/_aj_connector/ws_connector"],
         "auth": ["session"],
         "auth_required": True,
         "features": [],
@@ -1474,8 +1474,8 @@ async def test_begin_connection_to_protected_instance_uses_environment_credentia
     async def fetch_capabilities() -> tuple[dict[str, object], bool, str]:
         return capabilities, False, ""
 
-    monkeypatch.setenv("A0_USERNAME", " neo ")
-    monkeypatch.setenv("A0_PASSWORD", "trinity")
+    monkeypatch.setenv("AJ_USERNAME", " neo ")
+    monkeypatch.setenv("AJ_PASSWORD", "trinity")
     monkeypatch.setattr(dummy_app, "_fetch_capabilities", fetch_capabilities)
     monkeypatch.setattr(dummy_app, "_stop_remote_tree_publisher", lambda: None)
     monkeypatch.setattr(dummy_app, "_stop_token_refresh", lambda: None)
@@ -1565,9 +1565,9 @@ async def test_begin_connection_to_protected_instance_reuses_remembered_session(
         del args, kwargs
 
     capabilities = {
-        "protocol": "a0-connector.v1",
+        "protocol": "aj-connector.v1",
         "websocket_namespace": "/ws",
-        "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+        "websocket_handlers": ["plugins/_aj_connector/ws_connector"],
         "auth": ["session"],
         "auth_required": True,
         "features": [],
@@ -1665,9 +1665,9 @@ def test_live_browser_screenshot_attaches_to_status_sequence(
                     "_tool_name": "browser",
                     "action": "screenshot",
                     "browser_id": 1,
-                    "Screenshot": "img:///a0/tmp/history.jpg&t=1",
+                    "Screenshot": "img:///aj/tmp/history.jpg&t=1",
                     "browser_snapshot": {
-                        "a0_path": "/a0/tmp/history.jpg",
+                        "aj_path": "/aj/tmp/history.jpg",
                         "browser_id": 1,
                     },
                 }
@@ -1698,7 +1698,7 @@ def test_snapshot_attaches_user_and_assistant_history_images(
                     "context_id": "ctx-1",
                     "sequence": 3,
                     "event": "assistant_message",
-                    "data": {"text": "![result](img:///a0/usr/result.png)"},
+                    "data": {"text": "![result](img:///aj/usr/result.png)"},
                 },
             ],
         }
@@ -1732,7 +1732,7 @@ class _TestImageRenderer:
     max_surface_pixels = (192, 64)
 
     def fit_box(self, *_args: object, **_kwargs: object):
-        from agent_zero_cli.image_render import CellBox
+        from agentic_job_cli.image_render import CellBox
 
         return CellBox(20, 10)
 
@@ -1801,7 +1801,7 @@ async def test_image_load_result_is_ignored_after_context_switch() -> None:
             owner="browser",
             caption="Browser screenshot",
             source="agent_zero_path",
-            value="/a0/tmp/history.png",
+            value="/aj/tmp/history.png",
         )
         log.append_or_update_images(8, (reference,))
         await pilot.pause()
@@ -1854,7 +1854,7 @@ async def test_queued_image_load_is_rejected_after_clear_before_store_load(
             owner="browser",
             caption="Browser screenshot",
             source="agent_zero_path",
-            value="/a0/tmp/history.png",
+            value="/aj/tmp/history.png",
         )
         log.append_or_update_images(8, (reference,))
         await pilot.pause()
@@ -1905,7 +1905,7 @@ async def test_current_image_load_starts_store_request(
             owner="browser",
             caption="Browser screenshot",
             source="agent_zero_path",
-            value="/a0/tmp/current.png",
+            value="/aj/tmp/current.png",
         )
         log.append_or_update_images(9, (reference,))
         await pilot.pause()
@@ -1974,7 +1974,7 @@ async def test_queued_image_load_is_rejected_during_disconnect_before_reset(
             owner="browser",
             caption="Browser screenshot",
             source="agent_zero_path",
-            value="/a0/tmp/current.png",
+            value="/aj/tmp/current.png",
         )
         log.append_or_update_images(10, (reference,))
         await pilot.pause()
@@ -2065,9 +2065,9 @@ def test_extract_detail_strips_icon_markers_from_status_and_tool_headings() -> N
     assert (
         extract_detail(
             "tool_start",
-            {"heading": "icon://construction A0: Using tool 'browser'"},
+            {"heading": "icon://construction AJ: Using tool 'browser'"},
         )
-        == "A0: Using tool 'browser'"
+        == "AJ: Using tool 'browser'"
     )
 
 
@@ -2238,13 +2238,13 @@ async def test_composer_bars_stack_without_gaps() -> None:
 def test_chat_input_activity_placeholder_renders_detail_literally() -> None:
     input_widget = ChatInput()
 
-    input_widget.set_activity("Using tool", "[/a0/tests/test_a0_connector_prompt_gating.py]")
+    input_widget.set_activity("Using tool", "[/aj/tests/test_aj_connector_prompt_gating.py]")
 
     # [ in the detail is escaped to \[ so Rich/Textual never interprets it as a
     # markup tag; the outer \[ wrapper similarly avoids [/...] being read as a
     # closing tag (issue #13).
     assert input_widget.placeholder == (
-        "|>  Using tool \\[\\[/a0/tests/test_a0_connector_prompt_gating.py]]"
+        "|>  Using tool \\[\\[/aj/tests/test_aj_connector_prompt_gating.py]]"
     )
     assert "[dim]" not in input_widget.placeholder
 
@@ -2253,10 +2253,10 @@ def test_chat_input_activity_placeholder_bare_path_is_markup_safe() -> None:
     """Bare paths in the detail (no brackets) must not produce a [/...] closing tag."""
     input_widget = ChatInput()
 
-    input_widget.set_activity("Running code", "/a0/usr/workdir/process_aws_health_event")
+    input_widget.set_activity("Running code", "/aj/usr/workdir/process_aws_health_event")
 
     assert input_widget.placeholder == (
-        "|>  Running code \\[/a0/usr/workdir/process_aws_health_event]"
+        "|>  Running code \\[/aj/usr/workdir/process_aws_health_event]"
     )
 
 
@@ -2346,7 +2346,7 @@ def test_context_event_missing_chat_log_is_ignored(
             "context_id": "ctx-1",
             "event": "info",
             "sequence": 11,
-            "data": {"text": "[/a0/tests/test_a0_connector_prompt_gating.py]"},
+            "data": {"text": "[/aj/tests/test_aj_connector_prompt_gating.py]"},
         }
     )
 
@@ -2360,7 +2360,7 @@ def test_remember_context_updates_config_and_persists(
     saved: list[tuple[str, str]] = []
 
     monkeypatch.setattr(
-        "agent_zero_cli.app.save_last_context",
+        "agentic_job_cli.app.save_last_context",
         lambda host, context_id: saved.append((host, context_id)),
     )
 
@@ -3027,7 +3027,7 @@ async def test_attachment_only_submission_sends_attachment_refs(
     monkeypatch.setattr(dummy_app.client, "send_message", fake_send_message)
     input_widget = dummy_app._test_widgets["#message-input"]  # type: ignore[index]
     attachment = AttachmentRef(
-        path="/a0/usr/uploads/clipboard.png",
+        path="/aj/usr/uploads/clipboard.png",
         name="clipboard.png",
         mime_type="image/png",
     )
@@ -3036,7 +3036,7 @@ async def test_attachment_only_submission_sends_attachment_refs(
         ChatInput.Submitted(value="", input=input_widget, attachments=[attachment])
     )
 
-    assert calls == [("", "ctx-1", ["/a0/usr/uploads/clipboard.png"])]
+    assert calls == [("", "ctx-1", ["/aj/usr/uploads/clipboard.png"])]
     assert dummy_app.current_context_has_messages is True
 
 
@@ -3134,13 +3134,13 @@ async def test_attach_clipboard_image_adds_pending_attachment(
         mime_type="image/png",
     )
     attachment = AttachmentRef(
-        path="/a0/usr/uploads/clipboard.png",
+        path="/aj/usr/uploads/clipboard.png",
         name="clipboard.png",
         mime_type="image/png",
     )
 
     monkeypatch.setattr(
-        "agent_zero_cli.app.create_clipboard_image_upload",
+        "agentic_job_cli.app.create_clipboard_image_upload",
         lambda: upload,
     )
 
@@ -3173,8 +3173,8 @@ async def test_attach_command_uploads_local_image_paths(
     requested_paths: list[str] = []
     upload_a = AttachmentUpload("first.png", b"first", "image/png")
     upload_b = AttachmentUpload("second.webp", b"second", "image/webp")
-    ref_a = AttachmentRef("/a0/usr/uploads/first.png", "first.png", "image/png")
-    ref_b = AttachmentRef("/a0/usr/uploads/second.webp", "second.webp", "image/webp")
+    ref_a = AttachmentRef("/aj/usr/uploads/first.png", "first.png", "image/png")
+    ref_b = AttachmentRef("/aj/usr/uploads/second.webp", "second.webp", "image/webp")
 
     def fake_create_image_file_upload(path: str) -> AttachmentUpload:
         requested_paths.append(path)
@@ -3185,7 +3185,7 @@ async def test_attach_command_uploads_local_image_paths(
         return [ref_a, ref_b]
 
     monkeypatch.setattr(
-        "agent_zero_cli.chat_commands.create_image_file_upload",
+        "agentic_job_cli.chat_commands.create_image_file_upload",
         fake_create_image_file_upload,
     )
     monkeypatch.setattr(dummy_app.client, "upload_attachments", fake_upload_attachments)
@@ -3604,8 +3604,8 @@ async def test_skill_command_activates_exact_skill(
     skills = [
         {
             "name": "a0-live-e2e-tester",
-            "description": "Live Agent Zero tester",
-            "path": "/a0/skills/a0-live-e2e-tester",
+            "description": "Live Agentic Job tester",
+            "path": "/aj/skills/a0-live-e2e-tester",
             "origin": "Built-in",
         }
     ]
@@ -3632,7 +3632,7 @@ async def test_skill_command_activates_exact_skill(
             "ctx-1",
             {
                 "name": "a0-live-e2e-tester",
-                "path": "/a0/skills/a0-live-e2e-tester",
+                "path": "/aj/skills/a0-live-e2e-tester",
             },
         )
     ]
@@ -3646,7 +3646,7 @@ async def test_skill_command_with_remainder_sends_message_after_activation(
     dummy_app.connected = True
     dummy_app.current_context = "ctx-1"
     dummy_app.connector_features = {"skills_list", "skills_activate"}
-    skills = [{"name": "imagegen", "path": "/a0/skills/imagegen"}]
+    skills = [{"name": "imagegen", "path": "/aj/skills/imagegen"}]
     sent: list[tuple[str, str | None, list[str] | None]] = []
 
     async def fake_list_skills(**kwargs) -> list[dict[str, object]]:
@@ -3769,7 +3769,7 @@ async def test_settings_snapshot_rehydrates_workspace_without_duplicate_refresh(
     payload = {
         "settings": {
             "agent_profile": "developer",
-            "workdir_path": "/a0/workspaces/research",
+            "workdir_path": "/aj/workspaces/research",
         },
         "additional": {
             "agent_subdirs": [{"value": "developer", "label": "Developer"}],
@@ -3793,7 +3793,7 @@ async def test_settings_snapshot_rehydrates_workspace_without_duplicate_refresh(
 
     assert changed is True
     assert unchanged is False
-    assert dummy_app._remote_workspace == "/a0/workspaces/research"
+    assert dummy_app._remote_workspace == "/aj/workspaces/research"
     assert token_refreshes == 0
 
 
@@ -4511,7 +4511,7 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
                 "status": "active",
                 "last_error": "",
                 "restore_token_present": False,
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+                "artifact_root": "/aj/tmp/_aj_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
@@ -4532,7 +4532,7 @@ async def test_computer_use_slash_commands_refresh_hello_metadata_when_connected
                 "status": "disabled",
                 "last_error": "",
                 "restore_token_present": False,
-                "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+                "artifact_root": "/aj/tmp/_aj_connector/computer_use",
             },
             "host_browser": _host_browser_metadata(False),
             "remote_files": {
@@ -4740,7 +4740,7 @@ async def test_browser_direct_command_sets_host_browser_selection(
         "Browser host target set to Chrome (allowed) - localhost:9222 for project Research." in notice[0]
         for notice in notices
     )
-    assert "Browser host target set to Automatic (A0 CLI chooses) for project Research." in notices[-1][0]
+    assert "Browser host target set to Automatic (AJ CLI chooses) for project Research." in notices[-1][0]
 
 
 def test_system_commands_include_computer_use_without_experimental_menu(
@@ -5055,7 +5055,7 @@ def test_computer_use_banner_explains_deferred_permission_for_prompt_backends() 
     )
 
     assert message == (
-        "Computer Use is enabled. Ask Agent Zero to perform the desktop task; "
+        "Computer Use is enabled. Ask Agentic Job to perform the desktop task; "
         "the system permission portal will appear."
     )
 
@@ -5098,7 +5098,7 @@ async def test_remote_safety_toggles_refresh_hello_metadata_when_connected(
         "status": "disabled",
         "last_error": "",
         "restore_token_present": False,
-        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        "artifact_root": "/aj/tmp/_aj_connector/computer_use",
     }
     assert calls == [
         {
@@ -5185,7 +5185,7 @@ async def test_computer_use_status_transition_refreshes_hello_metadata_when_conn
         "status": "active",
         "last_error": "",
         "restore_token_present": False,
-        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        "artifact_root": "/aj/tmp/_aj_connector/computer_use",
     }
 
 
@@ -5241,7 +5241,7 @@ async def test_computer_use_start_session_op_refreshes_active_metadata(
         "status": "active",
         "last_error": "",
         "restore_token_present": False,
-        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        "artifact_root": "/aj/tmp/_aj_connector/computer_use",
     }
 
 
@@ -5268,7 +5268,7 @@ async def test_remote_exec_toggle_warns_when_metadata_refresh_fails(
     assert dummy_app._python_tty.enabled is True
     assert notices == [
         (
-            "Remote execution changed locally, but Agent Zero did not acknowledge "
+            "Remote execution changed locally, but Agentic Job did not acknowledge "
             "the update: socket call failed",
             True,
         )
@@ -5357,7 +5357,7 @@ def test_sync_computer_use_status_keeps_portal_prompt_copy_for_non_windows(
     banner = dummy_app._test_widgets["#computer-use-banner"]  # type: ignore[index]
     assert banner.display is True
     assert banner.message == (
-        "Computer Use is enabled. Ask Agent Zero to perform the desktop task; "
+        "Computer Use is enabled. Ask Agentic Job to perform the desktop task; "
         "the system permission portal will appear."
     )
 
@@ -5434,7 +5434,7 @@ async def test_recover_websocket_preserves_active_context(
         nonlocal starts
         starts += 1
 
-    monkeypatch.setattr("agent_zero_cli.connection._RECOVERY_DELAYS_SECONDS", (0.0,))
+    monkeypatch.setattr("agentic_job_cli.connection._RECOVERY_DELAYS_SECONDS", (0.0,))
     monkeypatch.setattr(dummy_app, "_stop_remote_tree_publisher", fake_stop_remote_tree_publisher)
     monkeypatch.setattr(dummy_app, "_start_remote_tree_publisher", fake_start_remote_tree_publisher)
     monkeypatch.setattr(dummy_app, "_publish_remote_tree_snapshot", fake_publish_remote_tree_snapshot)
@@ -5487,11 +5487,11 @@ def test_copy_to_clipboard_mirrors_to_native_windows_clipboard(
         lambda self, text: copied.append(text),
     )
     monkeypatch.setattr(
-        "agent_zero_cli.app.should_use_native_windows_clipboard",
+        "agentic_job_cli.app.should_use_native_windows_clipboard",
         lambda: True,
     )
     monkeypatch.setattr(
-        "agent_zero_cli.app.copy_text_to_windows_clipboard",
+        "agentic_job_cli.app.copy_text_to_windows_clipboard",
         lambda text: mirrored.append(text) or True,
     )
 
@@ -5513,11 +5513,11 @@ def test_copy_to_clipboard_skips_native_mirror_outside_windows(
         lambda self, text: copied.append(text),
     )
     monkeypatch.setattr(
-        "agent_zero_cli.app.should_use_native_windows_clipboard",
+        "agentic_job_cli.app.should_use_native_windows_clipboard",
         lambda: False,
     )
     monkeypatch.setattr(
-        "agent_zero_cli.app.copy_text_to_windows_clipboard",
+        "agentic_job_cli.app.copy_text_to_windows_clipboard",
         lambda text: mirrored.append(text) or True,
     )
 
@@ -5708,7 +5708,7 @@ async def test_chat_log_copyable_text_prefers_visible_children() -> None:
 
 async def test_chat_log_nested_plain_strings_render_brackets_literally() -> None:
     app = TranscriptSelectionApp()
-    path_like_text = "[/a0/tests/test_a0_connector_prompt_gating.py]"
+    path_like_text = "[/aj/tests/test_aj_connector_prompt_gating.py]"
 
     async with app.run_test() as pilot:
         log = app.query_one("#chat-log", ChatLog)
@@ -5725,7 +5725,7 @@ async def test_chat_log_nested_plain_strings_render_brackets_literally() -> None
 
 async def test_connector_events_render_markup_sensitive_text_literally() -> None:
     app = TranscriptSelectionApp()
-    path_like_text = "[/a0/tests/test_a0_connector_prompt_gating.py]"
+    path_like_text = "[/aj/tests/test_aj_connector_prompt_gating.py]"
     events = [
         ("user_message", {"text": path_like_text}),
         ("warning", {"heading": "Warning", "text": path_like_text}),
@@ -5773,7 +5773,7 @@ async def test_connector_code_event_renders_compact_details() -> None:
                 "data": {
                     "heading": "icon://terminal [0] sed -n",
                     "text": '<div align="center">',
-                    "meta": {"code": "sed -n '1,2p' /a0/README.md"},
+                    "meta": {"code": "sed -n '1,2p' /aj/README.md"},
                 },
             },
         )
@@ -5785,7 +5785,7 @@ async def test_connector_code_event_renders_compact_details() -> None:
         transcript = widget.render().plain
 
     assert "Running code" in transcript
-    assert "sed -n '1,2p' /a0/README.md" in transcript
+    assert "sed -n '1,2p' /aj/README.md" in transcript
     assert '<div align="center">' in transcript
     assert len(transcript.splitlines()) <= 5
 

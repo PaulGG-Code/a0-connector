@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.image_render import CellBox
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.image_render import CellBox
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -34,7 +34,7 @@ def test_snapshot_uses_current_cli_config_shape() -> None:
 def test_preview_launcher_forces_halfcell(monkeypatch: pytest.MonkeyPatch) -> None:
     preview = _load_module("preview_launcher_images", "devtools/preview_launcher.py")
     called: list[tuple[str, list[str]]] = []
-    monkeypatch.setenv("A0_CLI_IMAGE_MODE", "auto")
+    monkeypatch.setenv("AJ_CLI_IMAGE_MODE", "auto")
     monkeypatch.setattr(
         preview.os,
         "execv",
@@ -43,8 +43,8 @@ def test_preview_launcher_forces_halfcell(monkeypatch: pytest.MonkeyPatch) -> No
 
     preview.main()
 
-    assert preview.os.environ["A0_CLI_IMAGE_MODE"] == "halfcell"
-    assert called[0][1][-2:] == ["-m", "agent_zero_cli"]
+    assert preview.os.environ["AJ_CLI_IMAGE_MODE"] == "halfcell"
+    assert called[0][1][-2:] == ["-m", "agentic_job_cli"]
 
 
 def test_snapshot_uses_forced_halfcell_renderer(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -52,7 +52,7 @@ def test_snapshot_uses_forced_halfcell_renderer(monkeypatch: pytest.MonkeyPatch)
     from textual_image.widget import HalfcellImage
 
     snapshot = _load_module("snapshot_images", "devtools/snapshot.py")
-    monkeypatch.setenv("A0_CLI_IMAGE_MODE", "off")
+    monkeypatch.setenv("AJ_CLI_IMAGE_MODE", "off")
 
     renderer = snapshot._snapshot_renderer()
     widget = renderer.create_widget(

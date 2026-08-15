@@ -1,16 +1,16 @@
 $ErrorActionPreference = "Stop"
 
-$LatestReleaseApiUrl = if ($env:A0_LATEST_RELEASE_API_URL) { $env:A0_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/PaulGG-Code/a0-connector/releases/latest" }
-$PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.12" }
+$LatestReleaseApiUrl = if ($env:AJ_LATEST_RELEASE_API_URL) { $env:AJ_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/PaulGG-Code/aj-connector/releases/latest" }
+$PythonSpec = if ($env:AJ_PYTHON_SPEC) { $env:AJ_PYTHON_SPEC } else { "3.12" }
 $UvInstallUrl = if ($env:UV_INSTALL_URL) { $env:UV_INSTALL_URL } else { "https://astral.sh/uv/install.ps1" }
-$RuntimeConstraintsPath = "constraints/a0-runtime.txt"
-$BuildConstraintsPath = "constraints/a0-build.txt"
-$ReleaseRawFileUrlBase = "https://raw.githubusercontent.com/PaulGG-Code/a0-connector/refs/tags"
+$RuntimeConstraintsPath = "constraints/aj-runtime.txt"
+$BuildConstraintsPath = "constraints/aj-build.txt"
+$ReleaseRawFileUrlBase = "https://raw.githubusercontent.com/PaulGG-Code/aj-connector/refs/tags"
 
 function Resolve-PackageSpec {
-    if ($env:A0_PACKAGE_SPEC) {
+    if ($env:AJ_PACKAGE_SPEC) {
         return @{
-            PackageSpec = $env:A0_PACKAGE_SPEC
+            PackageSpec = $env:AJ_PACKAGE_SPEC
             ReleaseTag = $null
         }
     }
@@ -18,21 +18,21 @@ function Resolve-PackageSpec {
     try {
         $headers = @{
             Accept = "application/vnd.github+json"
-            "User-Agent" = "a0-cli-installer"
+            "User-Agent" = "aj-cli-installer"
         }
         $release = Invoke-RestMethod -Uri $LatestReleaseApiUrl -Headers $headers
     } catch {
-        throw "Could not resolve the latest a0 release from GitHub. Set A0_PACKAGE_SPEC to install from a specific package source. $($_.Exception.Message)"
+        throw "Could not resolve the latest aj release from GitHub. Set AJ_PACKAGE_SPEC to install from a specific package source. $($_.Exception.Message)"
     }
 
     $tag = [string]$release.tag_name
     if (-not $tag.Trim()) {
-        throw "GitHub latest-release response did not include tag_name. Set A0_PACKAGE_SPEC to install from a specific package source."
+        throw "GitHub latest-release response did not include tag_name. Set AJ_PACKAGE_SPEC to install from a specific package source."
     }
 
     $escapedTag = [uri]::EscapeDataString($tag.Trim())
     return @{
-        PackageSpec = "a0 @ https://github.com/PaulGG-Code/a0-connector/archive/refs/tags/$escapedTag.zip"
+        PackageSpec = "aj @ https://github.com/PaulGG-Code/aj-connector/archive/refs/tags/$escapedTag.zip"
         ReleaseTag = $tag.Trim()
     }
 }
@@ -47,10 +47,10 @@ function Test-Enabled([string]$Value) {
 }
 
 function Resolve-ConstraintSpecs($Target) {
-    if ($env:A0_RUNTIME_CONSTRAINTS -and $env:A0_BUILD_CONSTRAINTS) {
+    if ($env:AJ_RUNTIME_CONSTRAINTS -and $env:AJ_BUILD_CONSTRAINTS) {
         return @{
-            Runtime = $env:A0_RUNTIME_CONSTRAINTS
-            Build = $env:A0_BUILD_CONSTRAINTS
+            Runtime = $env:AJ_RUNTIME_CONSTRAINTS
+            Build = $env:AJ_BUILD_CONSTRAINTS
         }
     }
 
@@ -61,14 +61,14 @@ function Resolve-ConstraintSpecs($Target) {
         }
     }
 
-    if (Test-Enabled "$env:A0_ALLOW_UNPINNED_UPDATE") {
+    if (Test-Enabled "$env:AJ_ALLOW_UNPINNED_UPDATE") {
         return @{
             Runtime = $null
             Build = $null
         }
     }
 
-    throw "A0_PACKAGE_SPEC requires A0_RUNTIME_CONSTRAINTS and A0_BUILD_CONSTRAINTS. Set A0_ALLOW_UNPINNED_UPDATE=1 only for intentional development installs."
+    throw "AJ_PACKAGE_SPEC requires AJ_RUNTIME_CONSTRAINTS and AJ_BUILD_CONSTRAINTS. Set AJ_ALLOW_UNPINNED_UPDATE=1 only for intentional development installs."
 }
 
 function Resolve-ConstraintFile([string]$Spec, [string]$Name, [string]$TempDir) {
@@ -173,7 +173,7 @@ function Assert-NoRunningA0ToolProcesses([string]$ToolDir) {
     $summary = ($running | ForEach-Object {
         "$($_.Name) pid=$($_.ProcessId)"
     }) -join ", "
-    throw "A0 CLI is still running from $toolRoot ($summary). Close all A0 CLI terminal windows, then rerun this installer."
+    throw "AJ CLI is still running from $toolRoot ($summary). Close all AJ CLI terminal windows, then rerun this installer."
 }
 
 Ensure-Uv
@@ -190,17 +190,17 @@ try {
 } catch {
 }
 
-$toolDir = Join-Path ((& uv tool dir).Trim()) "a0"
+$toolDir = Join-Path ((& uv tool dir).Trim()) "aj"
 Assert-NoRunningA0ToolProcesses $toolDir
 
-$lockTempDir = Join-Path ([IO.Path]::GetTempPath()) ("a0-install-locks-" + [guid]::NewGuid().ToString("N"))
+$lockTempDir = Join-Path ([IO.Path]::GetTempPath()) ("aj-install-locks-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $lockTempDir | Out-Null
 try {
     $constraintSpecs = Resolve-ConstraintSpecs $Target
-    $runtimeConstraints = Resolve-ConstraintFile $constraintSpecs.Runtime "a0-runtime.txt" $lockTempDir
-    $buildConstraints = Resolve-ConstraintFile $constraintSpecs.Build "a0-build.txt" $lockTempDir
+    $runtimeConstraints = Resolve-ConstraintFile $constraintSpecs.Runtime "aj-runtime.txt" $lockTempDir
+    $buildConstraints = Resolve-ConstraintFile $constraintSpecs.Build "aj-build.txt" $lockTempDir
 
-    $installArgs = @("tool", "install", "--force", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "a0")
+    $installArgs = @("tool", "install", "--force", "--python", $PythonSpec, "--managed-python", "--upgrade-package", "aj")
     if ($runtimeConstraints) {
         $installArgs += @("--constraints", $runtimeConstraints)
     }
@@ -212,7 +212,7 @@ try {
         }
     }
     if (-not $runtimeConstraints -or -not $buildConstraints) {
-        Write-Warning "Installing a0 without dependency locks."
+        Write-Warning "Installing aj without dependency locks."
     }
     $installArgs += $Target.PackageSpec
 
@@ -225,16 +225,16 @@ try {
 }
 
 Write-Host ""
-Write-Host "a0 is installed."
+Write-Host "aj is installed."
 Write-Host ""
 Write-Host "Run:"
-Write-Host "  a0"
+Write-Host "  aj"
 Write-Host ""
 Write-Host "Managed Python:"
 Write-Host "  $PythonSpec"
 Write-Host ""
 if ($toolBin) {
-    Write-Host "If 'a0' is not available in your current shell yet, open a new terminal."
+    Write-Host "If 'aj' is not available in your current shell yet, open a new terminal."
     Write-Host "uv installs tool executables in:"
     Write-Host "  $toolBin"
 }

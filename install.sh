@@ -2,12 +2,12 @@
 
 set -eu
 
-LATEST_RELEASE_API_URL="${A0_LATEST_RELEASE_API_URL:-https://api.github.com/repos/PaulGG-Code/a0-connector/releases/latest}"
-PYTHON_SPEC="${A0_PYTHON_SPEC:-3.12}"
+LATEST_RELEASE_API_URL="${AJ_LATEST_RELEASE_API_URL:-https://api.github.com/repos/PaulGG-Code/aj-connector/releases/latest}"
+PYTHON_SPEC="${AJ_PYTHON_SPEC:-3.12}"
 UV_INSTALL_URL="${UV_INSTALL_URL:-https://astral.sh/uv/install.sh}"
-RUNTIME_CONSTRAINTS_PATH="constraints/a0-runtime.txt"
-BUILD_CONSTRAINTS_PATH="constraints/a0-build.txt"
-RELEASE_RAW_FILE_URL_BASE="https://raw.githubusercontent.com/PaulGG-Code/a0-connector/refs/tags"
+RUNTIME_CONSTRAINTS_PATH="constraints/aj-runtime.txt"
+BUILD_CONSTRAINTS_PATH="constraints/aj-build.txt"
+RELEASE_RAW_FILE_URL_BASE="https://raw.githubusercontent.com/PaulGG-Code/aj-connector/refs/tags"
 
 have_cmd() {
     command -v "$1" >/dev/null 2>&1
@@ -17,21 +17,21 @@ fetch_latest_release_tag() {
     if have_cmd curl; then
         response="$(curl -fsSL \
             -H "Accept: application/vnd.github+json" \
-            -H "User-Agent: a0-cli-installer" \
+            -H "User-Agent: aj-cli-installer" \
             "$LATEST_RELEASE_API_URL")" || {
-            echo "Could not resolve the latest a0 release from GitHub." >&2
+            echo "Could not resolve the latest aj release from GitHub." >&2
             exit 1
         }
     elif have_cmd wget; then
         response="$(wget -qO- \
             --header="Accept: application/vnd.github+json" \
-            --header="User-Agent: a0-cli-installer" \
+            --header="User-Agent: aj-cli-installer" \
             "$LATEST_RELEASE_API_URL")" || {
-            echo "Could not resolve the latest a0 release from GitHub." >&2
+            echo "Could not resolve the latest aj release from GitHub." >&2
             exit 1
         }
     else
-        echo "curl or wget is required to resolve the latest a0 release." >&2
+        echo "curl or wget is required to resolve the latest aj release." >&2
         exit 1
     fi
 
@@ -95,36 +95,36 @@ prepare_constraint() {
 }
 
 resolve_release_target() {
-    if [ -n "${A0_PACKAGE_SPEC:-}" ]; then
-        PACKAGE_SPEC="$A0_PACKAGE_SPEC"
+    if [ -n "${AJ_PACKAGE_SPEC:-}" ]; then
+        PACKAGE_SPEC="$AJ_PACKAGE_SPEC"
         RELEASE_TAG=""
         return
     fi
 
     RELEASE_TAG="$(fetch_latest_release_tag)"
-    PACKAGE_SPEC="a0 @ https://github.com/PaulGG-Code/a0-connector/archive/refs/tags/$RELEASE_TAG.zip"
+    PACKAGE_SPEC="aj @ https://github.com/PaulGG-Code/aj-connector/archive/refs/tags/$RELEASE_TAG.zip"
 }
 
 resolve_constraints() {
-    if [ -n "${A0_RUNTIME_CONSTRAINTS:-}" ] && [ -n "${A0_BUILD_CONSTRAINTS:-}" ]; then
-        runtime_spec="$A0_RUNTIME_CONSTRAINTS"
-        build_spec="$A0_BUILD_CONSTRAINTS"
+    if [ -n "${AJ_RUNTIME_CONSTRAINTS:-}" ] && [ -n "${AJ_BUILD_CONSTRAINTS:-}" ]; then
+        runtime_spec="$AJ_RUNTIME_CONSTRAINTS"
+        build_spec="$AJ_BUILD_CONSTRAINTS"
     elif [ -n "$RELEASE_TAG" ]; then
         runtime_spec="$(release_file_url "$RELEASE_TAG" "$RUNTIME_CONSTRAINTS_PATH")"
         build_spec="$(release_file_url "$RELEASE_TAG" "$BUILD_CONSTRAINTS_PATH")"
-    elif is_enabled "${A0_ALLOW_UNPINNED_UPDATE:-}"; then
+    elif is_enabled "${AJ_ALLOW_UNPINNED_UPDATE:-}"; then
         runtime_spec=""
         build_spec=""
     else
         cat >&2 <<'EOF'
-A0_PACKAGE_SPEC requires A0_RUNTIME_CONSTRAINTS and A0_BUILD_CONSTRAINTS.
-Set A0_ALLOW_UNPINNED_UPDATE=1 only for intentional development installs.
+AJ_PACKAGE_SPEC requires AJ_RUNTIME_CONSTRAINTS and AJ_BUILD_CONSTRAINTS.
+Set AJ_ALLOW_UNPINNED_UPDATE=1 only for intentional development installs.
 EOF
         exit 1
     fi
 
-    RUNTIME_CONSTRAINTS="$(prepare_constraint "$runtime_spec" "a0-runtime.txt")"
-    BUILD_CONSTRAINTS="$(prepare_constraint "$build_spec" "a0-build.txt")"
+    RUNTIME_CONSTRAINTS="$(prepare_constraint "$runtime_spec" "aj-runtime.txt")"
+    BUILD_CONSTRAINTS="$(prepare_constraint "$build_spec" "aj-build.txt")"
 }
 
 ensure_uv() {
@@ -167,7 +167,7 @@ EOF
 
 main() {
     ensure_uv
-    LOCK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/a0-install-locks.XXXXXX")"
+    LOCK_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/aj-install-locks.XXXXXX")"
     trap 'rm -rf "$LOCK_TEMP_DIR"' EXIT INT TERM
 
     PACKAGE_SPEC=""
@@ -181,7 +181,7 @@ main() {
     export PATH="$uv_bin_dir:$PATH"
 
     uv tool update-shell >/dev/null 2>&1 || true
-    set -- uv tool install --force --python "$PYTHON_SPEC" --managed-python --upgrade-package a0
+    set -- uv tool install --force --python "$PYTHON_SPEC" --managed-python --upgrade-package aj
     if [ -n "$RUNTIME_CONSTRAINTS" ]; then
         set -- "$@" --constraints "$RUNTIME_CONSTRAINTS"
     fi
@@ -189,7 +189,7 @@ main() {
         set -- "$@" --build-constraints "$BUILD_CONSTRAINTS"
     fi
     if [ -z "$RUNTIME_CONSTRAINTS" ] || [ -z "$BUILD_CONSTRAINTS" ]; then
-        echo "Warning: installing a0 without dependency locks." >&2
+        echo "Warning: installing aj without dependency locks." >&2
     fi
     "$@" "$PACKAGE_SPEC"
 
@@ -197,15 +197,15 @@ main() {
 
     cat <<EOF
 
-a0 is installed.
+aj is installed.
 
 Run:
-  a0
+  aj
 
 Managed Python:
   $PYTHON_SPEC
 
-If 'a0' is not available in your current shell yet, open a new terminal.
+If 'aj' is not available in your current shell yet, open a new terminal.
 uv installs tool executables in:
   $uv_bin_dir
 EOF

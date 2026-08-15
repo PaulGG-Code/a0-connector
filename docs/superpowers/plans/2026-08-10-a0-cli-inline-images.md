@@ -1,10 +1,10 @@
-# A0 CLI Inline Images Implementation Plan
+# AJ CLI Inline Images Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Render browser screenshots and user/assistant history images as expandable inline thumbnails in the A0 Textual transcript.
+**Goal:** Render browser screenshots and user/assistant history images as expandable inline thumbnails in the AJ Textual transcript.
 
-**Architecture:** Normalize eligible connector metadata into immutable image references, fetch and validate Agent Zero-hosted payloads through the existing authenticated client, and render a bounded cached Pillow surface through an A0-owned `textual-image` adapter. Every transcript sequence becomes a small container that preserves its existing text/status widget and owns zero or more `ImageEntry` children, allowing late browser screenshot metadata to update the same tool entry.
+**Architecture:** Normalize eligible connector metadata into immutable image references, fetch and validate Agentic Job-hosted payloads through the existing authenticated client, and render a bounded cached Pillow surface through an AJ-owned `textual-image` adapter. Every transcript sequence becomes a small container that preserves its existing text/status widget and owns zero or more `ImageEntry` children, allowing late browser screenshot metadata to update the same tool entry.
 
 **Tech Stack:** Python 3.10+, Textual 8.2.8, Rich 15, httpx 0.28, Pillow 12, `textual-image` 0.8.x/0.13.x, pytest/anyio.
 
@@ -14,10 +14,10 @@
 - Ask before installing new dependencies. If the compatibility proof fails, stop and revise the design instead of vendoring a renderer or dropping native protocol support.
 - Ask before creating implementation commits or pushing; an execution-mode choice does not authorize a push.
 - Run the applicable DOX pass after every task and include any newly true ownership/verification contract in that task's commit instead of deferring all AGENTS updates to the end.
-- `A0_CLI_IMAGE_MODE` accepts exactly `auto`, `tgp`, `sixel`, `halfcell`, or `off`; it is not persisted.
+- `AJ_CLI_IMAGE_MODE` accepts exactly `auto`, `tgp`, `sixel`, `halfcell`, or `off`; it is not persisted.
 - `auto` prefers TGP, then Sixel, then half-cell. Tests, non-TTY sessions, and `textual-serve` use half-cell.
 - Thumbnail maximum is 36 columns by 12 rows. Expanded maximum is 96 columns by 32 rows and may shrink to the transcript width. Images preserve complete aspect ratio and are never cropped.
-- Automatically fetch only authenticated Agent Zero image paths. Do not fetch arbitrary cross-origin URLs.
+- Automatically fetch only authenticated Agentic Job image paths. Do not fetch arbitrary cross-origin URLs.
 - Accept PNG, JPEG, WebP, GIF, and BMP; render the first animation frame; leave SVG as a labeled placeholder.
 - Enforce 25 MiB encoded, 32-megapixel decoded, four-concurrent-fetch/load,
   single-full-resolution-decoder, and 64 MiB memory-cache limits. Downsample
@@ -34,10 +34,10 @@
 
 ### New files
 
-- `src/agent_zero_cli/image_render.py` — terminal capability selection, cell sizing, `textual-image` version adapter, widget construction, and cleanup.
-- `src/agent_zero_cli/media_refs.py` — pure extraction and normalization of eligible event image references.
-- `src/agent_zero_cli/image_store.py` — authenticated/data-URI loading, Pillow validation, request coalescing, concurrency, cancellation, and LRU cache.
-- `src/agent_zero_cli/widgets/image_entry.py` — focusable image state machine, thumbnail/expanded interaction, resize debounce, placeholder, and protocol cleanup.
+- `src/agentic_job_cli/image_render.py` — terminal capability selection, cell sizing, `textual-image` version adapter, widget construction, and cleanup.
+- `src/agentic_job_cli/media_refs.py` — pure extraction and normalization of eligible event image references.
+- `src/agentic_job_cli/image_store.py` — authenticated/data-URI loading, Pillow validation, request coalescing, concurrency, cancellation, and LRU cache.
+- `src/agentic_job_cli/widgets/image_entry.py` — focusable image state machine, thumbnail/expanded interaction, resize debounce, placeholder, and protocol cleanup.
 - `tests/test_image_render.py` — mode selection, size fitting, compatibility import, widget factory, and cleanup tests.
 - `tests/test_media_refs.py` — browser/user/assistant/data reference extraction and rejection tests.
 - `tests/test_image_store.py` — decode, limits, retry boundary, deduplication, concurrency, LRU, and cancellation tests.
@@ -46,24 +46,24 @@
 ### Modified files
 
 - `requirements/a0-runtime.in`, `constraints/a0-runtime.txt`, `pyproject.toml` — unconditional Pillow plus conditional `textual-image` release lines; generated locks remain tool-owned.
-- `src/agent_zero_cli/__main__.py` — initialize the renderer only on the interactive TUI path before `App.run()`.
-- `src/agent_zero_cli/app.py` — own the renderer/store and service `ImageEntry.LoadRequested` messages.
-- `src/agent_zero_cli/client.py` — bounded authenticated `/api/image_get` retrieval.
-- `src/agent_zero_cli/event_handlers.py` — attach extracted images after normal event/status rendering for snapshots and live updates.
-- `src/agent_zero_cli/widgets/chat_log.py` — sequence-level `TranscriptEntry` wrapper, image upsert, nearby-entry scheduling, semantic copy, and cleanup.
-- `src/agent_zero_cli/widgets/__init__.py` — export `ImageEntry` for application message handling.
-- `src/agent_zero_cli/styles/app.tcss` — transcript container, caption, focus, placeholder, and surface layout.
-- `src/agent_zero_cli/chat_commands.py`, `src/agent_zero_cli/connection.py` — cancel or clear image work at clear/context/host/disconnect/exit boundaries.
+- `src/agentic_job_cli/__main__.py` — initialize the renderer only on the interactive TUI path before `App.run()`.
+- `src/agentic_job_cli/app.py` — own the renderer/store and service `ImageEntry.LoadRequested` messages.
+- `src/agentic_job_cli/client.py` — bounded authenticated `/api/image_get` retrieval.
+- `src/agentic_job_cli/event_handlers.py` — attach extracted images after normal event/status rendering for snapshots and live updates.
+- `src/agentic_job_cli/widgets/chat_log.py` — sequence-level `TranscriptEntry` wrapper, image upsert, nearby-entry scheduling, semantic copy, and cleanup.
+- `src/agentic_job_cli/widgets/__init__.py` — export `ImageEntry` for application message handling.
+- `src/agentic_job_cli/styles/app.tcss` — transcript container, caption, focus, placeholder, and surface layout.
+- `src/agentic_job_cli/chat_commands.py`, `src/agentic_job_cli/connection.py` — cancel or clear image work at clear/context/host/disconnect/exit boundaries.
 - `devtools/preview_launcher.py`, `devtools/snapshot.py`, `devtools/README.md` — force deterministic half-cell rendering in browser/SVG previews.
 - `tests/test_client.py`, `tests/test_app.py`, `tests/test_entrypoint.py`, `tests/test_devtools.py` — fetch, orchestration, lifecycle, lazy-import, and preview regression coverage.
 - `README.md`, `docs/architecture.md`, `docs/configuration.md`, `docs/tui-frontend.md` — user behavior, data path, override, compatibility, and troubleshooting.
-- `AGENTS.md`, `src/agent_zero_cli/AGENTS.md`, `src/agent_zero_cli/widgets/AGENTS.md`, `tests/AGENTS.md`, `devtools/AGENTS.md`, `requirements/AGENTS.md` — durable ownership and verification contracts if the implemented behavior changes their current scope descriptions.
+- `AGENTS.md`, `src/agentic_job_cli/AGENTS.md`, `src/agentic_job_cli/widgets/AGENTS.md`, `tests/AGENTS.md`, `devtools/AGENTS.md`, `requirements/AGENTS.md` — durable ownership and verification contracts if the implemented behavior changes their current scope descriptions.
 
 ## Shared Interfaces
 
 The tasks below use these names consistently.
 
-`src/agent_zero_cli/image_render.py` defines:
+`src/agentic_job_cli/image_render.py` defines:
 
 - `ImageMode = Literal["tgp", "sixel", "halfcell", "off"]`.
 - Immutable `RendererSelection(mode: ImageMode, notice: str = "")`.
@@ -77,7 +77,7 @@ The tasks below use these names consistently.
 - `select_image_mode(requested: str, *, is_tty: bool, tgp_supported: bool, sixel_supported: bool, force_halfcell: bool = False) -> RendererSelection`.
 - `initialize_image_renderer(*, environ: Mapping[str, str] | None = None, force_halfcell: bool = False) -> ImageRenderer`.
 
-`src/agent_zero_cli/media_refs.py` defines:
+`src/agentic_job_cli/media_refs.py` defines:
 
 - `ImageOwner = Literal["browser", "user", "assistant"]`.
 - `ImageSource = Literal["agent_zero_path", "data_uri", "unavailable"]`.
@@ -85,7 +85,7 @@ The tasks below use these names consistently.
 - Read-only `ImageReference.copy_text -> str`.
 - `extract_image_references(event: Mapping[str, object], *, base_url: str) -> tuple[ImageReference, ...]`.
 
-`src/agent_zero_cli/image_store.py` defines:
+`src/agentic_job_cli/image_store.py` defines:
 
 - `ImageClient(Protocol)` with `fetch_image(path: str) -> Awaitable[tuple[bytes, str]]`.
 - Mutable `ImageAsset(cache_key, mime_type, image, width, height, cost_bytes)` with `clone() -> ImageAsset` and `close() -> None`.
@@ -94,13 +94,13 @@ The tasks below use these names consistently.
 - `ImageStore.load(reference: ImageReference) -> Awaitable[ImageAsset]`.
 - `ImageStore.cancel_pending() -> None`, `ImageStore.clear() -> None`, and read-only `cache_bytes -> int`.
 
-`src/agent_zero_cli/widgets/image_entry.py` defines:
+`src/agentic_job_cli/widgets/image_entry.py` defines:
 
 - `ImageEntry(Vertical)` with immutable `reference`, state in `pending|loading|rendered|unavailable|disabled`, and read-only `expanded`.
 - Bubbling `ImageEntry.LoadRequested(entry, reference, generation)`.
 - `ImageEntry.request_load()`, `set_asset(generation, asset)`, `set_unavailable(generation, reason)`, `release_surface()`, and `copy_text()`.
 
-`src/agent_zero_cli/widgets/chat_log.py` defines:
+`src/agentic_job_cli/widgets/chat_log.py` defines:
 
 - `TranscriptEntry(Vertical)` with `sequence`, `primary`, `set_primary(widget_type)`, `upsert_images(references, renderer)`, and `copy_text()`.
 - `ChatLog.append_or_update_images(sequence, references, *, prepend=False) -> None`.
@@ -111,15 +111,15 @@ The tasks below use these names consistently.
 ### Task 1: Prove Dependencies and Add the Renderer Adapter
 
 **Files:**
-- Create: `src/agent_zero_cli/image_render.py`
+- Create: `src/agentic_job_cli/image_render.py`
 - Create: `tests/test_image_render.py`
 - Modify: `requirements/a0-runtime.in`
 - Generate: `constraints/a0-runtime.txt`
 - Generate: `pyproject.toml`
-- Modify: `src/agent_zero_cli/__main__.py`
-- Modify: `src/agent_zero_cli/app.py`
+- Modify: `src/agentic_job_cli/__main__.py`
+- Modify: `src/agentic_job_cli/app.py`
 - Modify: `tests/test_entrypoint.py`
-- Modify: `src/agent_zero_cli/AGENTS.md`
+- Modify: `src/agentic_job_cli/AGENTS.md`
 - Modify: `requirements/AGENTS.md`
 
 **Interfaces:**
@@ -133,7 +133,7 @@ Create tests that establish the protocol order and the stable adapter surface:
 ```python
 from PIL import Image as PILImage
 
-from agent_zero_cli.image_render import (
+from agentic_job_cli.image_render import (
     CellBox,
     ImageRenderer,
     select_image_mode,
@@ -197,7 +197,7 @@ Run:
 ./.venv/bin/python -m pytest tests/test_image_render.py tests/test_entrypoint.py::test_run_app_installs_textual_input_decoder_guard -v
 ```
 
-Expected: collection fails because `agent_zero_cli.image_render` does not exist.
+Expected: collection fails because `agentic_job_cli.image_render` does not exist.
 
 - [ ] **Step 3: Implement mode selection, cell fitting, lazy library imports, and cleanup**
 
@@ -219,7 +219,7 @@ def select_image_mode(requested: str, *, is_tty: bool, tgp_supported: bool,
         return RendererSelection("off")
     if force_halfcell or not is_tty:
         if invalid:
-            notice = "Invalid A0_CLI_IMAGE_MODE; using half-cell images."
+            notice = "Invalid AJ_CLI_IMAGE_MODE; using half-cell images."
         elif normalized == "tgp":
             notice = "TGP images are unavailable; using half-cell images."
         elif normalized == "sixel":
@@ -238,11 +238,11 @@ def select_image_mode(requested: str, *, is_tty: bool, tgp_supported: bool,
     if normalized == "halfcell":
         return RendererSelection("halfcell")
     mode: ImageMode = "tgp" if tgp_supported else "sixel" if sixel_supported else "halfcell"
-    notice = "Invalid A0_CLI_IMAGE_MODE; using automatic image detection." if invalid else ""
+    notice = "Invalid AJ_CLI_IMAGE_MODE; using automatic image detection." if invalid else ""
     return RendererSelection(mode, notice)
 ```
 
-`initialize_image_renderer()` must read `A0_CLI_IMAGE_MODE`, query TGP before Sixel, capture terminal cell pixel size before `App.run()`, import widget classes only inside the function, and retain a half-cell factory for per-image fallback. `ImageRenderer.disabled()` and `ImageRenderer.for_test()` must not import `textual_image`.
+`initialize_image_renderer()` must read `AJ_CLI_IMAGE_MODE`, query TGP before Sixel, capture terminal cell pixel size before `App.run()`, import widget classes only inside the function, and retain a half-cell factory for per-image fallback. `ImageRenderer.disabled()` and `ImageRenderer.for_test()` must not import `textual_image`.
 
 Use this sizing calculation so the complete image fits both limits:
 
@@ -306,10 +306,10 @@ Expected: all four commands pass. If either dependency line fails against Textua
 
 - [ ] **Step 7: Commit the compatibility proof and adapter**
 
-Before staging, update `src/agent_zero_cli/AGENTS.md` to own the interactive-only renderer adapter and `requirements/AGENTS.md` to require the two Python-marked `textual-image` lines plus unconditional Pillow.
+Before staging, update `src/agentic_job_cli/AGENTS.md` to own the interactive-only renderer adapter and `requirements/AGENTS.md` to require the two Python-marked `textual-image` lines plus unconditional Pillow.
 
 ```bash
-git add requirements/a0-runtime.in constraints/a0-runtime.txt pyproject.toml src/agent_zero_cli/image_render.py src/agent_zero_cli/__main__.py src/agent_zero_cli/app.py src/agent_zero_cli/AGENTS.md requirements/AGENTS.md tests/test_image_render.py tests/test_entrypoint.py
+git add requirements/a0-runtime.in constraints/a0-runtime.txt pyproject.toml src/agentic_job_cli/image_render.py src/agentic_job_cli/__main__.py src/agentic_job_cli/app.py src/agentic_job_cli/AGENTS.md requirements/AGENTS.md tests/test_image_render.py tests/test_entrypoint.py
 git commit -m "feat: add terminal image renderer adapter"
 ```
 
@@ -318,9 +318,9 @@ git commit -m "feat: add terminal image renderer adapter"
 ### Task 2: Normalize Browser and Chat Image References
 
 **Files:**
-- Create: `src/agent_zero_cli/media_refs.py`
+- Create: `src/agentic_job_cli/media_refs.py`
 - Create: `tests/test_media_refs.py`
-- Modify: `src/agent_zero_cli/AGENTS.md`
+- Modify: `src/agentic_job_cli/AGENTS.md`
 
 **Interfaces:**
 - Consumes: normalized connector event dictionaries and the current `A0Client.base_url`.
@@ -339,14 +339,14 @@ def test_extracts_browser_screenshot_from_webui_metadata() -> None:
         "data": {
             "meta": {
                 "tool_name": "browser",
-                "Screenshot": "img:///a0/tmp/browser/history.jpg&t=123.4",
+                "Screenshot": "img:///aj/tmp/browser/history.jpg&t=123.4",
                 "browser_snapshot": {"mime": "image/jpeg", "browser_id": 1},
             }
         },
     }
     refs = extract_image_references(event, base_url="http://agent.test")
     assert [(ref.owner, ref.value, ref.caption) for ref in refs] == [
-        ("browser", "/a0/tmp/browser/history.jpg", "Browser screenshot")
+        ("browser", "/aj/tmp/browser/history.jpg", "Browser screenshot")
     ]
 
 
@@ -358,7 +358,7 @@ def test_extracts_user_attachment_basename() -> None:
         "data": {"text": "See this", "meta": {"attachments": ["scan.png"]}},
     }
     refs = extract_image_references(event, base_url="http://agent.test")
-    assert refs[0].value == "/a0/usr/uploads/scan.png"
+    assert refs[0].value == "/aj/usr/uploads/scan.png"
     assert refs[0].copy_text == "[image: User attachment — scan.png]"
 
 
@@ -367,12 +367,12 @@ def test_extracts_assistant_markdown_and_bounded_data_image() -> None:
         "context_id": "ctx-1",
         "sequence": 3,
         "event": "assistant_message",
-        "data": {"text": "![chart](img:///a0/usr/charts/result.png)"},
+        "data": {"text": "![chart](img:///aj/usr/charts/result.png)"},
     }
     refs = extract_image_references(event, base_url="http://agent.test")
     assert refs[0].owner == "assistant"
     assert refs[0].caption == "chart"
-    assert refs[0].value == "/a0/usr/charts/result.png"
+    assert refs[0].value == "/aj/usr/charts/result.png"
 
 
 def test_rejects_external_url_parent_paths_and_oversized_data() -> None:
@@ -390,20 +390,20 @@ def test_cache_buster_does_not_change_cache_key() -> None:
         "context_id": "ctx-1",
         "sequence": 8,
         "event": "tool_output",
-        "data": {"meta": {"Screenshot": "img:///a0/tmp/screen.jpg&t=1"}},
+        "data": {"meta": {"Screenshot": "img:///aj/tmp/screen.jpg&t=1"}},
     }
     second = {
         "context_id": "ctx-1",
         "sequence": 9,
         "event": "tool_output",
-        "data": {"meta": {"Screenshot": "img:///a0/tmp/screen.jpg&t=2"}},
+        "data": {"meta": {"Screenshot": "img:///aj/tmp/screen.jpg&t=2"}},
     }
     assert extract_image_references(first, base_url="http://agent.test")[0].cache_key == (
         extract_image_references(second, base_url="http://agent.test")[0].cache_key
     )
 ```
 
-Also cover `browser_snapshot.uri`, `browser_snapshot.a0_path`, same-origin `/api/image_get?path=...`, attachment dictionaries containing `path`, duplicate references in metadata/Markdown, unsupported data MIME, invalid base64 length, and filenames containing `/`, `\\`, `?`, or `#`.
+Also cover `browser_snapshot.uri`, `browser_snapshot.aj_path`, same-origin `/api/image_get?path=...`, attachment dictionaries containing `path`, duplicate references in metadata/Markdown, unsupported data MIME, invalid base64 length, and filenames containing `/`, `\\`, `?`, or `#`.
 
 Add a structured snapshot with only `ephemeral_ref: "a0-ephemeral-image://ctx/ref"` and assert it produces one browser `ImageReference` with `source="unavailable"` and `value="ephemeral screenshot is not fetchable"`; this keeps transcript placement visible without inventing a Core fetch route.
 
@@ -413,7 +413,7 @@ Add a structured snapshot with only `ephemeral_ref: "a0-ephemeral-image://ctx/re
 ./.venv/bin/python -m pytest tests/test_media_refs.py -v
 ```
 
-Expected: collection fails because `agent_zero_cli.media_refs` does not exist.
+Expected: collection fails because `agentic_job_cli.media_refs` does not exist.
 
 - [ ] **Step 3: Implement pure normalization with source and entry identities**
 
@@ -429,7 +429,7 @@ cache_key = hashlib.sha256(source_identity).hexdigest()
 entry_key = f"{sequence}:{cache_key}"
 ```
 
-Sanitize attachment names with `replace("\\", "/")`, remove query and fragment text, take the final basename, reject `""`, `"."`, and `".."`, and map accepted names to `/a0/usr/uploads/<basename>`.
+Sanitize attachment names with `replace("\\", "/")`, remove query and fragment text, take the final basename, reject `""`, `"."`, and `".."`, and map accepted names to `/aj/usr/uploads/<basename>`.
 
 For data URIs, accept only a `;base64,` payload whose declared MIME is in the approved raster set. Estimate decoded size before returning a reference:
 
@@ -442,7 +442,7 @@ if decoded_size > 25 * 1024 * 1024:
 
 Deduplicate by `cache_key` while preserving source order. Caption rules are `Browser screenshot`, `User attachment — <basename>`, the Markdown alt text when present, and `Assistant image` otherwise.
 
-For `browser_snapshot`, try `uri`, then `a0_path`, then `path`. If it contains only an `ephemeral_ref`, return the unavailable reference described in Step 1. Do not pass `a0-ephemeral-image://` into `/api/image_get`.
+For `browser_snapshot`, try `uri`, then `aj_path`, then `path`. If it contains only an `ephemeral_ref`, return the unavailable reference described in Step 1. Do not pass `a0-ephemeral-image://` into `/api/image_get`.
 
 - [ ] **Step 4: Run the pure tests**
 
@@ -454,10 +454,10 @@ Expected: all tests pass without network or Textual startup.
 
 - [ ] **Step 5: Commit reference extraction**
 
-Add `media_refs.py` ownership and the same-origin/no-I/O normalization contract to `src/agent_zero_cli/AGENTS.md`.
+Add `media_refs.py` ownership and the same-origin/no-I/O normalization contract to `src/agentic_job_cli/AGENTS.md`.
 
 ```bash
-git add src/agent_zero_cli/media_refs.py src/agent_zero_cli/AGENTS.md tests/test_media_refs.py
+git add src/agentic_job_cli/media_refs.py src/agentic_job_cli/AGENTS.md tests/test_media_refs.py
 git commit -m "feat: extract transcript image references"
 ```
 
@@ -466,11 +466,11 @@ git commit -m "feat: extract transcript image references"
 ### Task 3: Add Authenticated Fetching, Validation, and the Memory Store
 
 **Files:**
-- Create: `src/agent_zero_cli/image_store.py`
+- Create: `src/agentic_job_cli/image_store.py`
 - Create: `tests/test_image_store.py`
-- Modify: `src/agent_zero_cli/client.py`
+- Modify: `src/agentic_job_cli/client.py`
 - Modify: `tests/test_client.py`
-- Modify: `src/agent_zero_cli/AGENTS.md`
+- Modify: `src/agentic_job_cli/AGENTS.md`
 
 **Interfaces:**
 - Consumes: `ImageReference`, `ImageRenderer.max_surface_pixels`, the existing authenticated `A0Client.http` session, and `/api/image_get?path=...`.
@@ -491,12 +491,12 @@ async def test_fetch_image_uses_authenticated_core_endpoint() -> None:
         )
     )
 
-    content, mime = await client.fetch_image("/a0/usr/uploads/scan.png")
+    content, mime = await client.fetch_image("/aj/usr/uploads/scan.png")
 
     assert (content, mime) == (b"png-bytes", "image/png")
     client.http.get.assert_awaited_once_with(
         "http://agent.test/api/image_get",
-        params={"path": "/a0/usr/uploads/scan.png"},
+        params={"path": "/aj/usr/uploads/scan.png"},
         headers={"Origin": "http://agent.test", "Referer": "http://agent.test/"},
         follow_redirects=False,
     )
@@ -528,7 +528,7 @@ def image_reference(key: str) -> ImageReference:
         owner="assistant",
         caption="Assistant image",
         source="agent_zero_path",
-        value=f"/a0/usr/uploads/{key}.png",
+        value=f"/aj/usr/uploads/{key}.png",
     )
 
 
@@ -539,7 +539,7 @@ class FakeImageClient:
         self.calls = 0
 
     async def fetch_image(self, path: str) -> tuple[bytes, str]:
-        assert path.startswith("/a0/")
+        assert path.startswith("/aj/")
         self.calls += 1
         return self.payload, self.mime
 
@@ -553,7 +553,7 @@ class BlockingImageClient:
         self.release = asyncio.Event()
 
     async def fetch_image(self, path: str) -> tuple[bytes, str]:
-        assert path.startswith("/a0/")
+        assert path.startswith("/aj/")
         self.active += 1
         self.maximum_active = max(self.maximum_active, self.active)
         if self.active == 4:
@@ -617,7 +617,7 @@ Also test data URI decoding, MIME mismatch, unsupported SVG, corrupt bytes, firs
 ./.venv/bin/python -m pytest tests/test_image_store.py -v
 ```
 
-Expected: `A0Client.fetch_image` and `agent_zero_cli.image_store` are missing.
+Expected: `A0Client.fetch_image` and `agentic_job_cli.image_store` are missing.
 
 - [ ] **Step 4: Implement bounded image retrieval on `A0Client`**
 
@@ -702,15 +702,15 @@ accounting.
 ./.venv/bin/python -m pytest tests/test_image_store.py tests/test_client.py -v
 ```
 
-Expected: all tests pass and no test uses a live Agent Zero server.
+Expected: all tests pass and no test uses a live Agentic Job server.
 
 - [ ] **Step 7: Commit the authenticated image service**
 
-Record `image_store.py` ownership, authenticated same-origin loading, memory-only caching, and numeric limits in `src/agent_zero_cli/AGENTS.md`.
+Record `image_store.py` ownership, authenticated same-origin loading, memory-only caching, and numeric limits in `src/agentic_job_cli/AGENTS.md`.
 
 ```bash
-git add src/agent_zero_cli/client.py src/agent_zero_cli/image_store.py src/agent_zero_cli/AGENTS.md tests/test_client.py tests/test_image_store.py
-git commit -m "feat: load and validate Agent Zero images"
+git add src/agentic_job_cli/client.py src/agentic_job_cli/image_store.py src/agentic_job_cli/AGENTS.md tests/test_client.py tests/test_image_store.py
+git commit -m "feat: load and validate Agentic Job images"
 ```
 
 ---
@@ -718,11 +718,11 @@ git commit -m "feat: load and validate Agent Zero images"
 ### Task 4: Build the Focusable Image Widget
 
 **Files:**
-- Create: `src/agent_zero_cli/widgets/image_entry.py`
+- Create: `src/agentic_job_cli/widgets/image_entry.py`
 - Create: `tests/test_chat_log_images.py`
-- Modify: `src/agent_zero_cli/widgets/__init__.py`
-- Modify: `src/agent_zero_cli/styles/app.tcss`
-- Modify: `src/agent_zero_cli/widgets/AGENTS.md`
+- Modify: `src/agentic_job_cli/widgets/__init__.py`
+- Modify: `src/agentic_job_cli/styles/app.tcss`
+- Modify: `src/agentic_job_cli/widgets/AGENTS.md`
 - Modify: `tests/AGENTS.md`
 
 **Interfaces:**
@@ -766,7 +766,7 @@ def browser_ref(*, sequence: int = 8, context_id: str = "ctx-1") -> ImageReferen
         owner="browser",
         caption="Browser screenshot",
         source="agent_zero_path",
-        value="/a0/tmp/browser/history.jpg",
+        value="/aj/tmp/browser/history.jpg",
     )
 
 
@@ -779,7 +779,7 @@ def user_ref(*, sequence: int = 2, context_id: str = "ctx-1") -> ImageReference:
         owner="user",
         caption="User attachment — scan.png",
         source="agent_zero_path",
-        value="/a0/usr/uploads/scan.png",
+        value="/aj/usr/uploads/scan.png",
     )
 
 
@@ -803,7 +803,7 @@ Test that a new fetchable entry is pending, an `unavailable` reference starts wi
 ./.venv/bin/python -m pytest tests/test_chat_log_images.py -k image_entry -v
 ```
 
-Expected: collection fails because `agent_zero_cli.widgets.image_entry` does not exist.
+Expected: collection fails because `agentic_job_cli.widgets.image_entry` does not exist.
 
 - [ ] **Step 3: Implement the widget state machine and renderer replacement**
 
@@ -861,7 +861,7 @@ Expected: all `ImageEntry` tests pass without emitting a native escape sequence.
 Update the widget DOX with the no-network, semantic-copy, and cleanup contracts, and the test DOX with the fake-renderer/no-native-control rule.
 
 ```bash
-git add src/agent_zero_cli/widgets/image_entry.py src/agent_zero_cli/widgets/__init__.py src/agent_zero_cli/styles/app.tcss src/agent_zero_cli/widgets/AGENTS.md tests/test_chat_log_images.py tests/AGENTS.md
+git add src/agentic_job_cli/widgets/image_entry.py src/agentic_job_cli/widgets/__init__.py src/agentic_job_cli/styles/app.tcss src/agentic_job_cli/widgets/AGENTS.md tests/test_chat_log_images.py tests/AGENTS.md
 git commit -m "feat: add expandable transcript image widget"
 ```
 
@@ -870,12 +870,12 @@ git commit -m "feat: add expandable transcript image widget"
 ### Task 5: Group Transcript Content and Lazily Schedule Images
 
 **Files:**
-- Modify: `src/agent_zero_cli/widgets/chat_log.py`
-- Modify: `src/agent_zero_cli/app.py`
-- Modify: `src/agent_zero_cli/styles/app.tcss`
+- Modify: `src/agentic_job_cli/widgets/chat_log.py`
+- Modify: `src/agentic_job_cli/app.py`
+- Modify: `src/agentic_job_cli/styles/app.tcss`
 - Modify: `tests/test_chat_log_images.py`
 - Modify: `tests/test_app.py`
-- Modify: `src/agent_zero_cli/widgets/AGENTS.md`
+- Modify: `src/agentic_job_cli/widgets/AGENTS.md`
 
 **Interfaces:**
 - Consumes: existing `SelectableStatic`, `StatusEntry`, and `CodeEntry`; `ImageEntry`; and `ImageRenderer`.
@@ -1006,7 +1006,7 @@ Expected: existing transcript behavior and new grouping/lazy tests pass.
 Update `widgets/AGENTS.md` with `TranscriptEntry` sequence ownership, lazy near-viewport loading, off-screen surface release, and semantic-copy behavior.
 
 ```bash
-git add src/agent_zero_cli/widgets/chat_log.py src/agent_zero_cli/app.py src/agent_zero_cli/styles/app.tcss src/agent_zero_cli/widgets/AGENTS.md tests/test_chat_log_images.py tests/test_app.py
+git add src/agentic_job_cli/widgets/chat_log.py src/agentic_job_cli/app.py src/agentic_job_cli/styles/app.tcss src/agentic_job_cli/widgets/AGENTS.md tests/test_chat_log_images.py tests/test_app.py
 git commit -m "feat: group images with transcript entries"
 ```
 
@@ -1015,16 +1015,16 @@ git commit -m "feat: group images with transcript entries"
 ### Task 6: Wire Live/Replay Events to App-Level Loading and Lifecycle Cleanup
 
 **Files:**
-- Modify: `src/agent_zero_cli/app.py`
-- Modify: `src/agent_zero_cli/event_handlers.py`
-- Modify: `src/agent_zero_cli/chat_commands.py`
-- Modify: `src/agent_zero_cli/connection.py`
+- Modify: `src/agentic_job_cli/app.py`
+- Modify: `src/agentic_job_cli/event_handlers.py`
+- Modify: `src/agentic_job_cli/chat_commands.py`
+- Modify: `src/agentic_job_cli/connection.py`
 - Modify: `tests/test_app.py`
 - Modify: `tests/test_chat_log_images.py`
 - Modify: `tests/test_entrypoint.py`
 - Modify: `tests/test_headless.py`
 - Modify: `tests/test_gateway.py`
-- Modify: `src/agent_zero_cli/AGENTS.md`
+- Modify: `src/agentic_job_cli/AGENTS.md`
 
 **Interfaces:**
 - Consumes: `extract_image_references()`, `ImageStore.load()`, `ImageEntry.LoadRequested`, and `ChatLog.append_or_update_images()`.
@@ -1045,7 +1045,7 @@ def test_live_browser_screenshot_attaches_to_status_sequence(dummy_app: DummyAge
             "data": {
                 "meta": {
                     "tool_name": "browser",
-                    "Screenshot": "img:///a0/tmp/history.jpg&t=1",
+                    "Screenshot": "img:///aj/tmp/history.jpg&t=1",
                 }
             },
         }
@@ -1070,7 +1070,7 @@ def test_snapshot_attaches_user_and_assistant_history_images(dummy_app: DummyAge
                     "context_id": "ctx-1",
                     "sequence": 3,
                     "event": "assistant_message",
-                    "data": {"text": "![result](img:///a0/usr/result.png)"},
+                    "data": {"text": "![result](img:///aj/usr/result.png)"},
                 },
             ],
         }
@@ -1206,10 +1206,10 @@ Expected: all tests pass; JSONL and text outputs are unchanged.
 
 - [ ] **Step 8: Commit the end-to-end TUI flow**
 
-Update `src/agent_zero_cli/AGENTS.md` with app-level image loading and the clear/context/host/disconnect/exit lifecycle ownership established by this task.
+Update `src/agentic_job_cli/AGENTS.md` with app-level image loading and the clear/context/host/disconnect/exit lifecycle ownership established by this task.
 
 ```bash
-git add src/agent_zero_cli/app.py src/agent_zero_cli/event_handlers.py src/agent_zero_cli/chat_commands.py src/agent_zero_cli/connection.py src/agent_zero_cli/AGENTS.md tests/test_app.py tests/test_chat_log_images.py tests/test_entrypoint.py tests/test_headless.py tests/test_gateway.py
+git add src/agentic_job_cli/app.py src/agentic_job_cli/event_handlers.py src/agentic_job_cli/chat_commands.py src/agentic_job_cli/connection.py src/agentic_job_cli/AGENTS.md tests/test_app.py tests/test_chat_log_images.py tests/test_entrypoint.py tests/test_headless.py tests/test_gateway.py
 git commit -m "feat: display transcript images from connector events"
 ```
 
@@ -1227,8 +1227,8 @@ git commit -m "feat: display transcript images from connector events"
 - Modify: `docs/configuration.md`
 - Modify: `docs/tui-frontend.md`
 - Modify: `AGENTS.md`
-- Modify: `src/agent_zero_cli/AGENTS.md`
-- Modify: `src/agent_zero_cli/widgets/AGENTS.md`
+- Modify: `src/agentic_job_cli/AGENTS.md`
+- Modify: `src/agentic_job_cli/widgets/AGENTS.md`
 - Modify: `tests/AGENTS.md`
 - Modify: `devtools/AGENTS.md`
 - Modify: `requirements/AGENTS.md`
@@ -1239,7 +1239,7 @@ git commit -m "feat: display transcript images from connector events"
 
 - [ ] **Step 1: Write failing preview-mode tests**
 
-Add tests that monkeypatch `os.execv` and verify `preview_launcher.main()` sets `A0_CLI_IMAGE_MODE=halfcell` before exec. Update the snapshot test to inject or initialize a forced half-cell renderer and assert its mode is half-cell.
+Add tests that monkeypatch `os.execv` and verify `preview_launcher.main()` sets `AJ_CLI_IMAGE_MODE=halfcell` before exec. Update the snapshot test to inject or initialize a forced half-cell renderer and assert its mode is half-cell.
 
 ```python
 def test_preview_launcher_forces_halfcell(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1247,8 +1247,8 @@ def test_preview_launcher_forces_halfcell(monkeypatch: pytest.MonkeyPatch) -> No
     called: list[tuple[str, list[str]]] = []
     monkeypatch.setattr(preview.os, "execv", lambda executable, argv: called.append((executable, argv)))
     preview.main()
-    assert preview.os.environ["A0_CLI_IMAGE_MODE"] == "halfcell"
-    assert called[0][1][-2:] == ["-m", "agent_zero_cli"]
+    assert preview.os.environ["AJ_CLI_IMAGE_MODE"] == "halfcell"
+    assert called[0][1][-2:] == ["-m", "agentic_job_cli"]
 ```
 
 - [ ] **Step 2: Run devtools tests and verify failure**
@@ -1261,7 +1261,7 @@ Expected: preview and snapshot do not yet force/inject half-cell rendering.
 
 - [ ] **Step 3: Force half-cell in browser and SVG preview paths**
 
-Set `os.environ["A0_CLI_IMAGE_MODE"] = "halfcell"` in `preview_launcher.main()` immediately before `os.execv`. In `snapshot.py`, call `initialize_image_renderer(force_halfcell=True)` and pass it to `AgentZeroCLI`.
+Set `os.environ["AJ_CLI_IMAGE_MODE"] = "halfcell"` in `preview_launcher.main()` immediately before `os.execv`. In `snapshot.py`, call `initialize_image_renderer(force_halfcell=True)` and pass it to `AgentZeroCLI`.
 
 Document that xterm.js/browser previews deliberately show the same bounded half-cell content used by fallback terminals and do not exercise native protocol cleanup.
 
@@ -1272,13 +1272,13 @@ Document all of the following with exact values:
 - Eligible browser, user, and assistant history sources.
 - Browser screenshot placement beneath the same tool metadata.
 - Thumbnail and expanded cell limits plus click/Enter/Space behavior.
-- `A0_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
+- `AJ_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
 - TGP, Sixel, half-cell, and browser-preview behavior.
 - 25 MiB, 32-megapixel, four-fetch/load, single-full-resolution-decoder, and
   64 MiB limits, with downsampling before orientation and color conversion.
 - Supported raster formats, first-frame behavior, SVG placeholder, same-origin-only loading, and memory-only caching.
 - `/api/image_get` authenticated fetch and unchanged connector event schema for browser screenshots.
-- The separate Agent Zero Core attachment metadata correction and its deployment boundary.
+- The separate Agentic Job Core attachment metadata correction and its deployment boundary.
 - Troubleshooting for forced fallback, unsupported protocol, tmux pass-through, unavailable image, and `off` mode.
 - Headless/gateway remaining text/JSONL-only.
 
@@ -1304,11 +1304,11 @@ Expected: lock check and full suite pass, snapshot is created with no native pro
 Use a chat containing one browser screenshot, one user attachment, and one assistant image. In each environment, verify thumbnail rendering, click/Enter/Space toggling, complete aspect ratio, scrolling, resizing, `/clear`, context switching, reconnect/history replay, and clean exit:
 
 ```bash
-read -r -p "Verified Agent Zero URL: " a0_image_test_host
-A0_CLI_IMAGE_MODE=tgp a0 --host "$a0_image_test_host" --no-docker-discovery --connect
-A0_CLI_IMAGE_MODE=sixel a0 --host "$a0_image_test_host" --no-docker-discovery --connect
-A0_CLI_IMAGE_MODE=halfcell a0 --host "$a0_image_test_host" --no-docker-discovery --connect
-A0_CLI_IMAGE_MODE=off a0 --host "$a0_image_test_host" --no-docker-discovery --connect
+read -r -p "Verified Agentic Job URL: " a0_image_test_host
+AJ_CLI_IMAGE_MODE=tgp a0 --host "$a0_image_test_host" --no-docker-discovery --connect
+AJ_CLI_IMAGE_MODE=sixel a0 --host "$a0_image_test_host" --no-docker-discovery --connect
+AJ_CLI_IMAGE_MODE=halfcell a0 --host "$a0_image_test_host" --no-docker-discovery --connect
+AJ_CLI_IMAGE_MODE=off a0 --host "$a0_image_test_host" --no-docker-discovery --connect
 ```
 
 Run the native commands only in matching capable terminals. Also run inside tmux; if pass-through is unavailable, verify one notice and a clean half-cell fallback. Record TGP, Sixel, and half-cell results separately from automated tests and from Core runtime deployment.
@@ -1316,7 +1316,7 @@ Run the native commands only in matching capable terminals. Also run inside tmux
 - [ ] **Step 8: Commit documentation and acceptance tooling**
 
 ```bash
-git add README.md docs/architecture.md docs/configuration.md docs/tui-frontend.md devtools/preview_launcher.py devtools/snapshot.py devtools/README.md tests/test_devtools.py AGENTS.md src/agent_zero_cli/AGENTS.md src/agent_zero_cli/widgets/AGENTS.md tests/AGENTS.md devtools/AGENTS.md requirements/AGENTS.md
+git add README.md docs/architecture.md docs/configuration.md docs/tui-frontend.md devtools/preview_launcher.py devtools/snapshot.py devtools/README.md tests/test_devtools.py AGENTS.md src/agentic_job_cli/AGENTS.md src/agentic_job_cli/widgets/AGENTS.md tests/AGENTS.md devtools/AGENTS.md requirements/AGENTS.md
 git commit -m "docs: document inline terminal images"
 ```
 

@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.gateway import (
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.gateway import (
     GatewayOptions,
     GatewayRunner,
     JsonlWriter,
@@ -43,7 +43,7 @@ class FakeComputerManager(FakeManager):
                 return {
                     "ok": False,
                     "code": "COMPUTER_USE_RESTART_REQUIRED",
-                    "error": "Restart Agent Zero Launcher.",
+                    "error": "Restart Agentic Job Launcher.",
                     "result": {"state": "restart_required"},
                 }
             return {
@@ -119,8 +119,8 @@ async def test_gateway_jsonl_contract_and_environment_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     FakeSession.instances = []
-    monkeypatch.setenv("A0_USERNAME", "launcher-user")
-    monkeypatch.setenv("A0_PASSWORD", "launcher-secret")
+    monkeypatch.setenv("AJ_USERNAME", "launcher-user")
+    monkeypatch.setenv("AJ_PASSWORD", "launcher-secret")
     output = io.StringIO()
     commands = io.StringIO(
         '\n'.join(
@@ -448,6 +448,6 @@ def test_gateway_scopes_keep_legacy_files_read_write() -> None:
 
 
 def test_gateway_host_preserves_base_path_and_rejects_embedded_credentials() -> None:
-    assert normalize_gateway_host("https://agent.test/a0/?view=chat#active") == "https://agent.test/a0"
+    assert normalize_gateway_host("https://agent.test/aj/?view=chat#active") == "https://agent.test/aj"
     with pytest.raises(ValueError, match="without embedded credentials"):
-        normalize_gateway_host("https://user:secret@agent.test/a0")
+        normalize_gateway_host("https://user:secret@agent.test/aj")

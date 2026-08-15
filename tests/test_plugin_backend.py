@@ -26,18 +26,18 @@ def _write_png_fixture(tmp_path: Path, filename: str = "capture.png") -> Path:
 
 
 def _resolve_plugin_root() -> Path:
-    env_root = os.environ.get("A0_CONNECTOR_PLUGIN_ROOT", "").strip()
+    env_root = os.environ.get("AJ_CONNECTOR_PLUGIN_ROOT", "").strip()
     if env_root:
         candidate = Path(env_root)
-        if (candidate / "_a0_connector").exists():
+        if (candidate / "_aj_connector").exists():
             return candidate
 
     local_root = PROJECT_ROOT / "plugin"
-    if (local_root / "_a0_connector").exists():
+    if (local_root / "_aj_connector").exists():
         return local_root
 
     sibling_root = PROJECT_ROOT.parent / "agent-zero" / "plugins"
-    if (sibling_root / "_a0_connector").exists():
+    if (sibling_root / "_aj_connector").exists():
         return sibling_root
 
     return local_root
@@ -48,7 +48,7 @@ PLUGIN_ROOT = _resolve_plugin_root()
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from agent_zero_cli.remote_files import RemoteFileUtility
+from agentic_job_cli.remote_files import RemoteFileUtility
 
 
 def _purge_modules() -> None:
@@ -202,7 +202,7 @@ def _install_fake_helpers(
         max_bytes: int | None = None,
     ) -> object:
         del context_id, category, source, preferred_name, max_bytes
-        return types.SimpleNamespace(path=str(path), a0_path=str(path))
+        return types.SimpleNamespace(path=str(path), aj_path=str(path))
 
     def _save_image_base64(
         *,
@@ -218,7 +218,7 @@ def _install_fake_helpers(
         filename = preferred_name or f"inline.{mime_type.removeprefix('image/') or 'png'}"
         return types.SimpleNamespace(
             path=filename,
-            a0_path=f"data:{mime_type};base64,{data}",
+            aj_path=f"data:{mime_type};base64,{data}",
         )
 
     def _safe_filename(
@@ -407,9 +407,9 @@ def _install_fake_helpers(
         sys.modules[module_name] = types.ModuleType(module_name)
 
     files_mod = sys.modules["helpers.files"]
-    fake_base_dir = Path(tempfile.gettempdir()) / "a0-connector-plugin-tests"
+    fake_base_dir = Path(tempfile.gettempdir()) / "aj-connector-plugin-tests"
     files_mod.get_abs_path = lambda *parts: str(fake_base_dir.joinpath(*map(str, parts)))
-    files_mod.normalize_a0_path = lambda path: str(path)
+    files_mod.normalize_aj_path = lambda path: str(path)
 
     projects_mod = sys.modules["helpers.projects"]
     projects_mod.get_context_project_name = lambda context: getattr(context, "project_name", "")
@@ -582,10 +582,10 @@ class _FakeRemoteAgent:
 def _load_text_editor_remote_tool(*, file_op_handler):
     shared_ws_manager = _FakeCliWsManager(file_op_handler=file_op_handler)
     _install_fake_helpers(shared_ws_manager=shared_ws_manager)
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     shared_ws_manager.ws_runtime_mod = ws_runtime_mod
-    tool_mod = _reload("plugins._a0_connector.tools.text_editor_remote")
+    tool_mod = _reload("plugins._aj_connector.tools.text_editor_remote")
     return shared_ws_manager, ws_runtime_mod, tool_mod
 
 
@@ -599,20 +599,20 @@ def _load_code_execution_remote_tool(
         code_execution_config=code_execution_config,
         shared_ws_manager=shared_ws_manager,
     )
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     shared_ws_manager.ws_runtime_mod = ws_runtime_mod
-    tool_mod = _reload("plugins._a0_connector.tools.code_execution_remote")
+    tool_mod = _reload("plugins._aj_connector.tools.code_execution_remote")
     return shared_ws_manager, ws_runtime_mod, tool_mod
 
 
 def _load_computer_use_remote_tool(*, computer_use_handler):
     shared_ws_manager = _FakeComputerUseWsManager(computer_use_handler=computer_use_handler)
     _install_fake_helpers(shared_ws_manager=shared_ws_manager)
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     shared_ws_manager.ws_runtime_mod = ws_runtime_mod
-    tool_mod = _reload("plugins._a0_connector.tools.computer_use_remote")
+    tool_mod = _reload("plugins._aj_connector.tools.computer_use_remote")
     return shared_ws_manager, ws_runtime_mod, tool_mod
 
 
@@ -661,7 +661,7 @@ def _register_remote_file_cli(
 
 def test_ws_runtime_reassembles_chunked_file_op_results() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     async def run_scenario() -> None:
@@ -786,17 +786,17 @@ def _assert_capture_history_message(
 
 def test_capabilities_advertise_current_ws_contract() -> None:
     _install_fake_helpers()
-    _reload("plugins._a0_connector.api.v1.base")
-    capabilities_mod = _reload("plugins._a0_connector.api.v1.capabilities")
+    _reload("plugins._aj_connector.api.v1.base")
+    capabilities_mod = _reload("plugins._aj_connector.api.v1.capabilities")
 
     payload = asyncio.run(capabilities_mod.Capabilities(None, None).process({}, object()))
 
-    assert payload["protocol"] == "a0-connector.v1"
+    assert payload["protocol"] == "aj-connector.v1"
     assert payload["agent_zero_version"] == "v1.18"
     assert payload["auth"] == ["session"]
     assert payload["auth_required"] is False
     assert payload["websocket_namespace"] == "/ws"
-    assert payload["websocket_handlers"] == ["plugins/_a0_connector/ws_connector"]
+    assert payload["websocket_handlers"] == ["plugins/_aj_connector/ws_connector"]
     assert {
         "pause",
         "nudge",
@@ -851,8 +851,8 @@ def test_installed_plugins_endpoint_lists_installed_only_metadata() -> None:
         ),
     ]
 
-    _reload("plugins._a0_connector.api.v1.base")
-    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+    _reload("plugins._aj_connector.api.v1.base")
+    installed_mod = _reload("plugins._aj_connector.api.v1.installed_plugins")
 
     payload = asyncio.run(installed_mod.InstalledPlugins(None, None).process({"action": "list"}, object()))
 
@@ -894,8 +894,8 @@ def test_installed_plugins_endpoint_toggles_installed_plugin() -> None:
     plugins_mod.get_enhanced_plugins_list = fake_plugins_list
     plugins_mod.toggle_plugin = fake_toggle_plugin
 
-    _reload("plugins._a0_connector.api.v1.base")
-    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+    _reload("plugins._aj_connector.api.v1.base")
+    installed_mod = _reload("plugins._aj_connector.api.v1.installed_plugins")
 
     payload = asyncio.run(
         installed_mod.InstalledPlugins(None, None).process(
@@ -914,8 +914,8 @@ def test_installed_plugins_endpoint_rejects_unknown_plugin() -> None:
     plugins_mod = sys.modules["helpers.plugins"]
     plugins_mod.get_enhanced_plugins_list = lambda custom=True, builtin=True: []
 
-    _reload("plugins._a0_connector.api.v1.base")
-    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+    _reload("plugins._aj_connector.api.v1.base")
+    installed_mod = _reload("plugins._aj_connector.api.v1.installed_plugins")
 
     response = asyncio.run(
         installed_mod.InstalledPlugins(None, None).process(
@@ -934,8 +934,8 @@ def test_installed_plugins_endpoint_rejects_protected_plugins() -> None:
     calls: list[tuple[str, bool]] = []
     plugins_mod.get_enhanced_plugins_list = lambda custom=True, builtin=True: [
         _FakePluginItem(
-            name="_a0_connector",
-            display_name="A0 Connector",
+            name="_aj_connector",
+            display_name="AJ Connector",
             toggle_state="enabled",
         ),
         _FakePluginItem(
@@ -947,12 +947,12 @@ def test_installed_plugins_endpoint_rejects_protected_plugins() -> None:
     ]
     plugins_mod.toggle_plugin = lambda plugin_name, enabled, **kwargs: calls.append((plugin_name, enabled))
 
-    _reload("plugins._a0_connector.api.v1.base")
-    installed_mod = _reload("plugins._a0_connector.api.v1.installed_plugins")
+    _reload("plugins._aj_connector.api.v1.base")
+    installed_mod = _reload("plugins._aj_connector.api.v1.installed_plugins")
 
     connector_response = asyncio.run(
         installed_mod.InstalledPlugins(None, None).process(
-            {"action": "set_enabled", "plugin_name": "_a0_connector", "enabled": False},
+            {"action": "set_enabled", "plugin_name": "_aj_connector", "enabled": False},
             object(),
         )
     )
@@ -989,8 +989,8 @@ def test_browser_runtime_endpoint_updates_browser_plugin_config() -> None:
             (plugin_name, project_name, agent_profile, dict(settings))
         )
     )
-    _reload("plugins._a0_connector.api.v1.base")
-    browser_runtime_mod = _reload("plugins._a0_connector.api.v1.browser_runtime")
+    _reload("plugins._aj_connector.api.v1.base")
+    browser_runtime_mod = _reload("plugins._aj_connector.api.v1.browser_runtime")
 
     payload = asyncio.run(
         browser_runtime_mod.BrowserRuntime(None, None).process(
@@ -1036,8 +1036,8 @@ def test_browser_runtime_endpoint_defaults_missing_profile_mode() -> None:
         "host_browser_privacy_policy": "warn",
         "model_preset": "Research",
     }
-    _reload("plugins._a0_connector.api.v1.base")
-    browser_runtime_mod = _reload("plugins._a0_connector.api.v1.browser_runtime")
+    _reload("plugins._aj_connector.api.v1.base")
+    browser_runtime_mod = _reload("plugins._aj_connector.api.v1.browser_runtime")
 
     payload = asyncio.run(
         browser_runtime_mod.BrowserRuntime(None, None).process(
@@ -1054,8 +1054,8 @@ def test_browser_runtime_endpoint_defaults_missing_profile_mode() -> None:
 
 def test_capabilities_reflect_core_login_requirement() -> None:
     _install_fake_helpers(auth_required=True)
-    _reload("plugins._a0_connector.api.v1.base")
-    capabilities_mod = _reload("plugins._a0_connector.api.v1.capabilities")
+    _reload("plugins._aj_connector.api.v1.base")
+    capabilities_mod = _reload("plugins._aj_connector.api.v1.capabilities")
 
     payload = asyncio.run(capabilities_mod.Capabilities(None, None).process({}, object()))
 
@@ -1088,8 +1088,8 @@ def test_skills_activate_endpoint_activates_chat_skill() -> None:
     agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: context if context_id == context.id else None)
     sys.modules["agent"] = agent_mod
 
-    _reload("plugins._a0_connector.api.v1.base")
-    skills_activate_mod = _reload("plugins._a0_connector.api.v1.skills_activate")
+    _reload("plugins._aj_connector.api.v1.base")
+    skills_activate_mod = _reload("plugins._aj_connector.api.v1.skills_activate")
 
     payload = asyncio.run(
         skills_activate_mod.SkillsActivate(None, None).process(
@@ -1097,7 +1097,7 @@ def test_skills_activate_endpoint_activates_chat_skill() -> None:
                 "context_id": "ctx-1",
                 "skill": {
                     "name": "a0-live-e2e-tester",
-                    "path": "/a0/skills/a0-live-e2e-tester",
+                    "path": "/aj/skills/a0-live-e2e-tester",
                 },
             },
             object(),
@@ -1107,14 +1107,14 @@ def test_skills_activate_endpoint_activates_chat_skill() -> None:
     assert payload["ok"] is True
     assert payload["skill"] == {
         "name": "a0-live-e2e-tester",
-        "path": "/a0/skills/a0-live-e2e-tester",
+        "path": "/aj/skills/a0-live-e2e-tester",
     }
     assert activated == [
         (
             context.agent,
             {
                 "name": "a0-live-e2e-tester",
-                "path": "/a0/skills/a0-live-e2e-tester",
+                "path": "/aj/skills/a0-live-e2e-tester",
             },
         )
     ]
@@ -1149,7 +1149,7 @@ def test_event_bridge_uses_log_output_cursor() -> None:
     agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: FakeContext())
     sys.modules["agent"] = agent_mod
 
-    bridge_mod = _reload("plugins._a0_connector.helpers.event_bridge")
+    bridge_mod = _reload("plugins._aj_connector.helpers.event_bridge")
     events, cursor = bridge_mod.get_context_log_entries("ctx-1", after=5)
 
     assert cursor == 7
@@ -1197,7 +1197,7 @@ def test_event_bridge_limits_log_output_without_skipping_future_cursor() -> None
     agent_mod.AgentContext = types.SimpleNamespace(get=lambda context_id: FakeContext())
     sys.modules["agent"] = agent_mod
 
-    bridge_mod = _reload("plugins._a0_connector.helpers.event_bridge")
+    bridge_mod = _reload("plugins._aj_connector.helpers.event_bridge")
     events, cursor = bridge_mod.get_context_log_entries("ctx-1", after=10, limit=3)
 
     assert cursor == 13
@@ -1206,9 +1206,9 @@ def test_event_bridge_limits_log_output_without_skipping_future_cursor() -> None
 
 def test_ws_connector_replays_large_history_in_snapshot_pages() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     class FakeLog:
         updates = list(range(120))
@@ -1311,9 +1311,9 @@ def test_ws_connector_replays_large_history_in_snapshot_pages() -> None:
 
 def test_ws_connector_loads_tail_history_and_older_pages_on_demand() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     class FakeLog:
         updates = list(range(250))
@@ -1441,11 +1441,11 @@ def test_ws_connector_hello_advertises_remote_exec_and_tree_features() -> None:
             "dialog_patterns": "yes/no",
         }
     )
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     payload = asyncio.run(ws_connector_mod.WsConnector(None, None).process("connector_hello", {}, "sid-1"))
 
-    assert payload["protocol"] == "a0-connector.v1"
+    assert payload["protocol"] == "aj-connector.v1"
     assert payload["agent_zero_version"] == "v1.18"
     assert "remote_file_tree" in payload["features"]
     assert "message_queue" in payload["features"]
@@ -1458,41 +1458,41 @@ def test_ws_connector_hello_advertises_remote_exec_and_tree_features() -> None:
     assert payload["exec_config"]["dialog_patterns"] == ["yes/no"]
 
 
-def test_plugin_root_resolution_prefers_a0_connector_plugin_root_env(
+def test_plugin_root_resolution_prefers_aj_connector_plugin_root_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plugins_root = tmp_path / "plugins"
-    (plugins_root / "_a0_connector").mkdir(parents=True)
-    monkeypatch.setenv("A0_CONNECTOR_PLUGIN_ROOT", str(plugins_root))
+    (plugins_root / "_aj_connector").mkdir(parents=True)
+    monkeypatch.setenv("AJ_CONNECTOR_PLUGIN_ROOT", str(plugins_root))
 
     assert _resolve_plugin_root() == plugins_root
 
 
 def test_ws_connector_normalizes_attachment_refs_without_base64_payloads() -> None:
     _install_fake_helpers()
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
     handler = ws_connector_mod.WsConnector(None, None)
 
     refs, error = handler._normalize_attachment_refs(
         [
-            "/a0/usr/uploads/chart.png",
-            {"path": "/a0/usr/uploads/diagram.png"},
+            "/aj/usr/uploads/chart.png",
+            {"path": "/aj/usr/uploads/diagram.png"},
             {"url": "https://example.test/photo.png"},
         ]
     )
 
     assert error == ""
     assert refs == [
-        "/a0/usr/uploads/chart.png",
-        "/a0/usr/uploads/diagram.png",
+        "/aj/usr/uploads/chart.png",
+        "/aj/usr/uploads/diagram.png",
         "https://example.test/photo.png",
     ]
 
 
 def test_ws_connector_rejects_base64_attachment_refs() -> None:
     _install_fake_helpers()
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
     handler = ws_connector_mod.WsConnector(None, None)
 
     refs, error = handler._normalize_attachment_refs(
@@ -1505,9 +1505,9 @@ def test_ws_connector_rejects_base64_attachment_refs() -> None:
 
 def test_ws_connector_queue_add_uses_core_message_queue() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     class FakeContext:
         def __init__(self) -> None:
@@ -1557,7 +1557,7 @@ def test_ws_connector_queue_add_uses_core_message_queue() -> None:
             {
                 "context_id": context.id,
                 "message": "queued from cli",
-                "attachments": ["/a0/usr/uploads/capture.png"],
+                "attachments": ["/aj/usr/uploads/capture.png"],
                 "client_message_id": "msg-1",
             },
             "sid-cli",
@@ -1588,7 +1588,7 @@ def test_ws_connector_queue_add_uses_core_message_queue() -> None:
 
 def test_ws_connector_queue_send_flushes_all_items() -> None:
     _install_fake_helpers()
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     class FakeContext:
         def __init__(self) -> None:
@@ -1639,9 +1639,9 @@ def test_ws_connector_queue_send_flushes_all_items() -> None:
 
 def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     ws_runtime_mod.register_sid("sid-cli")
     payload = asyncio.run(
@@ -1655,7 +1655,7 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
                     "status": "active",
                     "last_error": "",
                     "restore_token_present": True,
-                    "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+                    "artifact_root": "/aj/tmp/_aj_connector/computer_use",
                     "backend_id": "wayland",
                     "backend_family": "linux",
                     "features": ["inline-png-capture", "pointer-injection"],
@@ -1675,7 +1675,7 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
         "status": "active",
         "last_error": "",
         "restore_token_present": True,
-        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         "backend_id": "wayland",
         "backend_family": "linux",
         "features": ["inline-png-capture", "pointer-injection"],
@@ -1688,9 +1688,9 @@ def test_ws_connector_stores_computer_use_metadata_from_hello() -> None:
 
 def test_ws_connector_stores_remote_tool_metadata_from_hello() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     ws_runtime_mod.register_sid("sid-cli")
     asyncio.run(
@@ -1726,9 +1726,9 @@ def test_ws_connector_stores_remote_tool_metadata_from_hello() -> None:
 
 def test_ws_connector_hello_with_context_id_associates_remote_tool_metadata() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
 
     agent_mod = types.ModuleType("agent")
 
@@ -1773,7 +1773,7 @@ def test_ws_connector_hello_with_context_id_associates_remote_tool_metadata() ->
 
 def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     class FakeLoopData:
@@ -1798,7 +1798,7 @@ def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None
     sys.modules["helpers"].extension = extension_mod
 
     include_mod = _reload(
-        "plugins._a0_connector.extensions.python.message_loop_prompts_after."
+        "plugins._aj_connector.extensions.python.message_loop_prompts_after."
         "_76_include_remote_file_structure"
     )
 
@@ -1809,8 +1809,8 @@ def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None
     ws_runtime_mod.store_remote_tree_snapshot(
         sid,
         {
-            "root_path": r"C:\workspace\a0-connector",
-            "tree": "C:/workspace/a0-connector/\n|-- src/\n`-- pyproject.toml",
+            "root_path": r"C:\workspace\aj-connector",
+            "tree": "C:/workspace/aj-connector/\n|-- src/\n`-- pyproject.toml",
             "tree_hash": "tree-hash-1",
             "generated_at": "2026-04-14T12:00:00+00:00",
         },
@@ -1839,7 +1839,7 @@ def test_remote_file_structure_is_injected_as_extras_not_system_prompt() -> None
     assert set(loop_data.extras_temporary) == {"remote_file_structure"}
     remote_tree_prompt = loop_data.extras_temporary["remote_file_structure"]
     assert "REMOTE_TREE_EXTRAS" in remote_tree_prompt
-    assert r"C:\workspace\a0-connector" in remote_tree_prompt
+    assert r"C:\workspace\aj-connector" in remote_tree_prompt
     assert "pyproject.toml" in remote_tree_prompt
 
 
@@ -1859,14 +1859,14 @@ def _install_fake_extension_helper() -> None:
 def _load_remote_tool_stubs_extension():
     _install_fake_extension_helper()
     return _reload(
-        "plugins._a0_connector.extensions.python._functions._11_tools_prompt."
+        "plugins._aj_connector.extensions.python._functions._11_tools_prompt."
         "build_prompt.end._70_include_remote_tool_stubs"
     )
 
 
 def test_legacy_remote_tool_stubs_gate_is_noop_when_cli_capabilities_are_available() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     include_mod = _load_remote_tool_stubs_extension()
 
@@ -1908,7 +1908,7 @@ def test_legacy_remote_tool_stubs_gate_is_noop_when_cli_capabilities_are_availab
 
 def test_legacy_remote_tool_stubs_gate_is_noop_for_read_only_file_access() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     include_mod = _load_remote_tool_stubs_extension()
 
@@ -1939,7 +1939,7 @@ def test_legacy_remote_tool_stubs_gate_is_noop_for_read_only_file_access() -> No
 
 def test_remote_tool_stubs_are_not_injected_without_enabled_cli_capabilities() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
     include_mod = _load_remote_tool_stubs_extension()
 
@@ -1975,7 +1975,7 @@ def test_remote_tool_stubs_are_not_injected_without_enabled_cli_capabilities() -
 
 def test_select_remote_exec_target_sid_ignores_disabled_clients() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     for sid in ("sid-disabled", "sid-enabled"):
@@ -1990,7 +1990,7 @@ def test_select_remote_exec_target_sid_ignores_disabled_clients() -> None:
 
 def test_select_remote_exec_target_sid_requires_write_enabled_for_mutating_runtimes() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     for sid in ("sid-read-only", "sid-read-write"):
@@ -2016,9 +2016,9 @@ def test_select_remote_exec_target_sid_requires_write_enabled_for_mutating_runti
 
 def test_code_execution_remote_rejects_mutating_runtime_when_only_read_only_cli_is_subscribed() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    tool_mod = _reload("plugins._a0_connector.tools.code_execution_remote")
+    tool_mod = _reload("plugins._aj_connector.tools.code_execution_remote")
     agent = _FakeRemoteAgent()
 
     ws_runtime_mod.register_sid("sid-cli")
@@ -2208,7 +2208,7 @@ def test_code_execution_remote_forwards_reset_true_with_replacement_command() ->
 
 def test_select_remote_file_target_sid_requires_write_enabled_for_writes() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     for sid in ("sid-read-only", "sid-read-write"):
@@ -2233,9 +2233,9 @@ def test_select_remote_file_target_sid_requires_write_enabled_for_writes() -> No
 
 def test_ws_connector_chunked_file_result_resolves_pending_future() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
     handler = ws_connector_mod.WsConnector(None, None)
 
     async def _scenario() -> None:
@@ -2282,9 +2282,9 @@ def test_ws_connector_chunked_file_result_resolves_pending_future() -> None:
 
 def test_ws_connector_exec_result_resolves_pending_future() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
     handler = ws_connector_mod.WsConnector(None, None)
 
     async def _scenario() -> None:
@@ -2318,9 +2318,9 @@ def test_ws_connector_exec_result_resolves_pending_future() -> None:
 
 def test_ws_connector_computer_use_result_resolves_pending_future() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
-    ws_connector_mod = _reload("plugins._a0_connector.api.ws_connector")
+    ws_connector_mod = _reload("plugins._aj_connector.api.ws_connector")
     handler = ws_connector_mod.WsConnector(None, None)
 
     async def _scenario() -> None:
@@ -2354,7 +2354,7 @@ def test_ws_connector_computer_use_result_resolves_pending_future() -> None:
 
 def test_select_computer_use_target_sid_ignores_disabled_or_unsupported_clients() -> None:
     _install_fake_helpers()
-    ws_runtime_mod = _reload("plugins._a0_connector.helpers.ws_runtime")
+    ws_runtime_mod = _reload("plugins._aj_connector.helpers.ws_runtime")
     _reset_ws_runtime_state(ws_runtime_mod)
 
     for sid in ("sid-disabled", "sid-unsupported", "sid-enabled"):
@@ -2363,15 +2363,15 @@ def test_select_computer_use_target_sid_ignores_disabled_or_unsupported_clients(
 
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-disabled",
-        {"supported": True, "enabled": False, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
+        {"supported": True, "enabled": False, "trust_mode": "allow", "artifact_root": "/aj/tmp"},
     )
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-unsupported",
-        {"supported": False, "enabled": True, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
+        {"supported": False, "enabled": True, "trust_mode": "allow", "artifact_root": "/aj/tmp"},
     )
     ws_runtime_mod.store_sid_computer_use_metadata(
         "sid-enabled",
-        {"supported": True, "enabled": True, "trust_mode": "allow", "artifact_root": "/a0/tmp"},
+        {"supported": True, "enabled": True, "trust_mode": "allow", "artifact_root": "/aj/tmp"},
     )
 
     assert ws_runtime_mod.select_computer_use_target_sid("ctx-1") == "sid-enabled"
@@ -2392,7 +2392,7 @@ def test_computer_use_remote_rejects_when_no_enabled_cli_is_subscribed() -> None
             "supported": True,
             "enabled": False,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2437,7 +2437,7 @@ def test_computer_use_remote_status_prefers_linux_atspi_skill_hint() -> None:
             "status": "active",
             "last_error": "",
             "restore_token_present": True,
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2491,7 +2491,7 @@ def test_computer_use_remote_rearm_metadata_tells_agent_to_stop_without_dispatch
                 "the platform permission prompt."
             ),
             "restore_token_present": True,
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2544,7 +2544,7 @@ def test_computer_use_remote_runtime_rearm_result_tells_agent_to_stop() -> None:
             "status": "allow",
             "last_error": "",
             "restore_token_present": True,
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2591,7 +2591,7 @@ def test_computer_use_remote_runtime_approval_required_tells_agent_to_stop() -> 
             "status": "allow",
             "last_error": "",
             "restore_token_present": True,
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2634,7 +2634,7 @@ def test_computer_use_remote_capture_records_shared_path_image_message(tmp_path:
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2695,7 +2695,7 @@ def test_computer_use_remote_capture_uses_shared_png_path(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2729,8 +2729,8 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
             "result": {
                 "status": "active",
                 "session_id": "sess-1",
-                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/host-only.png",
-                "container_path": "/a0/tmp/_a0_connector/computer_use/ctx-1/host-only.png",
+                "host_path": "/tmp/_aj_connector/computer_use/ctx-1/host-only.png",
+                "container_path": "/aj/tmp/_aj_connector/computer_use/ctx-1/host-only.png",
                 "artifact": {
                     "filename": "host-only.png",
                     "mime": "image/png",
@@ -2754,7 +2754,7 @@ def test_computer_use_remote_capture_uses_base64_data_url_without_materializing(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2812,7 +2812,7 @@ def test_computer_use_remote_capture_prefers_shared_path_over_base64_artifact(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2840,8 +2840,8 @@ def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None
             "result": {
                 "status": "active",
                 "session_id": "sess-1",
-                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/missing.png",
-                "container_path": "/a0/tmp/_a0_connector/computer_use/ctx-1/missing.png",
+                "host_path": "/tmp/_aj_connector/computer_use/ctx-1/missing.png",
+                "container_path": "/aj/tmp/_aj_connector/computer_use/ctx-1/missing.png",
                 "width": 1,
                 "height": 1,
             },
@@ -2859,7 +2859,7 @@ def test_computer_use_remote_capture_missing_path_returns_tool_message() -> None
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2917,7 +2917,7 @@ def test_computer_use_remote_start_session_auto_refreshes_screen(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -2962,7 +2962,7 @@ def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
             "result": {
                 "status": "active",
                 "session_id": "sess-1",
-                "host_path": "/tmp/_a0_connector/computer_use/ctx-1/missing.png",
+                "host_path": "/tmp/_aj_connector/computer_use/ctx-1/missing.png",
                 "fresh": bool(payload.get("fresh")),
                 "fresh_after_satisfied": True,
                 "width": 1,
@@ -2983,7 +2983,7 @@ def test_computer_use_remote_start_session_reports_auto_capture_attach_failure(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3032,7 +3032,7 @@ def test_computer_use_remote_ax_snapshot_formats_structural_tree() -> None:
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3099,7 +3099,7 @@ def test_computer_use_remote_ax_action_auto_refreshes_screen(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3157,7 +3157,7 @@ def test_computer_use_remote_uia_snapshot_formats_structural_tree() -> None:
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3225,7 +3225,7 @@ def test_computer_use_remote_uia_action_auto_refreshes_screen(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3299,7 +3299,7 @@ def test_computer_use_remote_click_auto_refreshes_screen(
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3366,7 +3366,7 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3376,7 +3376,7 @@ def test_computer_use_remote_type_submit_sends_submit_flag_and_auto_refreshes_sc
             agent,
             action="type",
             session_id="sess-1",
-            text="Hello from Agent Zero",
+            text="Hello from Agentic Job",
             submit=True,
         ).execute()
     )
@@ -3411,7 +3411,7 @@ def test_computer_use_remote_invalid_numeric_args_return_message() -> None:
             "supported": True,
             "enabled": True,
             "trust_mode": "allow",
-            "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+            "artifact_root": "/aj/tmp/_aj_connector/computer_use",
         },
     )
 
@@ -3615,7 +3615,7 @@ def test_text_editor_remote_line_preserving_patches_refresh_state(tmp_path: Path
             edits=[{"from": 3, "to": 3, "content": "line-3b\n"}],
         ).execute()
     )
-    freshness_mod = _reload("plugins._a0_connector.helpers.text_editor_freshness")
+    freshness_mod = _reload("plugins._aj_connector.helpers.text_editor_freshness")
 
     stored = agent.data[freshness_mod._FRESHNESS_KEY][os.path.realpath(str(target))]
 

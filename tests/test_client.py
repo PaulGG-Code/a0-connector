@@ -14,8 +14,8 @@ import httpx
 import pytest
 import socketio
 
-from agent_zero_cli.attachments import AttachmentUpload
-from agent_zero_cli.client import (
+from agentic_job_cli.attachments import AttachmentUpload
+from agentic_job_cli.client import (
     A0Client,
     A0ConnectorPluginMissingError,
     A0ProtocolError,
@@ -23,7 +23,7 @@ from agent_zero_cli.client import (
     _ensure_aiohttp_ws_timeout_compat,
     _socketio_client_kwargs,
 )
-from agent_zero_cli.config import (
+from agentic_job_cli.config import (
     load_config,
     normalize_computer_use_trust_mode,
     save_computer_use_enabled,
@@ -57,9 +57,9 @@ async def self_signed_connector_server():
     async def capabilities(_request: web.Request) -> web.Response:
         return web.json_response(
             {
-                "protocol": "a0-connector.v1",
+                "protocol": "aj-connector.v1",
                 "websocket_namespace": "/ws",
-                "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+                "websocket_handlers": ["plugins/_aj_connector/ws_connector"],
                 "auth": ["session"],
                 "auth_required": False,
                 "features": [],
@@ -70,12 +70,12 @@ async def self_signed_connector_server():
         return web.json_response({"contexts": []})
 
     app.router.add_get("/socket.io", socketio_probe_alias)
-    app.router.add_post("/api/plugins/_a0_connector/v1/capabilities", capabilities)
-    app.router.add_post("/api/plugins/_a0_connector/v1/chats_list", chats_list)
+    app.router.add_post("/api/plugins/_aj_connector/v1/capabilities", capabilities)
+    app.router.add_post("/api/plugins/_aj_connector/v1/chats_list", chats_list)
 
     @sio_server.event(namespace="/ws")
     async def connect(_sid: str, _environ: dict, auth: dict | None) -> bool:
-        return auth == {"handlers": ["plugins/_a0_connector/ws_connector"]}
+        return auth == {"handlers": ["plugins/_aj_connector/ws_connector"]}
 
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ssl_context.load_cert_chain(_SELF_SIGNED_CERT, _SELF_SIGNED_KEY)
@@ -149,7 +149,7 @@ async def test_fetch_image_uses_authenticated_core_endpoint() -> None:
         )
     )
 
-    content, mime = await client.fetch_image("/a0/usr/uploads/scan.png")
+    content, mime = await client.fetch_image("/aj/usr/uploads/scan.png")
 
     assert (content, mime) == (b"png-bytes", "image/png")
     client.http.get.assert_awaited_once_with(
@@ -159,7 +159,7 @@ async def test_fetch_image_uses_authenticated_core_endpoint() -> None:
     client.http.stream.assert_called_once_with(
         "GET",
         "http://agent.test/api/image_get",
-        params={"path": "/a0/usr/uploads/scan.png"},
+        params={"path": "/aj/usr/uploads/scan.png"},
         headers={
             "Origin": "http://agent.test",
             "Referer": "http://agent.test/",
@@ -185,7 +185,7 @@ async def test_fetch_image_refreshes_csrf_after_forbidden_response() -> None:
         ]
     )
 
-    assert await client.fetch_image("/a0/usr/uploads/scan.png") == (
+    assert await client.fetch_image("/aj/usr/uploads/scan.png") == (
         b"png-bytes",
         "image/png",
     )
@@ -212,7 +212,7 @@ async def test_fetch_image_refreshes_csrf_at_most_once() -> None:
     )
 
     with pytest.raises(A0ProtocolError, match="HTTP 403") as exc_info:
-        await client.fetch_image("/a0/usr/uploads/scan.png")
+        await client.fetch_image("/aj/usr/uploads/scan.png")
 
     assert "forbidden response" not in str(exc_info.value)
     assert client.http.get.await_count == 2
@@ -227,7 +227,7 @@ async def test_fetch_image_normalizes_jpg_mime_type() -> None:
         return_value=FakeResponse(content=b"jpg-bytes", headers={"content-type": "image/jpg"})
     )
 
-    assert await client.fetch_image("/a0/usr/uploads/scan.jpg") == (b"jpg-bytes", "image/jpeg")
+    assert await client.fetch_image("/aj/usr/uploads/scan.jpg") == (b"jpg-bytes", "image/jpeg")
 
 
 @pytest.mark.parametrize(
@@ -259,7 +259,7 @@ async def test_fetch_image_retries_one_transient_failure(
         ]
     )
 
-    assert await client.fetch_image("/a0/usr/uploads/scan.png") == (b"png", "image/png")
+    assert await client.fetch_image("/aj/usr/uploads/scan.png") == (b"png", "image/png")
     assert client.http.stream.call_count == expected_calls
 
 
@@ -303,7 +303,7 @@ async def test_fetch_image_rejects_unsafe_or_invalid_responses(
     client.http.stream = Mock(side_effect=responses)
 
     with pytest.raises(A0ProtocolError) as exc_info:
-        await client.fetch_image("/a0/usr/uploads/scan.png")
+        await client.fetch_image("/aj/usr/uploads/scan.png")
 
     assert "not image" not in str(exc_info.value)
     assert "x" * 100 not in str(exc_info.value)
@@ -320,7 +320,7 @@ async def test_fetch_image_stops_streaming_above_limit() -> None:
     client.http.stream = Mock(return_value=response)
 
     with pytest.raises(A0ProtocolError, match="size limit"):
-        await client.fetch_image("/a0/usr/uploads/scan.png")
+        await client.fetch_image("/aj/usr/uploads/scan.png")
 
     assert response.read_chunks == 2
 
@@ -331,16 +331,16 @@ async def test_fetch_image_stops_streaming_above_limit() -> None:
         "",
         "uploads/scan.png",
         "/other/scan.png",
-        "//a0/usr/uploads/scan.png",
-        "/a0/usr/../secret.png",
-        "/a0/usr/%2e%2e/secret.png",
-        "/a0/usr/%252e%252e/secret.png",
-        "/a0/usr/%2525252e%2525252e/secret.png",
-        "/a0/usr/uploads/scan.png%2525253fraw=1",
-        "/a0/usr/uploads/scan.png%25252523frame",
-        "/a0/usr/uploads%2525255csecret.png",
-        "/a0/usr/uploads/scan.png?raw=1",
-        "/a0/usr/uploads/scan.png#frame",
+        "//aj/usr/uploads/scan.png",
+        "/aj/usr/../secret.png",
+        "/aj/usr/%2e%2e/secret.png",
+        "/aj/usr/%252e%252e/secret.png",
+        "/aj/usr/%2525252e%2525252e/secret.png",
+        "/aj/usr/uploads/scan.png%2525253fraw=1",
+        "/aj/usr/uploads/scan.png%25252523frame",
+        "/aj/usr/uploads%2525255csecret.png",
+        "/aj/usr/uploads/scan.png?raw=1",
+        "/aj/usr/uploads/scan.png#frame",
     ],
 )
 async def test_fetch_image_rejects_unsafe_agent_zero_paths(path: str) -> None:
@@ -424,7 +424,7 @@ def test_load_config_prefers_environment_over_dotenv(
     monkeypatch.setenv("AGENT_ZERO_LAST_CONTEXT_ID", "ctx-env")
     monkeypatch.setenv("AGENT_ZERO_LAST_CONTEXT_HOST", "http://env-host:1234")
     monkeypatch.setenv("AGENT_ZERO_DEFAULT_CONTEXT_ID", "ctx-default-env")
-    monkeypatch.setenv("A0_REMOTE_EXEC", "1")
+    monkeypatch.setenv("AJ_REMOTE_EXEC", "1")
 
     env_dir = tmp_path / ".agent-zero"
     env_dir.mkdir()
@@ -435,7 +435,7 @@ def test_load_config_prefers_environment_over_dotenv(
                 "AGENT_ZERO_HOST=http://dotenv-host:5080",
                 "AGENT_ZERO_LAST_CONTEXT_ID=ctx-dotenv",
                 "AGENT_ZERO_LAST_CONTEXT_HOST=http://dotenv-host:5080",
-                "A0_DEFAULT_CHAT=ctx-default-dotenv",
+                "AJ_DEFAULT_CHAT=ctx-default-dotenv",
                 "AGENT_ZERO_REMOTE_EXEC_ENABLED=0",
             )
         )
@@ -443,7 +443,7 @@ def test_load_config_prefers_environment_over_dotenv(
         encoding="utf-8",
     )
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
     config = load_config()
@@ -465,15 +465,15 @@ def test_load_config_reads_default_chat_and_remote_exec_from_dotenv(
     env_file.write_text(
         "\n".join(
             (
-                "A0_DEFAULT_CHAT=ctx-default",
-                "A0_REMOTE_EXEC=true",
+                "AJ_DEFAULT_CHAT=ctx-default",
+                "AJ_REMOTE_EXEC=true",
             )
         )
         + "\n",
         encoding="utf-8",
     )
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
     config = load_config()
@@ -491,7 +491,7 @@ def test_load_config_reads_remember_host_from_dotenv_and_env(
     env_file = env_dir / ".env"
     env_file.write_text("AGENT_ZERO_REMEMBER_HOST=1\n", encoding="utf-8")
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -513,7 +513,7 @@ def test_save_env_updates_existing_key(
     env_file = env_dir / ".env"
     env_file.write_text("AGENT_ZERO_HOST=http://old:5080\n", encoding="utf-8")
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -531,7 +531,7 @@ def test_save_last_context_updates_host_and_context(
     env_file = env_dir / ".env"
     env_file.write_text("AGENT_ZERO_HOST=http://old:5080\n", encoding="utf-8")
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -562,7 +562,7 @@ def test_load_config_reads_computer_use_defaults_and_overrides(
         encoding="utf-8",
     )
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -590,7 +590,7 @@ def test_save_computer_use_settings_persist_to_dotenv(
     env_dir.mkdir()
     env_file = env_dir / ".env"
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -614,7 +614,7 @@ def test_save_remember_host_persists_flag_to_dotenv(
     env_dir.mkdir()
     env_file = env_dir / ".env"
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -646,7 +646,7 @@ async def test_default_httpx_rejects_self_signed_https_connector_fixture() -> No
     async with self_signed_connector_server() as base_url:
         async with httpx.AsyncClient(timeout=5.0) as client:
             with pytest.raises(httpx.ConnectError):
-                await client.post(f"{base_url}/api/plugins/_a0_connector/v1/capabilities")
+                await client.post(f"{base_url}/api/plugins/_aj_connector/v1/capabilities")
 
 
 async def test_fetch_capabilities_accepts_self_signed_https_connector() -> None:
@@ -655,7 +655,7 @@ async def test_fetch_capabilities_accepts_self_signed_https_connector() -> None:
         try:
             capabilities = await client.fetch_capabilities()
 
-            assert capabilities["protocol"] == "a0-connector.v1"
+            assert capabilities["protocol"] == "aj-connector.v1"
             assert await client.verify_session() is True
         finally:
             await client.disconnect()
@@ -696,7 +696,7 @@ async def test_connect_websocket_forwards_session_cookie_and_handler_auth() -> N
                     "Origin": "http://127.0.0.1:50001",
                     "Referer": "http://127.0.0.1:50001/",
                 },
-                "auth": {"handlers": ["plugins/_a0_connector/ws_connector"]},
+                "auth": {"handlers": ["plugins/_aj_connector/ws_connector"]},
             },
         )
     ]
@@ -711,7 +711,7 @@ def test_persisted_session_round_trip_restores_cookie_header(
     env_file = env_dir / ".env"
     session_file = env_dir / "session_cookies.json"
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
@@ -762,7 +762,7 @@ async def test_set_model_override_posts_complete_model_payload() -> None:
 
     assert result == {"ok": True}
     client.http.post.assert_awaited_once_with(
-        "http://example.test/api/plugins/_a0_connector/v1/model_switcher",
+        "http://example.test/api/plugins/_aj_connector/v1/model_switcher",
         json={
             "action": "set_override",
             "context_id": "ctx-1",
@@ -783,7 +783,7 @@ async def test_list_skills_posts_context_scoped_payload() -> None:
                 "data": [
                     {
                         "name": "a0-live-e2e-tester",
-                        "path": "/a0/skills/a0-live-e2e-tester",
+                        "path": "/aj/skills/a0-live-e2e-tester",
                     }
                 ],
             }
@@ -793,13 +793,13 @@ async def test_list_skills_posts_context_scoped_payload() -> None:
     result = await client.list_skills(context_id="ctx-1", project_name="agent-zero")
 
     client.http.post.assert_awaited_once_with(
-        "http://example.test/api/plugins/_a0_connector/v1/skills_list",
+        "http://example.test/api/plugins/_aj_connector/v1/skills_list",
         json={"context_id": "ctx-1", "project_name": "agent-zero"},
     )
     assert result == [
         {
             "name": "a0-live-e2e-tester",
-            "path": "/a0/skills/a0-live-e2e-tester",
+            "path": "/aj/skills/a0-live-e2e-tester",
         }
     ]
 
@@ -848,7 +848,7 @@ async def test_activate_skill_posts_context_scoped_payload() -> None:
                 "ok": True,
                 "skill": {
                     "name": "imagegen",
-                    "path": "/a0/skills/imagegen",
+                    "path": "/aj/skills/imagegen",
                 },
             }
         )
@@ -856,16 +856,16 @@ async def test_activate_skill_posts_context_scoped_payload() -> None:
 
     result = await client.activate_skill(
         "ctx-1",
-        {"name": "imagegen", "path": "/a0/skills/imagegen", "extra": "ignored"},
+        {"name": "imagegen", "path": "/aj/skills/imagegen", "extra": "ignored"},
     )
 
     client.http.post.assert_awaited_once_with(
-        "http://example.test/api/plugins/_a0_connector/v1/skills_activate",
+        "http://example.test/api/plugins/_aj_connector/v1/skills_activate",
         json={
             "context_id": "ctx-1",
             "skill": {
                 "name": "imagegen",
-                "path": "/a0/skills/imagegen",
+                "path": "/aj/skills/imagegen",
             },
         },
     )
@@ -873,7 +873,7 @@ async def test_activate_skill_posts_context_scoped_payload() -> None:
         "ok": True,
         "skill": {
             "name": "imagegen",
-            "path": "/a0/skills/imagegen",
+            "path": "/aj/skills/imagegen",
         },
     }
 
@@ -899,7 +899,7 @@ async def test_list_installed_plugins_posts_installed_only_endpoint() -> None:
     result = await client.list_installed_plugins()
 
     client.http.post.assert_awaited_once_with(
-        "http://example.test/api/plugins/_a0_connector/v1/installed_plugins",
+        "http://example.test/api/plugins/_aj_connector/v1/installed_plugins",
         json={"action": "list"},
     )
     assert result == [
@@ -919,7 +919,7 @@ async def test_set_installed_plugin_enabled_posts_connector_toggle_payload() -> 
     result = await client.set_installed_plugin_enabled("_browser", False)
 
     client.http.post.assert_awaited_once_with(
-        "http://example.test/api/plugins/_a0_connector/v1/installed_plugins",
+        "http://example.test/api/plugins/_aj_connector/v1/installed_plugins",
         json={
             "action": "set_enabled",
             "plugin_name": "_browser",
@@ -936,7 +936,7 @@ async def test_set_installed_plugin_enabled_returns_structured_error() -> None:
         return_value=FakeResponse(status_code=400, text="Plugin cannot be toggled")
     )
 
-    result = await client.set_installed_plugin_enabled("_a0_connector", False)
+    result = await client.set_installed_plugin_enabled("_aj_connector", False)
 
     assert result == {
         "ok": False,
@@ -1090,10 +1090,10 @@ async def test_send_message_includes_attachment_refs() -> None:
         }
     )
 
-    await client.send_message("see attached", "ctx-1", attachments=["/a0/usr/uploads/clipboard.png"])
+    await client.send_message("see attached", "ctx-1", attachments=["/aj/usr/uploads/clipboard.png"])
 
     _event, payload, _namespace = client.sio.call_calls[0]
-    assert payload["attachments"] == ["/a0/usr/uploads/clipboard.png"]
+    assert payload["attachments"] == ["/aj/usr/uploads/clipboard.png"]
 
 
 async def test_add_message_to_queue_uses_queue_ws_event() -> None:
@@ -1107,7 +1107,7 @@ async def test_add_message_to_queue_uses_queue_ws_event() -> None:
     result = await client.add_message_to_queue(
         "later",
         "ctx-1",
-        attachments=["/a0/usr/uploads/clipboard.png"],
+        attachments=["/aj/usr/uploads/clipboard.png"],
     )
 
     assert result == {"context_id": "ctx-1", "status": "queued"}
@@ -1116,7 +1116,7 @@ async def test_add_message_to_queue_uses_queue_ws_event() -> None:
     assert namespace == "/ws"
     assert payload["context_id"] == "ctx-1"
     assert payload["message"] == "later"
-    assert payload["attachments"] == ["/a0/usr/uploads/clipboard.png"]
+    assert payload["attachments"] == ["/aj/usr/uploads/clipboard.png"]
     assert payload["client_message_id"]
 
 
@@ -1190,7 +1190,7 @@ async def test_upload_attachments_posts_files_to_core_upload_endpoint() -> None:
             "X-CSRF-Token": "csrf-1",
         },
     )
-    assert refs[0].path == "/a0/usr/uploads/stored-image.png"
+    assert refs[0].path == "/aj/usr/uploads/stored-image.png"
     assert refs[0].name == "stored-image.png"
     assert refs[0].mime_type == "image/png"
 
@@ -1221,7 +1221,7 @@ async def test_upload_attachments_refreshes_csrf_after_forbidden_response() -> N
         ]
     )
 
-    assert refs[0].path == "/a0/usr/uploads/stored-image.png"
+    assert refs[0].path == "/aj/usr/uploads/stored-image.png"
     assert client.http.get.await_count == 2
     assert client.http.post.await_args_list[0].kwargs["headers"]["X-CSRF-Token"] == "csrf-old"
     assert client.http.post.await_args_list[1].kwargs["headers"]["X-CSRF-Token"] == "csrf-new"
@@ -1288,7 +1288,7 @@ async def test_send_hello_returns_exec_config_payload() -> None:
                 {
                     "ok": True,
                     "data": {
-                        "protocol": "a0-connector.v1",
+                        "protocol": "aj-connector.v1",
                         "features": ["code_execution_remote"],
                         "exec_config": {
                             "version": 1,
@@ -1302,25 +1302,25 @@ async def test_send_hello_returns_exec_config_payload() -> None:
 
     result = await client.send_hello()
 
-    assert result["protocol"] == "a0-connector.v1"
+    assert result["protocol"] == "aj-connector.v1"
     assert result["exec_config"]["version"] == 1
     event, payload, namespace = client.sio.call_calls[0]
     assert event == "connector_hello"
     assert namespace == "/ws"
-    assert payload["protocol"] == "a0-connector.v1"
+    assert payload["protocol"] == "aj-connector.v1"
 
 
 async def test_send_hello_includes_computer_use_metadata() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.sio = FakeSocketIOClient(
-        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+        call_response={"results": [{"ok": True, "data": {"protocol": "aj-connector.v1"}}]}
     )
 
     metadata = {
         "supported": True,
         "enabled": True,
         "trust_mode": "allow",
-        "artifact_root": "/a0/tmp/_a0_connector/computer_use",
+        "artifact_root": "/aj/tmp/_aj_connector/computer_use",
     }
     await client.send_hello(computer_use=metadata)
 
@@ -1333,7 +1333,7 @@ async def test_send_hello_includes_computer_use_metadata() -> None:
 async def test_send_hello_includes_remote_file_and_exec_metadata() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.sio = FakeSocketIOClient(
-        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+        call_response={"results": [{"ok": True, "data": {"protocol": "aj-connector.v1"}}]}
     )
 
     remote_files = {
@@ -1356,7 +1356,7 @@ async def test_send_hello_includes_remote_file_and_exec_metadata() -> None:
 async def test_send_hello_includes_host_browser_metadata() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.sio = FakeSocketIOClient(
-        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+        call_response={"results": [{"ok": True, "data": {"protocol": "aj-connector.v1"}}]}
     )
 
     metadata = {
@@ -1378,7 +1378,7 @@ async def test_send_hello_includes_host_browser_metadata() -> None:
 async def test_send_hello_includes_context_id_for_metadata_refresh() -> None:
     client = A0Client("http://127.0.0.1:50001")
     client.sio = FakeSocketIOClient(
-        call_response={"results": [{"ok": True, "data": {"protocol": "a0-connector.v1"}}]}
+        call_response={"results": [{"ok": True, "data": {"protocol": "aj-connector.v1"}}]}
     )
 
     await client.send_hello(context_id=" ctx-1 ", remote_exec={"enabled": True})
@@ -1422,7 +1422,7 @@ async def test_set_agent_profile_posts_context_scoped_payload() -> None:
     result = await client.set_agent_profile("ctx-1", "developer")
 
     client.http.post.assert_awaited_once_with(
-        "http://localhost:5080/api/plugins/_a0_connector/v1/agent_profile_set",
+        "http://localhost:5080/api/plugins/_aj_connector/v1/agent_profile_set",
         json={"context_id": "ctx-1", "agent_profile": "developer"},
     )
     assert result == {
@@ -1458,7 +1458,7 @@ async def test_agent_editor_and_scoped_chat_creation_use_connector_endpoints() -
     assert context_id == "ctx-2"
     assert client.http.post.await_args_list == [
         call(
-            "http://localhost:5080/api/plugins/_a0_connector/v1/agent_editor",
+            "http://localhost:5080/api/plugins/_aj_connector/v1/agent_editor",
             json={
                 "action": "quick_create",
                 "context_id": "ctx-1",
@@ -1467,7 +1467,7 @@ async def test_agent_editor_and_scoped_chat_creation_use_connector_endpoints() -
             },
         ),
         call(
-            "http://localhost:5080/api/plugins/_a0_connector/v1/chat_create",
+            "http://localhost:5080/api/plugins/_aj_connector/v1/chat_create",
             json={
                 "current_context": "ctx-1",
                 "agent_profile": "source-scout",
@@ -1490,7 +1490,7 @@ async def test_set_browser_runtime_posts_host_browser_selection() -> None:
     )
 
     client.http.post.assert_awaited_once_with(
-        "http://localhost:5080/api/plugins/_a0_connector/v1/browser_runtime",
+        "http://localhost:5080/api/plugins/_aj_connector/v1/browser_runtime",
         json={
             "action": "set",
             "context_id": "ctx-1",

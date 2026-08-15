@@ -1,10 +1,10 @@
-# Agent Zero Connector - DOX Rail
+# Agentic Job Connector - DOX Rail
 
 ## Purpose
 
-- Define the project-wide DOX contract for `a0-connector`.
+- Define the project-wide DOX contract for `aj-connector`.
 - Keep every source file, durable document, workflow, and artifact understandable from this root `AGENTS.md` plus the nearest child `AGENTS.md`.
-- Preserve the connector's two-part product shape: the `a0` Textual CLI in this repo, and the builtin `_a0_connector` Agent Zero Core plugin outside this repo.
+- Preserve the connector's two-part product shape: the `aj` Textual CLI in this repo, and the builtin `_aj_connector` Agentic Job Core plugin outside this repo.
 
 ## Ownership
 
@@ -29,14 +29,14 @@
 ### Product Contracts
 
 - Tech stack: Python 3.10+, Textual 8+, `httpx`, `aiohttp`, `python-socketio` / Engine.IO.
-- Run the TUI with `a0` or `./.venv/bin/python -m agent_zero_cli`.
+- Run the TUI with `aj` or `./.venv/bin/python -m agentic_job_cli`.
 - Launcher direct-connect path is `a0 --host <local-url> --no-docker-discovery --connect`; `--host` selects the target URL, `--no-docker-discovery` skips Docker discovery, and `--connect` connects immediately instead of opening the host picker.
-- Run the plain stdin/stdout connector with `a0 headless`; use
-  `a0 headless --print` for one-shot pipe-friendly runs.
-- Run the Launcher-owned tools-only connector with `a0 gateway`. It is a
+- Run the plain stdin/stdout connector with `aj headless`; use
+  `aj headless --print` for one-shot pipe-friendly runs.
+- Run the Launcher-owned tools-only connector with `aj gateway`. It is a
   Textual-free, newline-delimited JSON stdin/stdout contract and must not create,
   select, or subscribe to a chat.
-- Interactive transcript images use `A0_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
+- Interactive transcript images use `AJ_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
   Automatic selection combines reliable terminal capability advertisements,
   live protocol probes, and compatibility exclusions for terminals that report
   only a protocol subset. A false-positive native probe must fall back cleanly
@@ -57,25 +57,25 @@
   CLI environments.
 - Use Linux commands and paths by default. Prefer `./.venv/bin/python`, not Windows-only virtualenv paths.
 - UI preview is the primary loop for TUI work: `./.venv/bin/python devtools/serve.py` at `http://localhost:8566`.
-- The CLI talks to Agent Zero through the connector protocol `a0-connector.v1`, HTTP routes under `/api/plugins/_a0_connector/v1/`, and Socket.IO events on namespace `/ws` with `connector_*` event names.
+- The CLI talks to Agentic Job through the connector protocol `aj-connector.v1`, HTTP routes under `/api/plugins/_aj_connector/v1/`, and Socket.IO events on namespace `/ws` with `connector_*` event names.
 
 ### Plugin Backend
 
-- The builtin `_a0_connector` plugin is not vendored here. It lives in Agent Zero Core under `plugins/_a0_connector`.
-- For this workstation, the real Agent Zero Core plugin repo is `/home/eclypso/a0/agent-zero/plugins`.
-- When testing Dockerized Agent Zero backend behavior, verify the exact live runtime named for the task instead of assuming a fixed localhost port.
-- When explicitly asked or approved to change plugin/backend code outside this repo, keep the live runtime copy and `/home/eclypso/a0/agent-zero/plugins` in sync.
-- Plugin code must not import `agent`, `initialize`, or `helpers.projects` at module level. Import Agent Zero internals inside handler methods.
+- The builtin `_aj_connector` plugin is not vendored here. It lives in Agentic Job Core under `plugins/_aj_connector`.
+- For this workstation, the real Agentic Job Core plugin repo is `/home/eclypso/aj/agent-zero/plugins`.
+- When testing Dockerized Agentic Job backend behavior, verify the exact live runtime named for the task instead of assuming a fixed localhost port.
+- When explicitly asked or approved to change plugin/backend code outside this repo, keep the live runtime copy and `/home/eclypso/aj/agent-zero/plugins` in sync.
+- Plugin code must not import `agent`, `initialize`, or `helpers.projects` at module level. Import Agentic Job internals inside handler methods.
 - In plugin `api/ws_connector.py`, `from_sequence` is a log-output cursor (`LogOutput.end`), not a connector event sequence. Do not mix cursor and event sequence domains.
 - Large chat history must replay through bounded `connector_context_snapshot` pages before live streaming. Do not send full transcripts in a single WebSocket frame or turn old history into live `connector_context_event` messages.
 
 ### Safety And Permissions
 
 - Allowed without asking: read files, edit repo source/docs/tests/devtools/requirements/constraints/AGENTS docs, run devtools scripts, and run pytest.
-- Ask before installing new dependencies, editing external Agent Zero plugin/backend files, deleting files outside normal generated outputs, or making git commits/pushes.
+- Ask before installing new dependencies, editing external Agentic Job plugin/backend files, deleting files outside normal generated outputs, or making git commits/pushes.
 - Never hardcode API keys, tokens, passwords, cookies, or connector secrets.
 - Do not persist usernames, passwords, connector tokens, or API keys. Protected
-  Agent Zero web sessions may persist browser-style session cookies only through
+  Agentic Job web sessions may persist browser-style session cookies only through
   the existing remembered-host/session flow.
 - Never use destructive git commands such as `git reset --hard` or `git checkout --` unless the user explicitly asks.
 - Preserve user work. If the worktree contains unrelated changes, leave them alone.
@@ -94,8 +94,8 @@
 
 - The operating shell is `bash` on Ubuntu Linux.
 - Prefer Linux paths and command examples unless a Windows or macOS-specific file requires platform-specific wording.
-- Treat plugin/backend discussion as connected to the explicitly named Dockerized Agent Zero runtime when one is in scope.
-- Always mirror live Agent Zero Core plugin runtime changes into `/home/eclypso/a0/agent-zero/plugins` when backend/plugin changes are in scope.
+- Treat plugin/backend discussion as connected to the explicitly named Dockerized Agentic Job runtime when one is in scope.
+- Always mirror live Agentic Job Core plugin runtime changes into `/home/eclypso/aj/agent-zero/plugins` when backend/plugin changes are in scope.
 - Aim for solutions that unite rigor and elegance: concise, technically strong, and beautiful in the small details.
 
 ## Verification

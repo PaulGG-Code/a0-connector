@@ -8,15 +8,15 @@ from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widgets import Static
 
-from agent_zero_cli.screens.chat_list import ChatListScreen
-from agent_zero_cli.screens.installed_plugins import InstalledPluginsScreen
-from agent_zero_cli.screens.model_presets import ModelPresetsScreen
+from agentic_job_cli.screens.chat_list import ChatListScreen
+from agentic_job_cli.screens.installed_plugins import InstalledPluginsScreen
+from agentic_job_cli.screens.model_presets import ModelPresetsScreen
 
 
 pytestmark = pytest.mark.anyio
 
 PopoverKind = Literal["chat", "plugins", "model-presets"]
-APP_CSS_PATH = Path(__file__).resolve().parents[1] / "src/agent_zero_cli/styles/app.tcss"
+APP_CSS_PATH = Path(__file__).resolve().parents[1] / "src/agentic_job_cli/styles/app.tcss"
 
 
 class PopoverBackdropHarness(App[None]):

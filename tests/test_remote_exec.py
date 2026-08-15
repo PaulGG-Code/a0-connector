@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from agent_zero_cli import remote_exec
-from agent_zero_cli.remote_exec import LocalShellSession, RemoteExecManager
+from agentic_job_cli import remote_exec
+from agentic_job_cli.remote_exec import LocalShellSession, RemoteExecManager
 
 
 pytestmark = pytest.mark.anyio
@@ -45,13 +45,13 @@ class FakeShellSession:
             self.command_completed = True
             return
 
-        if "A0_PY_CODE" in command:
+        if "AJ_PY_CODE" in command:
             self._full_output = "42\r\n"
             self._partial_output = self._full_output
             self.command_completed = True
             return
 
-        if "A0_NODE_CODE" in command:
+        if "AJ_NODE_CODE" in command:
             self._full_output = "node ok\r\n"
             self._partial_output = self._full_output
             self.command_completed = True
@@ -254,12 +254,12 @@ async def test_terminal_python_and_nodejs_runtimes_are_supported(
 
     assert python_result["ok"] is True
     assert python_result["result"]["output"] == "42"
-    assert "A0_PY_CODE" in created_shells[1].commands[0]
+    assert "AJ_PY_CODE" in created_shells[1].commands[0]
     assert sys.executable in created_shells[1].commands[0]
 
     assert node_result["ok"] is True
     assert node_result["result"]["output"] == "node ok"
-    assert "A0_NODE_CODE" in created_shells[2].commands[0]
+    assert "AJ_NODE_CODE" in created_shells[2].commands[0]
 
     await manager.close()
 

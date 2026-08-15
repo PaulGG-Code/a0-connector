@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_zero_cli import __main__
-from agent_zero_cli import __version__
+from agentic_job_cli import __main__
+from agentic_job_cli import __version__
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -47,7 +47,7 @@ def test_main_help_exits_without_launching_app(
 
     captured = capsys.readouterr()
     assert exc_info.value.code == 0
-    assert "usage: a0" in captured.out
+    assert "usage: aj" in captured.out
     assert "--host URL" in captured.out
     assert "--chat CONTEXT_ID" in captured.out
     assert "--chat-last" in captured.out
@@ -216,15 +216,15 @@ def test_main_gateway_routes_without_loading_textual(
 def test_headless_and_gateway_launchers_do_not_import_terminal_image_renderer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_zero_cli import config as config_mod
-    from agent_zero_cli import gateway as gateway_mod
-    from agent_zero_cli.headless import runner as headless_runner
+    from agentic_job_cli import config as config_mod
+    from agentic_job_cli import gateway as gateway_mod
+    from agentic_job_cli.headless import runner as headless_runner
 
     for module_name in (
         "textual_image",
-        "agent_zero_cli.app",
-        "agent_zero_cli.image_store",
-        "agent_zero_cli.widgets.image_entry",
+        "agentic_job_cli.app",
+        "agentic_job_cli.image_store",
+        "agentic_job_cli.widgets.image_entry",
     ):
         monkeypatch.delitem(sys.modules, module_name, raising=False)
     monkeypatch.setattr(config_mod, "load_config", lambda: SimpleNamespace(instance_url=""))
@@ -242,18 +242,18 @@ def test_headless_and_gateway_launchers_do_not_import_terminal_image_renderer(
         browser_selection="",
     ) == 0
     assert "textual_image" not in sys.modules
-    assert "agent_zero_cli.app" not in sys.modules
-    assert "agent_zero_cli.image_store" not in sys.modules
-    assert "agent_zero_cli.widgets.image_entry" not in sys.modules
+    assert "agentic_job_cli.app" not in sys.modules
+    assert "agentic_job_cli.image_store" not in sys.modules
+    assert "agentic_job_cli.widgets.image_entry" not in sys.modules
 
 
 def test_run_app_installs_textual_input_decoder_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from agent_zero_cli import app as app_mod
-    from agent_zero_cli import config as config_mod
-    from agent_zero_cli import image_render
-    from agent_zero_cli import textual_compat
+    from agentic_job_cli import app as app_mod
+    from agentic_job_cli import config as config_mod
+    from agentic_job_cli import image_render
+    from agentic_job_cli import textual_compat
 
     calls: list[str] = []
 

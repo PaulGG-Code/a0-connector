@@ -4,7 +4,7 @@ import pytest
 from textual import events
 from textual.app import App, ComposeResult
 
-from agent_zero_cli.widgets import ChatInput
+from agentic_job_cli.widgets import ChatInput
 
 
 pytestmark = pytest.mark.anyio
@@ -41,7 +41,7 @@ async def test_chat_input_soft_wrapped_text_grows_to_four_rows() -> None:
         await pilot.pause()
 
         input_widget.value = (
-            "This is a long draft typed into the Agent Zero CLI composer to verify "
+            "This is a long draft typed into the Agentic Job CLI composer to verify "
             "whether soft wrapped text makes the input box grow to three or four "
             "visible rows instead of staying constrained to a single line."
         )

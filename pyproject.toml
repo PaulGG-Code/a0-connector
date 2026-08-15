@@ -11,14 +11,14 @@ requires = [
 build-backend = "hatchling.build"
 
 [project]
-name = "a0"
+name = "aj"
 version = "2.9"
-description = "Terminal chat interface for Agent Zero"
+description = "Terminal chat interface for Agentic Job"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.10"
 authors = [
-    { name = "agent0ai" },
+    { name = "PaulGG-Code" },
 ]
 keywords = ["agent-zero", "a0", "cli", "textual", "tui"]
 classifiers = [
@@ -88,22 +88,22 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/agent0ai/a0-connector"
-Repository = "https://github.com/agent0ai/a0-connector"
-Issues = "https://github.com/agent0ai/a0-connector/issues"
+Homepage = "https://github.com/PaulGG-Code/aj-connector"
+Repository = "https://github.com/PaulGG-Code/aj-connector"
+Issues = "https://github.com/PaulGG-Code/aj-connector/issues"
 
 [project.scripts]
-a0 = "agent_zero_cli.__main__:main"
+aj = "agentic_job_cli.__main__:main"
 
-[project.entry-points."a0.computer_use_backends"]
-wayland = "a0_computer_use_wayland.backend:WAYLAND_BACKEND_SPEC"
-macos = "a0_computer_use_macos.backend:MACOS_BACKEND_SPEC"
-windows = "a0_computer_use_windows.backend:WINDOWS_BACKEND_SPEC"
+[project.entry-points."aj.computer_use_backends"]
+wayland = "aj_computer_use_wayland.backend:WAYLAND_BACKEND_SPEC"
+macos = "aj_computer_use_macos.backend:MACOS_BACKEND_SPEC"
+windows = "aj_computer_use_windows.backend:WINDOWS_BACKEND_SPEC"
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "src/agent_zero_cli",
-    "packages/a0-computer-use-wayland/src/a0_computer_use_wayland",
-    "packages/a0-computer-use-macos/src/a0_computer_use_macos",
-    "packages/a0-computer-use-windows/src/a0_computer_use_windows",
+    "src/agentic_job_cli",
+    "packages/aj-computer-use-wayland/src/aj_computer_use_wayland",
+    "packages/aj-computer-use-macos/src/aj_computer_use_macos",
+    "packages/aj-computer-use-windows/src/aj_computer_use_windows",
 ]

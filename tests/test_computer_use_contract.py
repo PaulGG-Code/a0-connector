@@ -3,22 +3,22 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from agent_zero_cli.computer_use_backend import COMPUTER_USE_CONTRACT_VERSION
+from agentic_job_cli.computer_use_backend import COMPUTER_USE_CONTRACT_VERSION
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 for package in (
-    "a0-computer-use-windows",
-    "a0-computer-use-macos",
-    "a0-computer-use-wayland",
+    "aj-computer-use-windows",
+    "aj-computer-use-macos",
+    "aj-computer-use-wayland",
 ):
     package_src = PROJECT_ROOT / "packages" / package / "src"
     if str(package_src) not in sys.path:
         sys.path.insert(0, str(package_src))
 
-from a0_computer_use_macos.backend import MACOS_BACKEND_SPEC  # noqa: E402
-from a0_computer_use_wayland import WAYLAND_BACKEND_SPEC  # noqa: E402
-from a0_computer_use_windows.backend import WINDOWS_BACKEND_SPEC  # noqa: E402
+from aj_computer_use_macos.backend import MACOS_BACKEND_SPEC  # noqa: E402
+from aj_computer_use_wayland import WAYLAND_BACKEND_SPEC  # noqa: E402
+from aj_computer_use_windows.backend import WINDOWS_BACKEND_SPEC  # noqa: E402
 
 
 def test_windows_uia_advertises_full_background_contract() -> None:

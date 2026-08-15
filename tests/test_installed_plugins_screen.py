@@ -7,7 +7,7 @@ from textual.app import App, ComposeResult
 from textual.css.query import NoMatches
 from textual.widgets import Static
 
-from agent_zero_cli.screens.installed_plugins import (
+from agentic_job_cli.screens.installed_plugins import (
     InstalledPluginEntry,
     InstalledPluginsScreen,
     coerce_installed_plugins,
@@ -156,11 +156,11 @@ async def test_installed_plugins_screen_refuses_protected_toggle() -> None:
     app = InstalledPluginsHarness(
         [
             {
-                "name": "_a0_connector",
-                "display_name": "A0 Connector",
+                "name": "_aj_connector",
+                "display_name": "AJ Connector",
                 "enabled": True,
                 "toggleable": False,
-                "protected_reason": "The A0 Connector plugin keeps this CLI session connected.",
+                "protected_reason": "The AJ Connector plugin keeps this CLI session connected.",
             }
         ]
     )

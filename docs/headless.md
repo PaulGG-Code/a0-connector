@@ -1,36 +1,36 @@
 # Headless Mode
 
-`a0 headless` runs the Agent Zero connector over plain stdin/stdout instead of
-the Textual TUI. It still connects through `_a0_connector`, subscribes to a
+`aj headless` runs the Agentic Job connector over plain stdin/stdout instead of
+the Textual TUI. It still connects through `_aj_connector`, subscribes to a
 chat, streams connector events, publishes the local workspace tree, and handles
 host-side remote file and remote exec operations while it is running.
 
 Use it for dumb terminals, SSH sessions, CI jobs, pipes, and automation that
-wants to drive Agent Zero over stdio.
+wants to drive Agentic Job over stdio.
 
 ## Quick Start
 
 ```bash
-a0 headless --host http://localhost:32080
+aj headless --host http://localhost:32080
 ```
 
 One-shot prompt from an argument:
 
 ```bash
-a0 headless --host http://localhost:32080 -p "what is 2+2"
+aj headless --host http://localhost:32080 -p "what is 2+2"
 ```
 
 One-shot prompt from stdin with machine-readable output:
 
 ```bash
-echo "what is 2+2" | a0 headless --host http://localhost:32080 --print --output jsonl
+echo "what is 2+2" | aj headless --host http://localhost:32080 --print --output jsonl
 ```
 
 Use `--workspace` to choose the local root exposed to remote file and exec
 operations:
 
 ```bash
-a0 headless --host http://localhost:32080 --workspace /home/eclypso/a0/a0-connector
+aj headless --host http://localhost:32080 --workspace /home/eclypso/aj/aj-connector
 ```
 
 ## Connection And Auth
@@ -39,16 +39,16 @@ Host resolution:
 
 1. `--host URL`
 2. `AGENT_ZERO_HOST` or saved `~/.agent-zero/.env`
-3. Docker discovery, only when exactly one local Agent Zero Web UI endpoint is found
+3. Docker discovery, only when exactly one local Agentic Job Web UI endpoint is found
 
 If Docker finds zero or multiple instances, headless exits with code `2` and
 asks for `--host`.
 
-Protected Agent Zero instances use the same `/login` session as the TUI. The
+Protected Agentic Job instances use the same `/login` session as the TUI. The
 headless auth order is:
 
 1. persisted session cookie for the host
-2. `A0_USERNAME` and `A0_PASSWORD`
+2. `AJ_USERNAME` and `AJ_PASSWORD`
 3. TTY username/password prompt
 4. non-TTY failure with an actionable error
 

@@ -8,14 +8,14 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-PACKAGE_SRC = PROJECT_ROOT / "packages" / "a0-computer-use-x11" / "src"
+PACKAGE_SRC = PROJECT_ROOT / "packages" / "aj-computer-use-x11" / "src"
 if str(PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(PACKAGE_SRC))
 
-from a0_computer_use_x11 import X11_BACKEND_SPEC, get_backend_spec
-from a0_computer_use_x11 import detection as x11_detection
-from a0_computer_use_x11 import paths as x11_paths
-from a0_computer_use_x11.computer_use_helper import (
+from aj_computer_use_x11 import X11_BACKEND_SPEC, get_backend_spec
+from aj_computer_use_x11 import detection as x11_detection
+from aj_computer_use_x11 import paths as x11_paths
+from aj_computer_use_x11.computer_use_helper import (
     X11ComputerUseError,
     X11ComputerUseHelper,
 )

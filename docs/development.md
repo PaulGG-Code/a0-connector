@@ -3,21 +3,21 @@
 ## Repo layout
 
 ```
-a0-connector/
-├── src/agent_zero_cli/     # CLI (Textual, httpx, python-socketio)
+aj-connector/
+├── src/agentic_job_cli/     # CLI (Textual, httpx, python-socketio)
 ├── packages/               # Embedded computer-use backend source and metadata
 ├── tests/                  # pytest
 └── docs/                   # You are here
 ```
 
-The builtin `_a0_connector` plugin is not vendored in this repository. Backend
-changes happen directly in Agent Zero Core under `plugins/_a0_connector` (or
-`/a0/plugins/_a0_connector` in Docker).
+The builtin `_aj_connector` plugin is not vendored in this repository. Backend
+changes happen directly in Agentic Job Core under `plugins/_aj_connector` (or
+`/aj/plugins/_aj_connector` in Docker).
 
 ## Runtime setup options
 
-- Local Agent Zero checkout: builtin plugin path `<agent-zero>/plugins/_a0_connector`
-- Dockerized Agent Zero: builtin plugin path `/a0/plugins/_a0_connector`
+- Local Agentic Job checkout: builtin plugin path `<agent-zero>/plugins/_aj_connector`
+- Dockerized Agentic Job: builtin plugin path `/aj/plugins/_aj_connector`
 
 ## Setup
 
@@ -28,9 +28,9 @@ cd /path/to/agent-zero
 python run_ui.py --host=127.0.0.1 --port=50001
 ```
 
-Edit the builtin `_a0_connector` plugin in that Agent Zero checkout directly, then restart Agent Zero. End users should get `_a0_connector` from Agent Zero Core as a builtin plugin.
+Edit the builtin `_aj_connector` plugin in that Agentic Job checkout directly, then restart Agentic Job. End users should get `_aj_connector` from Agentic Job Core as a builtin plugin.
 
-To test a protected instance, start Agent Zero with `AUTH_LOGIN` and `AUTH_PASSWORD` configured in its runtime `.env`.
+To test a protected instance, start Agentic Job with `AUTH_LOGIN` and `AUTH_PASSWORD` configured in its runtime `.env`.
 
 ### CLI
 
@@ -72,15 +72,15 @@ export AGENT_ZERO_HOST=http://localhost:50001
 a0
 ```
 
-When you are developing against a Docker-detected local Agent Zero instance, prefer `localhost` over `127.0.0.1` so the saved host matches the discovered host exactly.
+When you are developing against a Docker-detected local Agentic Job instance, prefer `localhost` over `127.0.0.1` so the saved host matches the discovered host exactly.
 
 For connection-flow testing, `a0 --no-auto-connect` keeps the picker open when a single Docker instance is detected, and `a0 --no-docker-discovery` opens the manual URL path without inspecting Docker.
 
-The published `a0` wheel embeds the Wayland, macOS, and Windows remote computer-use backend modules. Environment markers install only the third-party runtime libraries relevant to the current platform. Linux remote host control uses the Wayland portal backend; X11/Xpra automation is maintained in Agent Zero Core's internal Docker Desktop tooling instead of the A0 CLI host connector.
+The published `aj` wheel embeds the Wayland, macOS, and Windows remote computer-use backend modules. Environment markers install only the third-party runtime libraries relevant to the current platform. Linux remote host control uses the Wayland portal backend; X11/Xpra automation is maintained in Agentic Job Core's internal Docker Desktop tooling instead of the AJ CLI host connector.
 
-The sibling `packages/a0-computer-use-*` manifests remain useful for isolated backend package development, but end-user installs should use the root `a0` package.
+The sibling `packages/aj-computer-use-*` manifests remain useful for isolated backend package development, but end-user installs should use the root `aj` package.
 
-The standalone installers and `a0 update` default to a managed CPython 3.12
+The standalone installers and `aj update` default to a managed CPython 3.12
 runtime via `uv`, so end users do not need a preinstalled Python 3.10+ on the
 host to get a consistent tool environment. The updater resolves the latest
 published GitHub release at runtime instead of baking the current tag into the
@@ -97,15 +97,15 @@ Runtime dependencies are locked as release artifacts:
 Edit `requirements/a0-runtime.in` or `requirements/a0-build.in`, regenerate the
 constraints, and commit the updated `constraints/` files plus the synced
 `pyproject.toml` pins together. The package metadata is intentionally exact
-pinned because `a0` is a CLI app installed into an isolated `uv tool`
+pinned because `aj` is a CLI app installed into an isolated `uv tool`
 environment, and it protects users who update from older unpinned CLIs.
 
 ### Backend source of truth
 
 There is no repo-local mirror to sync. The source of truth for backend work is
-your Agent Zero Core/runtime copy of `plugins/_a0_connector`. The tests in this
-repo resolve that plugin from `A0_CONNECTOR_PLUGIN_ROOT` when set, otherwise
-from a sibling `../agent-zero/plugins/_a0_connector` checkout if present.
+your Agentic Job Core/runtime copy of `plugins/_aj_connector`. The tests in this
+repo resolve that plugin from `AJ_CONNECTOR_PLUGIN_ROOT` when set, otherwise
+from a sibling `../agent-zero/plugins/_aj_connector` checkout if present.
 
 ## Tests
 
@@ -124,10 +124,10 @@ pytest -p anyio --anyio-backends=asyncio
 
 ### Plugin import paths
 
-Agent Zero loads plugins by file path. All imports use the full path:
+Agentic Job loads plugins by file path. All imports use the full path:
 
 ```python
-import plugins._a0_connector.api.v1.base as connector_base
+import plugins._aj_connector.api.v1.base as connector_base
 ```
 
 `test_plugin_backend.py` stubs the `plugins` namespace to validate these imports work.

@@ -8,18 +8,18 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-MACOS_PACKAGE_SRC = PROJECT_ROOT / "packages" / "a0-computer-use-macos" / "src"
+MACOS_PACKAGE_SRC = PROJECT_ROOT / "packages" / "aj-computer-use-macos" / "src"
 if str(MACOS_PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(MACOS_PACKAGE_SRC))
 
-from a0_computer_use_macos.backend import MACOS_BACKEND_SPEC, MacOSComputerUseBackend
-import a0_computer_use_macos.runtime as macos_runtime_mod
-from a0_computer_use_macos.runtime import (
+from aj_computer_use_macos.backend import MACOS_BACKEND_SPEC, MacOSComputerUseBackend
+import aj_computer_use_macos.runtime as macos_runtime_mod
+from aj_computer_use_macos.runtime import (
     MacOSComputerUseError,
     MacOSComputerUseRuntime,
     MacOSSessionStore,
 )
-from a0_computer_use_macos.shared import normalize_action_payload
+from aj_computer_use_macos.shared import normalize_action_payload
 
 
 class _FakeDriver:
@@ -859,7 +859,7 @@ def test_macos_runtime_debug_logs_start_session_progress(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("A0_COMPUTER_USE_DEBUG", "1")
+    monkeypatch.setenv("AJ_COMPUTER_USE_DEBUG", "1")
     runtime = _runtime(tmp_path)
 
     runtime.start_session(

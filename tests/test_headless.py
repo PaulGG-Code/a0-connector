@@ -9,11 +9,11 @@ from typing import Any
 
 import pytest
 
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.headless.commands import command_may_start_agent, dispatch_headless_command
-from agent_zero_cli.headless.renderer import JsonlRenderer, TextRenderer
-from agent_zero_cli.headless.runner import HeadlessOptions, HeadlessRunner
-from agent_zero_cli.session import SessionError
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.headless.commands import command_may_start_agent, dispatch_headless_command
+from agentic_job_cli.headless.renderer import JsonlRenderer, TextRenderer
+from agentic_job_cli.headless.runner import HeadlessOptions, HeadlessRunner
+from agentic_job_cli.session import SessionError
 
 
 pytestmark = pytest.mark.anyio
@@ -200,7 +200,7 @@ def reset_fake_session(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeSession.final_snapshot_text = "4"
     FakeSession.initial_queue = []
 
-    import agent_zero_cli.headless.runner as runner_mod
+    import agentic_job_cli.headless.runner as runner_mod
 
     monkeypatch.setattr(runner_mod, "ConnectorSession", FakeSession)
     monkeypatch.setattr(runner_mod, "_COMPLETION_SETTLE_SECONDS", 0.0)
@@ -457,7 +457,7 @@ async def test_completion_wait_stops_on_disconnect_without_timeout(tmp_path: Pat
 async def test_non_tty_auth_failure_exits_two(tmp_path: Path) -> None:
     FakeSession.connect_error = SessionError(
         "AUTH_REQUIRED",
-        "auth required: set A0_USERNAME/A0_PASSWORD or run the TUI once with remember host.",
+        "auth required: set AJ_USERNAME/AJ_PASSWORD or run the TUI once with remember host.",
         exit_code=2,
     )
     stdout = io.StringIO()
@@ -477,4 +477,4 @@ async def test_non_tty_auth_failure_exits_two(tmp_path: Path) -> None:
 
     assert exit_code == 2
     assert "AUTH_REQUIRED" in stderr.getvalue()
-    assert "A0_USERNAME/A0_PASSWORD" in stderr.getvalue()
+    assert "AJ_USERNAME/AJ_PASSWORD" in stderr.getvalue()

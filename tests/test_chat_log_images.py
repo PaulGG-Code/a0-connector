@@ -12,16 +12,16 @@ from textual.selection import SELECT_ALL
 from textual.widget import Widget
 from textual.widgets import Static
 
-from agent_zero_cli.image_render import CellBox
-from agent_zero_cli.image_store import ImageAsset
-from agent_zero_cli.media_refs import ImageReference
-from agent_zero_cli.widgets.chat_log import (
+from agentic_job_cli.image_render import CellBox
+from agentic_job_cli.image_store import ImageAsset
+from agentic_job_cli.media_refs import ImageReference
+from agentic_job_cli.widgets.chat_log import (
     ChatLog,
     SelectableStatic,
     StatusEntry,
     TranscriptEntry,
 )
-from agent_zero_cli.widgets.image_entry import ImageEntry
+from agentic_job_cli.widgets.image_entry import ImageEntry
 
 
 pytestmark = pytest.mark.anyio
@@ -89,7 +89,7 @@ def browser_ref(*, sequence: int = 8, context_id: str = "ctx-1") -> ImageReferen
         owner="browser",
         caption="Browser screenshot",
         source="agent_zero_path",
-        value="/a0/tmp/browser/history.jpg",
+        value="/aj/tmp/browser/history.jpg",
     )
 
 
@@ -102,7 +102,7 @@ def user_ref(*, sequence: int = 2, name: str = "scan.png") -> ImageReference:
         owner="user",
         caption=f"User attachment — {name}",
         source="agent_zero_path",
-        value=f"/a0/usr/uploads/{name}",
+        value=f"/aj/usr/uploads/{name}",
     )
 
 
@@ -278,7 +278,7 @@ async def test_copy_uses_semantic_image_placeholder() -> None:
 async def test_browser_status_media_metadata_never_renders_or_copies_raw_references() -> None:
     app = TranscriptImageApp()
     data_uri = "data:image/png;base64,AAAA"
-    image_path = "img:///a0/tmp/browser/private.jpg&t=123"
+    image_path = "img:///aj/tmp/browser/private.jpg&t=123"
 
     async with app.run_test(size=(100, 30)) as pilot:
         log = pilot.app.query_one(ChatLog)
@@ -309,7 +309,7 @@ async def test_browser_status_media_metadata_never_renders_or_copies_raw_referen
         assert data_uri not in combined
         assert "img://" not in combined
         assert "data:image" not in combined
-        assert "/a0/tmp/browser/private.jpg" not in combined
+        assert "/aj/tmp/browser/private.jpg" not in combined
         assert "[image: Browser screenshot]" in copied
 
 

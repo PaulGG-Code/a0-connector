@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from agent_zero_cli.config import CLIConfig
-from agent_zero_cli.session import ConnectorSession, SessionError
+from agentic_job_cli.config import CLIConfig
+from agentic_job_cli.session import ConnectorSession, SessionError
 
 
 pytestmark = pytest.mark.anyio
@@ -14,9 +14,9 @@ pytestmark = pytest.mark.anyio
 
 def _capabilities(**overrides: Any) -> dict[str, Any]:
     payload = {
-        "protocol": "a0-connector.v1",
+        "protocol": "aj-connector.v1",
         "websocket_namespace": "/ws",
-        "websocket_handlers": ["plugins/_a0_connector/ws_connector"],
+        "websocket_handlers": ["plugins/_aj_connector/ws_connector"],
         "auth": ["session"],
         "auth_required": False,
         "features": ["chat_create", "chat_get", "message_queue"],
@@ -207,7 +207,7 @@ def reset_fake_client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     FakeClient.chat_metadata = {}
     FakeClient.create_chat_id = "ctx-created"
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     env_dir = tmp_path / ".agent-zero"
     env_file = env_dir / ".env"
@@ -373,7 +373,7 @@ async def test_tools_only_gateway_reconnects_without_context(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_zero_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
+    monkeypatch.setattr("agentic_job_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
     session = ConnectorSession(
         CLIConfig(),
         Observer(),
@@ -520,7 +520,7 @@ async def test_session_recovers_websocket_after_transport_drop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("agent_zero_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
+    monkeypatch.setattr("agentic_job_cli.session._RECOVERY_DELAYS_SECONDS", (0.0,))
     observer = Observer()
     session = ConnectorSession(
         CLIConfig(default_context_id="ctx-default"),
@@ -587,7 +587,7 @@ async def test_session_logs_in_with_credentials(tmp_path: Path) -> None:
 
 
 async def test_session_rejects_capability_mismatch(tmp_path: Path) -> None:
-    FakeClient.capabilities = _capabilities(protocol="a0-connector.v0")
+    FakeClient.capabilities = _capabilities(protocol="aj-connector.v0")
     session = ConnectorSession(
         CLIConfig(),
         Observer(),

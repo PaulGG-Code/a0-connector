@@ -1,4 +1,4 @@
-# Agent Zero CLI — Dev Tools
+# Agentic Job CLI — Dev Tools
 
 Tools for web-like development of the Textual TUI.
 
@@ -39,7 +39,7 @@ On Linux, the preview launcher now arms a parent-death signal so browser-preview
 CLI sessions shut down with the serving process instead of lingering under
 `systemd --user`.
 
-The launcher deliberately sets `A0_CLI_IMAGE_MODE=halfcell` for its child.
+The launcher deliberately sets `AJ_CLI_IMAGE_MODE=halfcell` for its child.
 xterm.js previews the portable, bounded fallback and do not exercise TGP/Sixel
 protocol bytes or native-surface cleanup. Use a separately verified capable
 terminal for native TGP/Sixel acceptance; do not assume Apple Terminal supports

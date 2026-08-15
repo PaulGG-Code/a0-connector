@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_zero_cli import profile_commands
+from agentic_job_cli import profile_commands
 from tests.test_app import DummyAgentZeroCLI
 
 

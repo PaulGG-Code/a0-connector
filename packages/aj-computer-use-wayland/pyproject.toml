@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aj-computer-use-wayland"
+version = "1.5"
+description = "Wayland computer-use backend for a0"
+requires-python = ">=3.10"
+authors = [
+    { name = "PaulGG-Code" },
+]
+dependencies = [
+    "a0>=1.5",
+]
+
+[project.entry-points."aj.computer_use_backends"]
+wayland = "aj_computer_use_wayland.backend:WAYLAND_BACKEND_SPEC"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/aj_computer_use_wayland"]

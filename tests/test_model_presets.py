@@ -4,14 +4,14 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from agent_zero_cli.model_config import apply_model_switcher_state
-from agent_zero_cli.screens.model_presets import (
+from agentic_job_cli.model_config import apply_model_switcher_state
+from agentic_job_cli.screens.model_presets import (
     ModelPresetsResult,
     ModelPresetsScreen,
     _coerce_model_preset,
     _render_preset_details,
 )
-from agent_zero_cli.widgets.model_switcher_bar import ModelSwitcherBar, _preset_options
+from agentic_job_cli.widgets.model_switcher_bar import ModelSwitcherBar, _preset_options
 
 
 pytestmark = pytest.mark.anyio

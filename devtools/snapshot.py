@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Capture an SVG snapshot of the TUI without a live Agent Zero instance.
+"""Capture an SVG snapshot of the TUI without a live Agentic Job instance.
 
 Usage:
     python devtools/snapshot.py [--output PATH] [--width COLS] [--height ROWS] [--wait SECONDS]
@@ -21,23 +21,23 @@ _OUT_DIR = Path(__file__).resolve().parent / "snapshots"
 
 
 def _snapshot_config():
-    from agent_zero_cli.config import CLIConfig
+    from agentic_job_cli.config import CLIConfig
 
-    # Use a dummy config so the app does not connect to a live Agent Zero instance.
+    # Use a dummy config so the app does not connect to a live Agentic Job instance.
     return CLIConfig(instance_url="http://127.0.0.1:19999")
 
 
 def _snapshot_renderer():
     """Return the real half-cell renderer used by deterministic SVG captures."""
-    from agent_zero_cli.image_render import initialize_image_renderer
+    from agentic_job_cli.image_render import initialize_image_renderer
 
     environment = dict(os.environ)
-    environment["A0_CLI_IMAGE_MODE"] = "halfcell"
+    environment["AJ_CLI_IMAGE_MODE"] = "halfcell"
     return initialize_image_renderer(environ=environment, force_halfcell=True)
 
 
 async def _capture(output: Path, width: int, height: int, wait: float) -> None:
-    from agent_zero_cli.app import AgentZeroCLI
+    from agentic_job_cli.app import AgentZeroCLI
 
     app = AgentZeroCLI(
         config=_snapshot_config(),

@@ -8,7 +8,7 @@ from types import ModuleType, SimpleNamespace
 from PIL import Image as PILImage
 import pytest
 
-from agent_zero_cli.image_render import (
+from agentic_job_cli.image_render import (
     CellBox,
     ImageRenderer,
     RendererSelection,
@@ -99,7 +99,7 @@ def test_explicit_halfcell_skips_native_probes_and_constructs_fallback(
     tty_stdout = SimpleNamespace(isatty=lambda: True)
     monkeypatch.setattr(sys, "__stdout__", tty_stdout)
 
-    renderer = initialize_image_renderer(environ={"A0_CLI_IMAGE_MODE": "halfcell"})
+    renderer = initialize_image_renderer(environ={"AJ_CLI_IMAGE_MODE": "halfcell"})
     widget = renderer.create_widget(
         PILImage.new("RGB", (4, 4), "#123456"),
         CellBox(4, 2),
@@ -138,7 +138,7 @@ def test_warp_skips_native_probes_and_constructs_real_halfcell_renderer(
 
     renderer = initialize_image_renderer(
         environ={
-            "A0_CLI_IMAGE_MODE": requested,
+            "AJ_CLI_IMAGE_MODE": requested,
             "TERM_PROGRAM": "wArPtErMiNaL",
         },
     )
@@ -167,7 +167,7 @@ def test_iterm_exact_sixel_capability_is_authoritative(
 
     renderer = initialize_image_renderer(
         environ={
-            "A0_CLI_IMAGE_MODE": "auto",
+            "AJ_CLI_IMAGE_MODE": "auto",
             "TERM_PROGRAM": "ITERM.APP",
             "TERM_FEATURES": "T3Uw2Sx;future-data-is-ignored",
         },
@@ -193,7 +193,7 @@ def test_iterm_sixel_capability_requires_an_exact_token(
 
     renderer = initialize_image_renderer(
         environ={
-            "A0_CLI_IMAGE_MODE": "auto",
+            "AJ_CLI_IMAGE_MODE": "auto",
             "TERM_PROGRAM": "iTerm.app",
             "TERM_FEATURES": term_features,
         },
@@ -207,7 +207,7 @@ def test_iterm_sixel_capability_requires_an_exact_token(
     "environment_override",
     [
         {"TMUX": "/private/tmp/tmux/default,1,0"},
-        {"A0_CLI_IMAGE_MODE": "sixel"},
+        {"AJ_CLI_IMAGE_MODE": "sixel"},
     ],
 )
 def test_iterm_sixel_capability_only_overrides_auto_outside_tmux(
@@ -223,7 +223,7 @@ def test_iterm_sixel_capability_only_overrides_auto_outside_tmux(
     monkeypatch.setattr(get_cell_size, "_result", CellSize(10, 20), raising=False)
     monkeypatch.setattr(sys, "__stdout__", SimpleNamespace(isatty=lambda: True))
     environment = {
-        "A0_CLI_IMAGE_MODE": "auto",
+        "AJ_CLI_IMAGE_MODE": "auto",
         "TERM_PROGRAM": "iTerm.app",
         "TERM_FEATURES": "T3Sx",
         **environment_override,
@@ -249,7 +249,7 @@ def test_non_iterm_terminal_still_uses_native_probes(
 
     renderer = initialize_image_renderer(
         environ={
-            "A0_CLI_IMAGE_MODE": "auto",
+            "AJ_CLI_IMAGE_MODE": "auto",
             "TERM_PROGRAM": "ExampleTerminal",
             "TERM_FEATURES": "Sx",
         },

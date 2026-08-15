@@ -1,22 +1,22 @@
-# Inline Images and Browser Screenshots in the A0 TUI
+# Inline Images and Browser Screenshots in the AJ TUI
 
 **Status:** Approved design
 
 **Date:** 2026-08-10
 
-**Repository:** `TerminallyLazy/a0-connector`
+**Repository:** `TerminallyLazy/aj-connector`
 
-**Related external component:** Agent Zero Core builtin `plugins/_a0_connector`
+**Related external component:** Agentic Job Core builtin `plugins/_aj_connector`
 
 ## Summary
 
 Add inline image rendering to the Textual chat transcript for:
 
-- browser screenshots recorded by Agent Zero browser tools;
+- browser screenshots recorded by Agentic Job browser tools;
 - user image attachments present in chat history; and
 - assistant image attachments or image references present in chat history.
 
-Images appear expanded near the transcript content that owns them. A browser screenshot appears inside the same browser tool entry, beneath its action metadata, matching the Agent Zero WebUI. A focused image collapses inline when clicked or when the user presses Enter or Space, and the same action expands it again.
+Images appear expanded near the transcript content that owns them. A browser screenshot appears inside the same browser tool entry, beneath its action metadata, matching the Agentic Job WebUI. A focused image collapses inline when clicked or when the user presses Enter or Space, and the same action expands it again.
 
 The CLI uses a terminal-native raster protocol when available, preferring the Kitty graphics protocol (TGP) and then Sixel. Every other environment uses a half-cell Unicode renderer. Image failures remain local to the image widget and never interrupt chat operation.
 
@@ -27,7 +27,7 @@ The CLI uses a terminal-native raster protocol when available, preferring the Ki
 3. Preserve the existing Python 3.10+ support contract.
 4. Provide native raster output in capable terminals and a usable half-cell fallback everywhere else.
 5. Show a useful expanded image immediately while allowing inline collapse without a modal or external application.
-6. Load images safely through the existing authenticated Agent Zero session without widening the artifact trust model.
+6. Load images safely through the existing authenticated Agentic Job session without widening the artifact trust model.
 7. Keep headless and gateway modes byte-for-byte free of terminal graphics protocol output.
 
 ## Non-goals for v1
@@ -44,24 +44,24 @@ The CLI uses a terminal-native raster protocol when available, preferring the Ki
 
 ## Current System and Verified Data Paths
 
-The CLI receives chat history and live updates as connector events and renders them into `ChatLog`. Text, tool, status, and code entries are produced through `event_handlers.py`, `rendering.py`, and widgets under `src/agent_zero_cli/widgets/`.
+The CLI receives chat history and live updates as connector events and renders them into `ChatLog`. Text, tool, status, and code entries are produced through `event_handlers.py`, `rendering.py`, and widgets under `src/agentic_job_cli/widgets/`.
 
-Browser screenshot bytes do not need to be added to the connector event schema. Agent Zero Core already:
+Browser screenshot bytes do not need to be added to the connector event schema. Agentic Job Core already:
 
 1. receives the base64 browser artifact from the CLI browser host;
 2. materializes it through `chat_media.save_image_base64`;
 3. records the resulting reference on the browser tool log as `Screenshot: img://<path>&t=...`; and
-4. passes the log key/value metadata through `_a0_connector` to the CLI.
+4. passes the log key/value metadata through `_aj_connector` to the CLI.
 
-The WebUI displays the same metadata by recognizing `img://` values. The CLI can resolve these references through the authenticated Agent Zero `/api/image_get?path=...` endpoint using its existing `httpx.AsyncClient` session.
+The WebUI displays the same metadata by recognizing `img://` values. The CLI can resolve these references through the authenticated Agentic Job `/api/image_get?path=...` endpoint using its existing `httpx.AsyncClient` session.
 
-User attachment replay has one verified gap. The standard HTTP message path stores attachment names on the user log, while `_a0_connector`'s WebSocket send-message handler currently logs the user message with empty metadata. A narrowly scoped Agent Zero Core correction will record sanitized attachment filenames in the WebSocket-created user log, matching the HTTP path. It will not transmit image bytes through Socket.IO or change upload permissions.
+User attachment replay has one verified gap. The standard HTTP message path stores attachment names on the user log, while `_aj_connector`'s WebSocket send-message handler currently logs the user message with empty metadata. A narrowly scoped Agentic Job Core correction will record sanitized attachment filenames in the WebSocket-created user log, matching the HTTP path. It will not transmit image bytes through Socket.IO or change upload permissions.
 
 ## Design Decisions
 
 ### Renderer strategy
 
-Use `textual-image` behind an A0-owned adapter. Dependency markers and repository lock files will select a Python 3.10/3.11-compatible release line and the current compatible release line for Python 3.12+. Application code will not import version-specific renderer classes outside the adapter.
+Use `textual-image` behind an AJ-owned adapter. Dependency markers and repository lock files will select a Python 3.10/3.11-compatible release line and the current compatible release line for Python 3.12+. Application code will not import version-specific renderer classes outside the adapter.
 
 The adapter exposes four effective modes:
 
@@ -72,7 +72,7 @@ The adapter exposes four effective modes:
 
 `auto` is the default selection policy rather than an effective renderer. It chooses TGP, then Sixel, then half-cell.
 
-This approach preserves Python 3.10+, uses established protocol implementations, and confines upstream compatibility differences to one module. Reimplementing TGP and Sixel inside A0 or raising the project's Python minimum is outside the approved design.
+This approach preserves Python 3.10+, uses established protocol implementations, and confines upstream compatibility differences to one module. Reimplementing TGP and Sixel inside AJ or raising the project's Python minimum is outside the approved design.
 
 ### Placement and interaction
 
@@ -99,7 +99,7 @@ Images preserve their complete aspect ratio and are never cropped.
 
 ### `media_refs.py`: reference extraction
 
-Add a pure, side-effect-free media reference layer under `src/agent_zero_cli/`. It converts eligible connector event data into normalized `ImageReference` values without performing network or UI work.
+Add a pure, side-effect-free media reference layer under `src/agentic_job_cli/`. It converts eligible connector event data into normalized `ImageReference` values without performing network or UI work.
 
 An `ImageReference` carries enough information to:
 
@@ -107,14 +107,14 @@ An `ImageReference` carries enough information to:
 - deduplicate the underlying image;
 - classify it as browser, user, or assistant media;
 - produce a safe caption and copy placeholder; and
-- resolve either an authenticated Agent Zero path or bounded inline image data.
+- resolve either an authenticated Agentic Job path or bounded inline image data.
 
 Eligible sources are:
 
 1. `Screenshot` values beginning with `img://` in browser tool metadata;
 2. the structured `browser_snapshot` reference when present;
 3. sanitized user attachment filenames in event metadata;
-4. Agent Zero-hosted assistant image references in metadata or Markdown; and
+4. Agentic Job-hosted assistant image references in metadata or Markdown; and
 5. bounded `data:image/...` references.
 
 Cache-busting query parameters on `img://` references are ignored when deriving the stable identity but retained as needed for the fetch request. Unknown schemes, filesystem paths, and arbitrary external URLs are not automatically fetched.
@@ -125,11 +125,11 @@ The extractor is idempotent. Receiving a later update for the same event and ima
 
 Add an asynchronous store responsible for loading, validating, deduplicating, and caching image payloads.
 
-Agent Zero-hosted references are fetched through `A0Client` and its authenticated session via `/api/image_get`. The store does not create a second unauthenticated HTTP client. User attachment filenames are converted to their Agent Zero upload path only after basename sanitization.
+Agentic Job-hosted references are fetched through `A0Client` and its authenticated session via `/api/image_get`. The store does not create a second unauthenticated HTTP client. User attachment filenames are converted to their Agentic Job upload path only after basename sanitization.
 
 The store enforces:
 
-- a 25 MiB encoded payload ceiling, matching Agent Zero's artifact limit;
+- a 25 MiB encoded payload ceiling, matching Agentic Job's artifact limit;
 - recognized `image/*` content types;
 - one bounded retry for transient network failures;
 - at most four concurrent image fetch/load tasks;
@@ -147,7 +147,7 @@ is written to disk.
 
 ### `image_render.py`: capability and renderer adapter
 
-Add a single A0-owned interface over `textual-image`. It is responsible for:
+Add a single AJ-owned interface over `textual-image`. It is responsible for:
 
 - selecting the effective image mode;
 - insulating the rest of the application from conditional dependency versions;
@@ -158,7 +158,7 @@ Add a single A0-owned interface over `textual-image`. It is responsible for:
 
 Capability probing occurs inside the TUI startup path in `__main__._run_app`, before Textual takes control of terminal input. The module is not imported by headless or gateway startup paths.
 
-`A0_CLI_IMAGE_MODE` accepts `auto`, `tgp`, `sixel`, `halfcell`, or `off`. There is no persisted setting or slash command in v1.
+`AJ_CLI_IMAGE_MODE` accepts `auto`, `tgp`, `sixel`, `halfcell`, or `off`. There is no persisted setting or slash command in v1.
 
 Selection rules:
 
@@ -214,9 +214,9 @@ Copying never includes raw bytes, base64, cookies, or cache paths. Images produc
 [image: User attachment — scan.png]
 ```
 
-### Agent Zero Core attachment metadata correction
+### Agentic Job Core attachment metadata correction
 
-In the external Agent Zero Core repository, update the builtin `_a0_connector` WebSocket send-message handler to attach sanitized uploaded filenames to the user log's key/value metadata, matching the existing HTTP message-send behavior.
+In the external Agentic Job Core repository, update the builtin `_aj_connector` WebSocket send-message handler to attach sanitized uploaded filenames to the user log's key/value metadata, matching the existing HTTP message-send behavior.
 
 This correction:
 
@@ -231,9 +231,9 @@ This correction:
 
 ```mermaid
 sequenceDiagram
-    participant Core as Agent Zero Core
-    participant Bridge as _a0_connector event bridge
-    participant CLI as A0 event handler
+    participant Core as Agentic Job Core
+    participant Bridge as _aj_connector event bridge
+    participant CLI as AJ event handler
     participant Log as ChatLog / ImageEntry
     participant Store as ImageStore
     participant Renderer as Image renderer adapter
@@ -273,7 +273,7 @@ Normal ChatLog behavior remains authoritative:
 
 ## Image Validation and Security
 
-Only authenticated same-origin Agent Zero image paths and bounded inline data are automatically loaded.
+Only authenticated same-origin Agentic Job image paths and bounded inline data are automatically loaded.
 
 Validation rules:
 
@@ -290,7 +290,7 @@ Validation rules:
 - Never log cookies, raw base64, fetched bytes, or decoded cache contents.
 - Never include those values in transcript clipboard text.
 
-Browser screenshots remain subject to the existing browser tool consent and privacy gates. Inline rendering consumes the artifact already approved and recorded by Agent Zero; it does not create a new capture path.
+Browser screenshots remain subject to the existing browser tool consent and privacy gates. Inline rendering consumes the artifact already approved and recorded by Agentic Job; it does not create a new capture path.
 
 ## Error Handling
 
@@ -345,9 +345,9 @@ Use a fake image renderer so snapshots remain deterministic and never contain na
 - context-switch cancellation; and
 - `/clear`, widget removal, disconnect, and exit cleanup.
 
-### Agent Zero Core tests
+### Agentic Job Core tests
 
-Cover the external `_a0_connector` correction independently:
+Cover the external `_aj_connector` correction independently:
 
 - WebSocket message send with attachments records sanitized attachment filenames in user log metadata.
 - History replay returns those filenames.
@@ -361,7 +361,7 @@ Verify these paths end to end:
 
 1. Browser action to screenshot artifact to connector event to inline thumbnail.
 2. User image upload followed by reconnect and history replay.
-3. Assistant Agent Zero-hosted image in live and replayed history.
+3. Assistant Agentic Job-hosted image in live and replayed history.
 4. TGP-capable terminal in automatic and forced modes.
 5. Sixel-capable terminal in automatic and forced modes.
 6. Unsupported terminal half-cell fallback.
@@ -383,11 +383,11 @@ Implementation will update the owning documentation as behavior lands:
 - `docs/tui-frontend.md` for rendering, interaction, preview limitations, and QA;
 - `docs/architecture.md` for media reference and authenticated fetch flows;
 - `devtools/README.md` for forced half-cell browser-preview behavior;
-- `src/agent_zero_cli/AGENTS.md` and `src/agent_zero_cli/widgets/AGENTS.md` for new module ownership;
+- `src/agentic_job_cli/AGENTS.md` and `src/agentic_job_cli/widgets/AGENTS.md` for new module ownership;
 - `tests/AGENTS.md` if fixtures or test boundaries change; and
 - dependency inputs and locks under their owning DOX scopes.
 
-The Agent Zero Core correction must be documented and tested in the Core repository under its own contribution rules. It is not vendored into `a0-connector`.
+The Agentic Job Core correction must be documented and tested in the Core repository under its own contribution rules. It is not vendored into `aj-connector`.
 
 ## Rollout and Evidence Surfaces
 
@@ -396,7 +396,7 @@ Rollout proceeds behind the existing TUI boundary; no connector protocol version
 Evidence is reported as three independent surfaces:
 
 1. **Implementation evidence:** dependency compatibility proof, automated CLI/Core tests, and deterministic half-cell snapshots.
-2. **Runtime evidence:** the corrected builtin Core plugin is installed in the intended Agent Zero runtime and that runtime has been restarted or reloaded.
+2. **Runtime evidence:** the corrected builtin Core plugin is installed in the intended Agentic Job runtime and that runtime has been restarted or reloaded.
 3. **Terminal acceptance:** browser screenshots and history attachments have been visually accepted in real TGP, Sixel, and half-cell sessions.
 
 Passing automated tests does not imply the Core runtime is updated, and updating the runtime does not imply native terminal rendering has been visually accepted.
@@ -415,4 +415,4 @@ The feature is complete when all of the following are true:
 - Context changes, `/clear`, disconnect, and exit leave no stale requests or native terminal graphics.
 - Python 3.10+ remains supported.
 - Headless and gateway behavior is unchanged.
-- The Agent Zero Core attachment metadata correction passes its own tests and has separate live-runtime evidence.
+- The Agentic Job Core attachment metadata correction passes its own tests and has separate live-runtime evidence.

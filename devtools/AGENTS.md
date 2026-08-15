@@ -15,7 +15,7 @@
 ## Local Contracts
 
 - Browser preview runs with `./.venv/bin/python devtools/serve.py` and serves `http://localhost:8566` by default.
-- `preview_launcher.py` must set `A0_CLI_IMAGE_MODE=halfcell` immediately before
+- `preview_launcher.py` must set `AJ_CLI_IMAGE_MODE=halfcell` immediately before
   exec, and `snapshot.py` must inject a usable real
   `initialize_image_renderer(force_halfcell=True)` fallback without native
   protocol probes. xterm.js/SVG preview is deterministic fallback layout

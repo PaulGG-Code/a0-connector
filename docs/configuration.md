@@ -4,12 +4,12 @@
 
 | Variable | Purpose | Default |
 |----------|---------|---------|
-| `AGENT_ZERO_HOST` | Agent Zero base URL | `http://localhost:5080` |
+| `AGENT_ZERO_HOST` | Agentic Job base URL | `http://localhost:5080` |
 | `AGENT_ZERO_REMEMBER_HOST` | Persist the splash “Remember this host” preference for the saved host | disabled |
-| `AGENT_ZERO_DEFAULT_CONTEXT_ID` / `A0_DEFAULT_CHAT` | Chat context to open after connecting | Last remembered chat for the host, then a new chat |
-| `AGENT_ZERO_REMOTE_EXEC_ENABLED` / `A0_REMOTE_EXEC` | Start with host-side remote execution enabled | disabled |
-| `A0_CLI_IMAGE_MODE` | Interactive terminal image renderer: `auto`, `tgp`, `sixel`, `halfcell`, or `off` | `auto` |
-| `A0_UPDATE_CHECK` | Startup check for a newer CLI release. Set to `0`, `false`, `no`, or `off` to disable. | enabled |
+| `AGENT_ZERO_DEFAULT_CONTEXT_ID` / `AJ_DEFAULT_CHAT` | Chat context to open after connecting | Last remembered chat for the host, then a new chat |
+| `AGENT_ZERO_REMOTE_EXEC_ENABLED` / `AJ_REMOTE_EXEC` | Start with host-side remote execution enabled | disabled |
+| `AJ_CLI_IMAGE_MODE` | Interactive terminal image renderer: `auto`, `tgp`, `sixel`, `halfcell`, or `off` | `auto` |
+| `AJ_UPDATE_CHECK` | Startup check for a newer CLI release. Set to `0`, `false`, `no`, or `off` to disable. | enabled |
 
 ## Resolution order
 
@@ -25,24 +25,24 @@ For `AGENT_ZERO_HOST`:
 For the initial chat:
 
 1. `a0 --chat CONTEXT_ID`
-2. `AGENT_ZERO_DEFAULT_CONTEXT_ID` or `A0_DEFAULT_CHAT`
+2. `AGENT_ZERO_DEFAULT_CONTEXT_ID` or `AJ_DEFAULT_CHAT`
 3. The last remembered chat for the connected host
 4. A new chat
 
 `a0 --chat-last` skips any configured default chat and uses the last remembered
 chat for the host.
 
-For frontend remote execution, the CLI no longer runtime-imports a local Agent Zero Core checkout. The backend sends execution settings in the WebSocket `connector_hello` payload, and the CLI keeps the platform-specific shell and TTY logic locally.
+For frontend remote execution, the CLI no longer runtime-imports a local Agentic Job Core checkout. The backend sends execution settings in the WebSocket `connector_hello` payload, and the CLI keeps the platform-specific shell and TTY logic locally.
 
 ## Terminal image rendering
 
-`A0_CLI_IMAGE_MODE=auto` is the normal user path. Before the Textual app starts,
+`AJ_CLI_IMAGE_MODE=auto` is the normal user path. Before the Textual app starts,
 it combines reliable terminal capability advertisements, live protocol probes,
 and compatibility guards to select TGP, Sixel, or the portable half-cell
 fallback. `tgp` and `sixel` request a native protocol but fall back to half-cell
 with one notice when the complete rendering path is unavailable. `halfcell`
 forces the portable renderer; `off` leaves semantic placeholders and makes no
-image-rendering attempt. `a0 headless` and `a0 gateway` remain text/JSONL-only
+image-rendering attempt. `aj headless` and `aj gateway` remain text/JSONL-only
 regardless of this setting.
 
 Some terminals implement only part of a graphics protocol. Warp accepts the
@@ -66,20 +66,20 @@ capable native-protocol terminal has been verified separately.
 
 ### Image troubleshooting
 
-- Leave `A0_CLI_IMAGE_MODE` unset (or set it to `auto`) to adapt to the active
+- Leave `AJ_CLI_IMAGE_MODE` unset (or set it to `auto`) to adapt to the active
   terminal automatically.
-- Force `A0_CLI_IMAGE_MODE=halfcell` only when diagnosing the portable fallback.
+- Force `AJ_CLI_IMAGE_MODE=halfcell` only when diagnosing the portable fallback.
 - If a forced TGP or Sixel mode reports unsupported, use `auto` or `halfcell`;
   terminal multiplexers such as tmux may need protocol pass-through enabled.
 - An `image unavailable` placeholder means the authenticated `/api/image_get`
   request, source validation, or image limits rejected the source; it does not
   expose URLs, cookies, or cached file paths.
-- Use `A0_CLI_IMAGE_MODE=off` when an image-free transcript is required.
+- Use `AJ_CLI_IMAGE_MODE=off` when an image-free transcript is required.
 
 ## First-run behavior
 
 1. Every launch starts at the picker and begins Docker-only local discovery in the background.
-2. If there is exactly one detected local Agent Zero endpoint and no conflicting saved manual host, the CLI auto-enters it.
+2. If there is exactly one detected local Agentic Job endpoint and no conflicting saved manual host, the CLI auto-enters it.
 3. Open instances connect immediately.
 4. Protected instances advance to login unless a valid remembered session cookie or in-memory session is already available.
 5. Manual entry follows the same host rules.
@@ -92,7 +92,7 @@ capable native-protocol terminal has been verified separately.
 - The startup picker only inspects Docker. It does not probe arbitrary localhost ports.
 - On Windows, discovery can use the local Docker API bridge or WSL-hosted
   `docker` command even when `docker.exe` is not installed on the host PATH.
-- A container is considered an Agent Zero candidate only when it is running, publishes `80/tcp`, and exposes at least one Agent Zero signal such as:
+- A container is considered an Agentic Job candidate only when it is running, publishes `80/tcp`, and exposes at least one Agentic Job signal such as:
   - an image name containing `agent-zero`
   - a command or entrypoint containing `/exe/initialize.sh` or `run_ui.py`
   - a bind mount targeting `/a0`

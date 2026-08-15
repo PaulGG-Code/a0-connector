@@ -4,28 +4,28 @@
 
 ```
 +-------------+     HTTP POST /login + session cookie     +------------------------------+
-|    a0 CLI   | ----------------------------------------> | Agent Zero + _a0_connector   |
+|    aj CLI   | ----------------------------------------> | Agentic Job + _aj_connector   |
 |             |                                           | plugin                        |
 |             |     Socket.IO /ws namespace               |                              |
 |             | <---------------------------------------- |                              |
 +-------------+          connector_* events               +------------------------------+
 ```
 
-- CLI (`a0`): Textual TUI plus headless stdin/stdout frontend, published as the `a0` package and installed as the `a0` command.
-- Plugin (`_a0_connector`): builtin Agent Zero Core plugin.
+- CLI (`aj`): Textual TUI plus headless stdin/stdout frontend, published as the `aj` package and installed as the `aj` command.
+- Plugin (`_aj_connector`): builtin Agentic Job Core plugin.
 
 ## Startup flow
 
-Both the Textual TUI and `a0 headless` use the same connector protocol. The
+Both the Textual TUI and `aj headless` use the same connector protocol. The
 TUI still owns its historical connection orchestration; headless uses the
 UI-neutral `ConnectorSession` core for transport, context subscription, remote
 file operations, remote exec operations, and workspace-tree publishing.
 
-1. Discover: `POST /api/plugins/_a0_connector/v1/capabilities`
+1. Discover: `POST /api/plugins/_aj_connector/v1/capabilities`
 2. Validate: confirm protocol, `/ws`, handler activation, `auth == ["session"]`, and boolean `auth_required`
 3. Authenticate if needed: for protected instances, reuse any valid in-memory session or `POST /login` with form data
 4. Verify: probe `chats_list` to confirm the session is valid
-5. Connect: Socket.IO to `/ws` with `auth: {handlers: ["plugins/_a0_connector/ws_connector"]}` and the current session cookie forwarded in headers
+5. Connect: Socket.IO to `/ws` with `auth: {handlers: ["plugins/_aj_connector/ws_connector"]}` and the current session cookie forwarded in headers
 6. Hello: send `connector_hello` and receive protocol, features, and `exec_config`
 7. Chat: create context, subscribe, stream events
 
@@ -33,19 +33,19 @@ Open instances (`AUTH_LOGIN` unset) skip step 3 entirely.
 
 ## Protocol
 
-- Version: `a0-connector.v1`
+- Version: `aj-connector.v1`
 - Transport: Engine.IO at `/socket.io`, Socket.IO namespace `/ws`
 - Auth contract: `auth == ["session"]`
-- Capability flag: `auth_required: bool` derived from Agent Zero core web-auth state
-- WebSocket activation: `auth.handlers` contains `plugins/_a0_connector/ws_connector`
+- Capability flag: `auth_required: bool` derived from Agentic Job core web-auth state
+- WebSocket activation: `auth.handlers` contains `plugins/_aj_connector/ws_connector`
 
 ## HTTP routes
 
-All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
+All routes: `POST /api/plugins/_aj_connector/v1/<endpoint>`
 
 | Endpoint | Auth | Purpose |
 |----------|------|---------|
-| `capabilities` | Public | Discovery: protocol, Agent Zero version, features, session contract, `auth_required` |
+| `capabilities` | Public | Discovery: protocol, Agentic Job version, features, session contract, `auth_required` |
 | `chat_create` | Session | Create a new chat context |
 | `chats_list` | Session | List existing contexts |
 | `chat_get` | Session | Get a single context |
@@ -58,7 +58,7 @@ All routes: `POST /api/plugins/_a0_connector/v1/<endpoint>`
 | `projects` | Session | Project list, activate, deactivate, load, update |
 | `settings_get` | Session | Optional runtime settings surface |
 | `settings_set` | Session | Optional runtime settings surface |
-| `agent_profile_set` | Session | Context-scoped Agent Zero Core profile switch |
+| `agent_profile_set` | Session | Context-scoped Agentic Job Core profile switch |
 | `agent_editor` | Session | Context-scoped profile load/create/edit, sparse save, and Tool/MCP/Skill policy updates |
 | `agents_list` | Session | Optional agent-profile list |
 | `skills_list` | Session | Optional installed-skill list |
@@ -78,7 +78,7 @@ All events are `connector_`-prefixed to avoid collisions on the shared `/ws` nam
 
 | Event | Purpose |
 |-------|---------|
-| `connector_hello` | Handshake/metadata refresh: returns protocol version, Agent Zero version, features, `exec_config`, and remote-tool state |
+| `connector_hello` | Handshake/metadata refresh: returns protocol version, Agentic Job version, features, `exec_config`, and remote-tool state |
 | `connector_subscribe_context` | Subscribe to a context event stream |
 | `connector_unsubscribe_context` | Unsubscribe from a context |
 | `connector_send_message` | Send user message asynchronously |
@@ -112,7 +112,7 @@ correct chat.
 
 Both public `capabilities` and `connector_hello` include `agent_zero_version`.
 The CLI compares that value with its own package version and surfaces a warning
-when the connected Agent Zero Core is newer than the installed CLI.
+when the connected Agentic Job Core is newer than the installed CLI.
 
 The interactive TUI subscribes with `history: "tail"`, which returns the newest
 100 log-output entries and a `history_before` cursor. When the user reaches the
@@ -122,7 +122,7 @@ headless frontend omits the hint and retains its complete replay behavior.
 
 ## Headless frontend
 
-`a0 headless` is a plain stdin/stdout connector frontend. It does not import
+`aj headless` is a plain stdin/stdout connector frontend. It does not import
 Textual, but it still registers as the host-side connector client for the
 subscribed chat.
 
@@ -146,7 +146,7 @@ the user message; assistant metadata and Markdown images belong under the
 assistant message. The extractor is pure and preserves the connector event
 schema, so a screenshot never becomes a duplicate sequence entry.
 
-For an Agent Zero path, the client uses its authenticated session to `GET`
+For an Agentic Job path, the client uses its authenticated session to `GET`
 same-origin `/api/image_get`; arbitrary external URLs and filesystem paths are
 not accepted. Raster PNG, JPEG, GIF, WebP, and BMP are supported (GIF uses the
 first frame). SVG is represented by a stable placeholder. Sources are limited
@@ -158,17 +158,17 @@ unauthenticated, unavailable, oversized, or unsupported images become stable
 placeholders, and copied transcript text contains semantic image labels rather
 than bytes or cache paths.
 
-Browser screenshot materialization already exists in Agent Zero Core: browser
+Browser screenshot materialization already exists in Agentic Job Core: browser
 history metadata carries `Screenshot: img://<path>&t=...` plus
 `browser_snapshot`. The separate Core deployment boundary is the builtin
-`_a0_connector` WebSocket user-message handler correction that records sanitized
+`_aj_connector` WebSocket user-message handler correction that records sanitized
 uploaded filenames on the user log, matching the HTTP message path so live and
 replayed user attachments retain resolvable metadata. Updating this CLI does not
 deploy that Core correction.
 
 ## Host browser operations
 
-Host browser mode keeps the public agent API as Agent Zero's existing
+Host browser mode keeps the public agent API as Agentic Job's existing
 `browser` tool. The Browser plugin decides whether a call uses the container
 Playwright runtime or emits `connector_browser_op` to the subscribed CLI:
 
@@ -219,19 +219,19 @@ The CLI detects installed Chromium-family browsers and profile roots per OS, but
 it never silently seizes a locked profile. If a browser is already using the
 selected profile, operations fail with `HOST_BROWSER_RELAUNCH_REQUIRED` until
 the user explicitly closes that browser. When Browser settings request host
-mode, Agent Zero may send an idempotent `ensure` browser operation before the
+mode, Agentic Job may send an idempotent `ensure` browser operation before the
 first user-facing browser action; the CLI then enables host browser control and
 launches the selected profile when it is not locked. `/browser host on` and
 `/browser relaunch` remain manual diagnostics rather than required happy-path
 steps; `/browser list` shows advertised targets, while `/browser auto`,
 `/browser <number>`, `/browser <id>`, and `/browser ws://...` sync the selected
-target to the current Agent Zero project.
+target to the current Agentic Job project.
 
 Chrome 136+ does not allow `--remote-debugging-port` or
 `--remote-debugging-pipe` against the default personal Chrome data directory.
-For those browsers, the CLI advertises an A0-controlled local profile such as
+For those browsers, the CLI advertises an AJ-controlled local profile such as
 `chrome-a0 Default` under the user's data directory. Cookies and site data stay
-inside that separate browser profile on the host; A0 does not copy them out.
+inside that separate browser profile on the host; AJ does not copy them out.
 
 When the browser itself exposes a user-authorized debugging server, the CLI
 prefers that explicit consent path. The user opens the browser's Remote
@@ -242,22 +242,22 @@ directory; the CLI reads that file, advertises a `*-cdp` profile, and uses a
 built-in DevTools Protocol WebSocket helper. Discovery never opens a probe
 connection, so status/profile checks do not trigger extra browser **Allow**
 prompts. The first real Browser operation opens one long-lived connection for
-that chat. A0 disconnect does not close the user's browser tabs; explicit
+that chat. AJ disconnect does not close the user's browser tabs; explicit
 Browser close actions still act on tabs the agent can see.
 
 Explicit selections accept `host:port`, HTTP(S) CDP discovery addresses, and
 full DevTools WebSocket URLs. The connector resolves discovery addresses via
-`/json/version` on the host before opening the WebSocket, so Agent Zero Core
+`/json/version` on the host before opening the WebSocket, so Agentic Job Core
 does not need direct network access to the host browser.
 
 The local-profile launch path uses the Python Playwright client installed as a
-normal A0 CLI runtime dependency. It does not install a separate Chromium
-binary. The Playwright runtime under the Agent Zero Docker container,
-including `/a0/tmp/playwright`, powers the container browser backend and cannot
+normal AJ CLI runtime dependency. It does not install a separate Chromium
+binary. The Playwright runtime under the Agentic Job Docker container,
+including `/aj/tmp/playwright`, powers the container browser backend and cannot
 control a host Chromium-family profile from inside Docker. User-authorized
 remote debugging does not require the Chrome DevTools MCP package or Playwright
 CDP attach; the connector carries the small CDP helper directly. If an older or
-damaged A0 installation is missing the host Python dependency, Launcher Browser
+damaged AJ installation is missing the host Python dependency, Launcher Browser
 setup, `/browser host on`, `/browser relaunch`, and `/browser repair` run the
 same repair with `uv pip install --python <a0-python> playwright` when uv is
 available. Manual/non-uv installs fall back to `python -m pip install
@@ -267,9 +267,9 @@ module inside the tool Python.
 
 ## Event bridge
 
-`helpers/event_bridge.py` translates Agent Zero log entry types into normalized connector events:
+`helpers/event_bridge.py` translates Agentic Job log entry types into normalized connector events:
 
-| Agent Zero log type | Connector event |
+| Agentic Job log type | Connector event |
 |---------------------|-----------------|
 | `user`, `input` | `user_message` |
 | `response`, `ai_response` | `assistant_message` |
@@ -286,7 +286,7 @@ module inside the tool Python.
 
 The `text_editor_remote` tool emits `connector_file_op` to the subscribed CLI client. The CLI performs the file read, write, or patch on the local machine and returns `connector_file_op_result`.
 
-Large file-operation results are split into multiple `connector_file_op_result` frames before crossing Socket.IO. Each frame includes `chunked: true`, `chunk_index`, `chunk_count`, `encoding: "json+base64"`, and a base64 `data` slice of the original JSON result. The Agent Zero plugin reassembles all chunks by `op_id` before resolving the pending file operation, so tool behavior still receives the same result shape as a small read.
+Large file-operation results are split into multiple `connector_file_op_result` frames before crossing Socket.IO. Each frame includes `chunked: true`, `chunk_index`, `chunk_count`, `encoding: "json+base64"`, and a base64 `data` slice of the original JSON result. The Agentic Job plugin reassembles all chunks by `op_id` before resolving the pending file operation, so tool behavior still receives the same result shape as a small read.
 
 All requested paths are resolved relative to the CLI-advertised local workspace and must remain inside that workspace after canonicalization. Absolute paths, `..` traversal, different Windows drives, and symlinks that escape the workspace are rejected before any read or write occurs.
 
@@ -349,7 +349,7 @@ command, so stuck child processes cannot keep the session or CLI shutdown path
 blocked.
 
 Execution payloads may include a `timeouts` object with the same keys used by
-Agent Zero's `_code_execution` plugin settings:
+Agentic Job's `_code_execution` plugin settings:
 - `first_output_timeout`
 - `between_output_timeout`
 - `max_exec_timeout`
@@ -370,11 +370,11 @@ The backend owns that execution policy. The CLI owns the local shell session and
 
 ## Settings rehydration
 
-Agent Zero remains the canonical settings source. On connect and at a low-frequency interval, the CLI refreshes `settings_get` plus the current `model_switcher` state and repaints only when the canonical payload changes. If a newer connector backend emits `connector_settings_updated`, the CLI applies that same snapshot path immediately.
+Agentic Job remains the canonical settings source. On connect and at a low-frequency interval, the CLI refreshes `settings_get` plus the current `model_switcher` state and repaints only when the canonical payload changes. If a newer connector backend emits `connector_settings_updated`, the CLI applies that same snapshot path immediately.
 
 ## Security
 
 - Public discovery stays unauthenticated.
-- Protected connector HTTP handlers use Agent Zero's existing web session check: `requires_auth=True`, `requires_csrf=False`, `requires_api_key=False`.
+- Protected connector HTTP handlers use Agentic Job's existing web session check: `requires_auth=True`, `requires_csrf=False`, `requires_api_key=False`.
 - The connector `/ws` handler uses the same session policy.
 - Connector access is independent from MCP enablement. `mcp_server_enabled` does not affect CLI access.

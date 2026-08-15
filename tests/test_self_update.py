@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_zero_cli import self_update
+from agentic_job_cli import self_update
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,8 +53,8 @@ def _workspace_temp_dir() -> Path:
 
 
 def _load_updater_namespace() -> dict[str, object]:
-    namespace = {"__name__": "agent_zero_cli_self_update_test"}
-    exec(compile(self_update._build_updater_script(), "<a0-updater>", "exec"), namespace)
+    namespace = {"__name__": "agentic_job_cli_self_update_test"}
+    exec(compile(self_update._build_updater_script(), "<aj-updater>", "exec"), namespace)
     return namespace
 
 
@@ -65,7 +65,7 @@ def test_resolve_package_spec_defaults_to_latest_release() -> None:
     )
 
     assert package_spec == (
-        "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v9.8.zip"
+        "aj @ https://github.com/PaulGG-Code/aj-connector/archive/refs/tags/v9.8.zip"
     )
 
 
@@ -110,22 +110,22 @@ def test_resolve_update_target_defaults_to_release_locks() -> None:
 
     assert target == self_update.UpdateTarget(
         package_spec=(
-            "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/v9.8.zip"
+            "aj @ https://github.com/PaulGG-Code/aj-connector/archive/refs/tags/v9.8.zip"
         ),
         python_spec=self_update.DEFAULT_PYTHON_SPEC,
         runtime_constraints=(
-            "https://raw.githubusercontent.com/agent0ai/a0-connector/"
-            "refs/tags/v9.8/constraints/a0-runtime.txt"
+            "https://raw.githubusercontent.com/PaulGG-Code/aj-connector/"
+            "refs/tags/v9.8/constraints/aj-runtime.txt"
         ),
         build_constraints=(
-            "https://raw.githubusercontent.com/agent0ai/a0-connector/"
-            "refs/tags/v9.8/constraints/a0-build.txt"
+            "https://raw.githubusercontent.com/PaulGG-Code/aj-connector/"
+            "refs/tags/v9.8/constraints/aj-build.txt"
         ),
     )
 
 
 def test_resolve_package_spec_honors_environment_override() -> None:
-    env = {"A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip"}
+    env = {"AJ_PACKAGE_SPEC": "aj @ https://example.invalid/custom.zip"}
     resolver_calls = 0
 
     def resolver() -> str:
@@ -135,36 +135,36 @@ def test_resolve_package_spec_honors_environment_override() -> None:
 
     assert (
         self_update.resolve_package_spec(env, latest_release_resolver=resolver)
-        == env["A0_PACKAGE_SPEC"]
+        == env["AJ_PACKAGE_SPEC"]
     )
     assert resolver_calls == 0
 
 
 def test_resolve_python_spec_honors_environment_override() -> None:
-    env = {"A0_PYTHON_SPEC": "3.12"}
-    assert self_update.resolve_python_spec(env) == env["A0_PYTHON_SPEC"]
+    env = {"AJ_PYTHON_SPEC": "3.12"}
+    assert self_update.resolve_python_spec(env) == env["AJ_PYTHON_SPEC"]
 
 
 def test_resolve_update_target_requires_locks_for_custom_package() -> None:
-    env = {"A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip"}
+    env = {"AJ_PACKAGE_SPEC": "aj @ https://example.invalid/custom.zip"}
 
-    with pytest.raises(self_update.LatestReleaseError, match="A0_PACKAGE_SPEC requires"):
+    with pytest.raises(self_update.LatestReleaseError, match="AJ_PACKAGE_SPEC requires"):
         self_update.resolve_update_target(env)
 
 
 def test_resolve_update_target_honors_custom_package_locks() -> None:
     env = {
-        "A0_PACKAGE_SPEC": "a0 @ https://example.invalid/custom.zip",
-        "A0_PYTHON_SPEC": "3.12",
-        "A0_RUNTIME_CONSTRAINTS": "/tmp/runtime.txt",
-        "A0_BUILD_CONSTRAINTS": "/tmp/build.txt",
+        "AJ_PACKAGE_SPEC": "aj @ https://example.invalid/custom.zip",
+        "AJ_PYTHON_SPEC": "3.12",
+        "AJ_RUNTIME_CONSTRAINTS": "/tmp/runtime.txt",
+        "AJ_BUILD_CONSTRAINTS": "/tmp/build.txt",
     }
 
     assert self_update.resolve_update_target(env) == self_update.UpdateTarget(
-        package_spec=env["A0_PACKAGE_SPEC"],
-        python_spec=env["A0_PYTHON_SPEC"],
-        runtime_constraints=env["A0_RUNTIME_CONSTRAINTS"],
-        build_constraints=env["A0_BUILD_CONSTRAINTS"],
+        package_spec=env["AJ_PACKAGE_SPEC"],
+        python_spec=env["AJ_PYTHON_SPEC"],
+        runtime_constraints=env["AJ_RUNTIME_CONSTRAINTS"],
+        build_constraints=env["AJ_BUILD_CONSTRAINTS"],
     )
 
 
@@ -205,7 +205,7 @@ def test_check_for_update_can_be_disabled_by_environment() -> None:
 
     result = self_update.check_for_update(
         "1.10",
-        {"A0_UPDATE_CHECK": "off"},
+        {"AJ_UPDATE_CHECK": "off"},
         latest_release_resolver=resolver,
     )
 
@@ -225,7 +225,7 @@ def test_format_update_available_message_mentions_local_checkout() -> None:
 
     assert "current checkout reports 1.10" in message
     assert "Pull this checkout" in message
-    assert "`a0 update`" in message
+    assert "`aj update`" in message
 
 
 def test_detect_install_provenance_flags_local_editable_checkout(
@@ -233,7 +233,7 @@ def test_detect_install_provenance_flags_local_editable_checkout(
 ) -> None:
     direct_url = json.dumps(
         {
-            "url": "file:///C:/Users/example/src/a0-connector",
+            "url": "file:///C:/Users/example/src/aj-connector",
             "dir_info": {"editable": True},
         }
     )
@@ -248,7 +248,7 @@ def test_detect_install_provenance_flags_local_editable_checkout(
     assert provenance.editable is True
     assert provenance.is_local_checkout is True
     assert provenance.local_path is not None
-    assert "a0-connector" in provenance.local_path
+    assert "aj-connector" in provenance.local_path
 
 
 def test_run_self_update_handoff_requires_uv(
@@ -289,7 +289,7 @@ def test_run_self_update_handoff_reports_latest_release_resolution_failure(
 
         captured = capsys.readouterr()
         assert exit_code == 1
-        assert "Failed to resolve a locked a0 update target: offline" in captured.out
+        assert "Failed to resolve a locked aj update target: offline" in captured.out
         assert "custom locked package source" in captured.out
         assert popen_calls == []
         assert list(temp_dir.iterdir()) == []
@@ -302,7 +302,7 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
     with _workspace_temp_dir() as temp_dir:
         direct_url = json.dumps(
             {
-                "url": "file:///C:/Users/example/src/a0-connector",
+                "url": "file:///C:/Users/example/src/aj-connector",
                 "dir_info": {"editable": True},
             }
         )
@@ -332,10 +332,10 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
 
         monkeypatch.setattr(self_update.subprocess, "Popen", fake_popen)
         env = {
-            "A0_PACKAGE_SPEC": "a0 @ https://example.invalid/build.zip",
-            "A0_PYTHON_SPEC": "3.12",
-            "A0_RUNTIME_CONSTRAINTS": "https://example.invalid/runtime.txt",
-            "A0_BUILD_CONSTRAINTS": "https://example.invalid/build.txt",
+            "AJ_PACKAGE_SPEC": "aj @ https://example.invalid/build.zip",
+            "AJ_PYTHON_SPEC": "3.12",
+            "AJ_RUNTIME_CONSTRAINTS": "https://example.invalid/runtime.txt",
+            "AJ_BUILD_CONSTRAINTS": "https://example.invalid/build.txt",
         }
 
         exit_code = self_update.run_self_update_handoff(env=env, temp_dir=temp_dir)
@@ -349,7 +349,7 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
                 "uv",
                 "python",
                 "find",
-                env["A0_PYTHON_SPEC"],
+                env["AJ_PYTHON_SPEC"],
                 "--managed-python",
                 "--no-project",
             ]
@@ -359,16 +359,16 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         argv, kwargs = popen_calls[0]
         assert argv[0].endswith("python.exe")
         assert argv[2] == str(os.getpid())
-        assert argv[3] == env["A0_PACKAGE_SPEC"]
-        assert argv[4] == env["A0_PYTHON_SPEC"]
-        assert argv[5] == env["A0_RUNTIME_CONSTRAINTS"]
-        assert argv[6] == env["A0_BUILD_CONSTRAINTS"]
+        assert argv[3] == env["AJ_PACKAGE_SPEC"]
+        assert argv[4] == env["AJ_PYTHON_SPEC"]
+        assert argv[5] == env["AJ_RUNTIME_CONSTRAINTS"]
+        assert argv[6] == env["AJ_BUILD_CONSTRAINTS"]
         assert kwargs["stdin"] is subprocess.DEVNULL
 
         script_path = Path(argv[1])
         assert script_path.parent == temp_dir
         script_text = script_path.read_text(encoding="utf-8")
-        assert "agent_zero_cli" not in script_text
+        assert "agentic_job_cli" not in script_text
         assert '"tool"' in script_text
         assert '"--python"' in script_text
         assert '"--force"' in script_text
@@ -380,7 +380,7 @@ def test_run_self_update_handoff_writes_script_and_spawns_updater(
         assert "_uv_tool_install_supports" in script_text
         assert '"--upgrade"' not in script_text
         assert "package_spec" in script_text
-        assert "Update complete. Run a0." in script_text
+        assert "Update complete. Run aj." in script_text
 
 
 def test_build_updater_argv_uses_uv_run_when_managed_python_is_unavailable(
@@ -395,7 +395,7 @@ def test_build_updater_argv_uses_uv_run_when_managed_python_is_unavailable(
 
     monkeypatch.setattr(self_update.subprocess, "run", fake_run)
     target = self_update.UpdateTarget(
-        package_spec="a0 @ https://example.invalid/build.zip",
+        package_spec="aj @ https://example.invalid/build.zip",
         python_spec="3.12",
         runtime_constraints=None,
         build_constraints=None,
@@ -403,7 +403,7 @@ def test_build_updater_argv_uses_uv_run_when_managed_python_is_unavailable(
 
     argv = self_update._build_updater_argv(
         uv_executable="uv",
-        script_path=Path("a0-update.py"),
+        script_path=Path("aj-update.py"),
         parent_pid=123,
         target=target,
     )
@@ -419,7 +419,7 @@ def test_build_updater_argv_uses_uv_run_when_managed_python_is_unavailable(
         "3.12",
         "--managed-python",
         "--script",
-        "a0-update.py",
+        "aj-update.py",
         "123",
         target.package_spec,
         "3.12",
@@ -497,7 +497,7 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
                 "3.11",
                 "--managed-python",
                 "--upgrade-package",
-                "a0",
+                "aj",
                 "--constraints",
                 str(runtime_constraints),
                 "--build-constraints",
@@ -509,7 +509,7 @@ def test_generated_updater_script_waits_then_runs_uv_on_success(
             False,
         )
     ]
-    assert captured.out.strip().endswith("Update complete. Run a0.")
+    assert captured.out.strip().endswith("Update complete. Run aj.")
 
 
 def test_generated_updater_script_skips_build_constraint_for_old_uv(
@@ -586,15 +586,15 @@ def test_generated_updater_script_propagates_uv_exit_code_and_ignores_cleanup_fa
     monkeypatch.setattr(
         sys,
         "argv",
-        ["a0-update-temp.py", "321", "a0 @ https://example.invalid/fail.zip", "3.11", "", ""],
+        ["aj-update-temp.py", "321", "aj @ https://example.invalid/fail.zip", "3.11", "", ""],
     )
 
     with pytest.raises(SystemExit) as exc_info:
         exec(
-            compile(script_source, "a0-update-temp.py", "exec"),
+            compile(script_source, "aj-update-temp.py", "exec"),
             {
                 "__name__": "__main__",
-                "__file__": "a0-update-temp.py",
+                "__file__": "aj-update-temp.py",
             },
         )
 

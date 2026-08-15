@@ -1,0 +1,9 @@
+# aj-computer-use-x11
+
+Legacy Xorg/X11 computer-use backend for `aj`.
+
+The backend uses XTEST through `python-xlib` for mouse and keyboard input, and
+`mss` for screen capture. It is no longer embedded in the root `aj` remote
+host connector package; Linux host computer use uses the Wayland portal
+backend. X11/Xpra automation lives in Agentic Job Core's internal Docker Desktop
+tooling.

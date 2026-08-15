@@ -4,7 +4,7 @@ import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Static
 
-from agent_zero_cli.screens.profile_editor import ProfileEditorResult, ProfileEditorScreen
+from agentic_job_cli.screens.profile_editor import ProfileEditorResult, ProfileEditorScreen
 
 
 pytestmark = pytest.mark.anyio

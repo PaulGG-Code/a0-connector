@@ -9,19 +9,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from agent_zero_cli import computer_use_backend as backend_mod
-import agent_zero_cli.computer_use as computer_use_mod
-from agent_zero_cli.computer_use import (
+from agentic_job_cli import computer_use_backend as backend_mod
+import agentic_job_cli.computer_use as computer_use_mod
+from agentic_job_cli.computer_use import (
     ComputerUseManager,
     _HELPER_STDIO_LIMIT,
     _HelperSession,
 )
-from agent_zero_cli.computer_use_backend import (
+from agentic_job_cli.computer_use_backend import (
     COMPUTER_USE_CONTRACT_VERSION,
     ComputerUseBackendSelection,
     ComputerUseBackendSpec,
 )
-from agent_zero_cli.config import CLIConfig
+from agentic_job_cli.config import CLIConfig
 
 
 pytestmark = pytest.mark.anyio
@@ -34,12 +34,12 @@ def _temp_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     env_file = env_dir / ".env"
     artifact_root = tmp_path / "computer-use-artifacts"
 
-    import agent_zero_cli.config as config_mod
+    import agentic_job_cli.config as config_mod
 
     monkeypatch.setattr(config_mod, "_ENV_DIR", env_dir)
     monkeypatch.setattr(config_mod, "_ENV_FILE", env_file)
     monkeypatch.setattr(computer_use_mod, "HOST_ARTIFACT_ROOT", artifact_root)
-    monkeypatch.setattr(computer_use_mod, "CONTAINER_ARTIFACT_ROOT", "/a0/test-computer-use")
+    monkeypatch.setattr(computer_use_mod, "CONTAINER_ARTIFACT_ROOT", "/aj/test-computer-use")
     return env_file
 
 
@@ -161,7 +161,7 @@ def test_default_host_artifact_root_honors_explicit_env(
     artifact_root = tmp_path / "configured-artifacts"
     monkeypatch.setenv(computer_use_mod._HOST_ARTIFACT_ROOT_ENV, str(artifact_root))
 
-    host_root = computer_use_mod._default_host_artifact_root("/a0/tmp/_a0_connector/computer_use")
+    host_root = computer_use_mod._default_host_artifact_root("/aj/tmp/_aj_connector/computer_use")
 
     assert host_root == artifact_root
 
@@ -174,9 +174,9 @@ def test_default_host_artifact_root_uses_tempdir_fallback_on_macos(
     monkeypatch.setattr(computer_use_mod.sys, "platform", "darwin")
     monkeypatch.setattr(computer_use_mod.tempfile, "gettempdir", lambda: str(tmp_path))
 
-    host_root = computer_use_mod._default_host_artifact_root("/a0/tmp/_a0_connector/computer_use")
+    host_root = computer_use_mod._default_host_artifact_root("/aj/tmp/_aj_connector/computer_use")
 
-    assert host_root == tmp_path / "_a0_connector" / "computer_use"
+    assert host_root == tmp_path / "_aj_connector" / "computer_use"
 
 
 def test_default_host_artifact_root_uses_tempdir_fallback_on_linux(
@@ -187,9 +187,9 @@ def test_default_host_artifact_root_uses_tempdir_fallback_on_linux(
     monkeypatch.setattr(computer_use_mod.sys, "platform", "linux")
     monkeypatch.setattr(computer_use_mod.tempfile, "gettempdir", lambda: str(tmp_path))
 
-    host_root = computer_use_mod._default_host_artifact_root("/a0/tmp/_a0_connector/computer_use")
+    host_root = computer_use_mod._default_host_artifact_root("/aj/tmp/_aj_connector/computer_use")
 
-    assert host_root == tmp_path / "_a0_connector" / "computer_use"
+    assert host_root == tmp_path / "_aj_connector" / "computer_use"
 
 
 async def test_status_is_allowed_while_disabled_but_other_actions_are_rejected(
@@ -704,7 +704,7 @@ async def test_start_session_reuses_stable_session_metadata_after_other_actions(
                 "ok": True,
                 "result": {
                     "host_path": "/tmp/capture.png",
-                    "container_path": "/a0/tmp/capture.png",
+                    "container_path": "/aj/tmp/capture.png",
                     "width": 1280,
                     "height": 720,
                 },
@@ -1317,7 +1317,7 @@ async def test_ensure_helper_uses_expanded_stdio_limit_for_large_capture_payload
     tmp_path: Path,
 ) -> None:
     package_src = tmp_path / "package" / "src"
-    helper_dir = package_src / "a0_computer_use_wayland"
+    helper_dir = package_src / "aj_computer_use_wayland"
     helper_dir.mkdir(parents=True)
     (helper_dir / "__init__.py").write_text("", encoding="utf-8")
     helper_script = helper_dir / "computer_use_helper.py"
@@ -1363,7 +1363,7 @@ async def test_helper_stderr_is_forwarded_when_debug_is_enabled(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setenv("A0_COMPUTER_USE_DEBUG", "1")
+    monkeypatch.setenv("AJ_COMPUTER_USE_DEBUG", "1")
     manager = _manager(enabled=True)
 
     process = type(

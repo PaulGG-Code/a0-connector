@@ -8,23 +8,23 @@ from pathlib import Path
 import pytest
 
 
-PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages/a0-computer-use-wayland/src"
+PACKAGE_SRC = Path(__file__).resolve().parents[1] / "packages/aj-computer-use-wayland/src"
 if str(PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(PACKAGE_SRC))
 
-from a0_computer_use_wayland import WAYLAND_BACKEND_SPEC, get_backend_spec
-from a0_computer_use_wayland import detection as wayland_detection
-from a0_computer_use_wayland import paths as wayland_paths
+from aj_computer_use_wayland import WAYLAND_BACKEND_SPEC, get_backend_spec
+from aj_computer_use_wayland import detection as wayland_detection
+from aj_computer_use_wayland import paths as wayland_paths
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 WAYLAND_HELPER_FILES = [
-    PROJECT_ROOT / "src" / "agent_zero_cli" / "computer_use_helper.py",
+    PROJECT_ROOT / "src" / "agentic_job_cli" / "computer_use_helper.py",
     PROJECT_ROOT
     / "packages"
-    / "a0-computer-use-wayland"
+    / "aj-computer-use-wayland"
     / "src"
-    / "a0_computer_use_wayland"
+    / "aj_computer_use_wayland"
     / "computer_use_helper.py",
 ]
 
@@ -324,7 +324,7 @@ def _portal_helper(module):
         context_id="ctx-1",
         trust_mode="persistent",
         session_id="sess-1",
-        session_handle="/org/freedesktop/portal/desktop/session/a0/test",
+        session_handle="/org/freedesktop/portal/desktop/session/aj/test",
         stream_id=1,
         width=1920,
         height=1080,
@@ -391,10 +391,10 @@ def test_wayland_shortcut_dispatch_uses_evdev_keycodes_for_ctrl_t(
 
     assert result["keys"] == ["ctrl", "T"]
     assert remote_desktop.calls == [
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", 29, 1),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", 20, 1),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", 20, 0),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", 29, 0),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", 29, 1),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", 20, 1),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", 20, 0),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", 29, 0),
     ]
 
 
@@ -415,10 +415,10 @@ def test_wayland_shortcut_dispatch_covers_super_alt_and_function_keys(
     helper.key({"session_id": "sess-1", "keys": keys})
 
     assert remote_desktop.calls == [
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", codes[0], 1),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", codes[1], 1),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", codes[1], 0),
-        ("keycode", "/org/freedesktop/portal/desktop/session/a0/test", codes[0], 0),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", codes[0], 1),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", codes[1], 1),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", codes[1], 0),
+        ("keycode", "/org/freedesktop/portal/desktop/session/aj/test", codes[0], 0),
     ]
 
 
@@ -430,8 +430,8 @@ def test_wayland_shortcut_dispatch_falls_back_to_keysyms_for_unknown_keys(
     helper.key({"session_id": "sess-1", "keys": ["XF86AudioMute"]})
 
     assert remote_desktop.calls == [
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0x1008FF12, 1),
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0x1008FF12, 0),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", 0x1008FF12, 1),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", 0x1008FF12, 0),
     ]
 
 
@@ -456,10 +456,10 @@ def test_wayland_text_dispatch_still_uses_keysyms(
     )
 
     assert remote_desktop.calls == [
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", ord("T"), 1),
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", ord("T"), 0),
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 1),
-        ("keysym", "/org/freedesktop/portal/desktop/session/a0/test", 0xFF0D, 0),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", ord("T"), 1),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", ord("T"), 0),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", 0xFF0D, 1),
+        ("keysym", "/org/freedesktop/portal/desktop/session/aj/test", 0xFF0D, 0),
     ]
     assert result["window_id"] == window_id
     assert result["focus_verified"] is True
@@ -604,7 +604,7 @@ def test_wayland_window_list_returns_frames_and_skips_services(
 ) -> None:
     frame = _FakeAtspiAccessible(
         role="frame",
-        name="#general | Agent Zero - Discord",
+        name="#general | Agentic Job - Discord",
         states={"VISIBLE", "SHOWING", "ENABLED", "ACTIVE"},
         frame=(69, 50, 1851, 1030),
         pid=57929,
@@ -626,7 +626,7 @@ def test_wayland_window_list_returns_frames_and_skips_services(
             "window_id": "atspi-pid:57929:path:1.0",
             "pid": 57929,
             "app_name": "Discord",
-            "title": "#general | Agent Zero - Discord",
+            "title": "#general | Agentic Job - Discord",
             "role": "frame",
             "frame": {
                 "x": 69,
@@ -703,7 +703,7 @@ def test_wayland_ax_snapshot_can_be_scoped_to_one_window(
     )
     discord = _FakeAtspiAccessible(
         role="frame",
-        name="#general | Agent Zero - Discord",
+        name="#general | Agentic Job - Discord",
         children=[composer],
         frame=(69, 50, 1851, 1030),
         pid=57929,
@@ -725,7 +725,7 @@ def test_wayland_ax_snapshot_can_be_scoped_to_one_window(
     assert result["scoped"] is True
     assert result["window_id"] == window_id
     assert result["node_count"] == 2
-    assert result["tree"]["title"] == "#general | Agent Zero - Discord"
+    assert result["tree"]["title"] == "#general | Agentic Job - Discord"
     assert result["tree"]["children"][0]["title"] == "Message #general"
 
 
@@ -784,7 +784,7 @@ def test_wayland_foreground_focus_can_target_window_id(
 ) -> None:
     window = _FakeAtspiAccessible(
         role="frame",
-        name="#general | Agent Zero - Discord",
+        name="#general | Agentic Job - Discord",
         frame=(69, 50, 1851, 1030),
         pid=57929,
     )
@@ -824,7 +824,7 @@ def test_wayland_window_focus_falls_back_to_verified_wmctrl_activation(
 ) -> None:
     window = _FakeAtspiAccessible(
         role="frame",
-        name="#general | Agent Zero - Discord",
+        name="#general | Agentic Job - Discord",
         frame=(69, 50, 1851, 1030),
         pid=57929,
     )
@@ -848,7 +848,7 @@ def test_wayland_window_focus_falls_back_to_verified_wmctrl_activation(
         if args == ["wmctrl", "-lp"]:
             return types.SimpleNamespace(
                 returncode=0,
-                stdout="0x01e0000a  0 57929 host #general | Agent Zero - Discord\n",
+                stdout="0x01e0000a  0 57929 host #general | Agentic Job - Discord\n",
             )
         window.states.add("ACTIVE")
         return types.SimpleNamespace(returncode=0, stdout="")

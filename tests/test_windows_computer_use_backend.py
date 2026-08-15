@@ -11,19 +11,19 @@ import pytest
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-WINDOWS_PACKAGE_SRC = PROJECT_ROOT / "packages" / "a0-computer-use-windows" / "src"
+WINDOWS_PACKAGE_SRC = PROJECT_ROOT / "packages" / "aj-computer-use-windows" / "src"
 if str(WINDOWS_PACKAGE_SRC) not in sys.path:
     sys.path.insert(0, str(WINDOWS_PACKAGE_SRC))
 
-from a0_computer_use_windows.backend import WINDOWS_BACKEND_SPEC, WindowsComputerUseBackend
-import a0_computer_use_windows.runtime as windows_runtime_mod
-from a0_computer_use_windows.runtime import (
+from aj_computer_use_windows.backend import WINDOWS_BACKEND_SPEC, WindowsComputerUseBackend
+import aj_computer_use_windows.runtime as windows_runtime_mod
+from aj_computer_use_windows.runtime import (
     ScreenGeometry,
     WindowsComputerUseError,
     WindowsComputerUseRuntime,
     WindowsSessionStore,
 )
-from a0_computer_use_windows.shared import normalize_action_payload
+from aj_computer_use_windows.shared import normalize_action_payload
 
 
 class _FakeRect:

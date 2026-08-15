@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Launch the Agent Zero CLI TUI in a browser via textual-serve.
+"""Launch the Agentic Job CLI TUI in a browser via textual-serve.
 
 Usage:
     python devtools/serve.py [--port PORT] [--host HOST]
@@ -63,7 +63,7 @@ def main() -> None:
         command,
         host=args.host,
         port=args.port,
-        title="Agent Zero CLI (dev)",
+        title="Agentic Job CLI (dev)",
     )
     server.serve(debug=args.debug)
 

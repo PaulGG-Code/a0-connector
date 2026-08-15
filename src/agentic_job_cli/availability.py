@@ -1,0 +1,159 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+from agentic_job_cli.commands import CommandAvailability
+
+if TYPE_CHECKING:
+    from agentic_job_cli.app import AgentZeroCLI
+
+
+def require_connection(app: AgentZeroCLI) -> CommandAvailability:
+    if not app.connected:
+        return CommandAvailability(False, "Connect to an Agentic Job instance first.")
+    return CommandAvailability(True)
+
+def require_features(app: AgentZeroCLI, *features: str) -> CommandAvailability:
+    base = app._require_connection()
+    if not base.available:
+        return base
+    missing = [feature for feature in features if feature not in app.connector_features]
+    if missing:
+        joined = ", ".join(missing)
+        return CommandAvailability(False, f"This connector build does not advertise: {joined}.")
+    return CommandAvailability(True)
+
+
+def compact_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("compact_chat")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat before compacting it.")
+    if not app.current_context_has_messages:
+        return CommandAvailability(False, "Start a conversation before compacting it.")
+    if app.agent_active:
+        return CommandAvailability(False, "Wait for the current run to finish before compacting.")
+    return CommandAvailability(True)
+
+
+def pause_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("pause")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if not app.agent_active:
+        return CommandAvailability(False, "Pause becomes available while the agent is running.")
+    return CommandAvailability(True)
+
+
+def resume_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("pause")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if not app._pause_latched:
+        return CommandAvailability(False, "Resume becomes available after pausing the active run.")
+    return CommandAvailability(True)
+
+
+def nudge_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("nudge")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
+def message_queue_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("message_queue")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
+def message_queue_send_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = message_queue_availability(app)
+    if not base.available:
+        return base
+    if not app._has_message_queue():
+        return CommandAvailability(False, "There are no queued messages to send.")
+    return CommandAvailability(True)
+
+
+def attachments_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = require_connection(app)
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
+def goal_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = require_connection(app)
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    return CommandAvailability(True)
+
+
+def installed_plugins_availability(app: AgentZeroCLI) -> CommandAvailability:
+    return app._require_features("installed_plugins")
+
+
+def project_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("projects")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if app.agent_active:
+        return CommandAvailability(False, "Wait for the current run to finish before changing projects.")
+    return CommandAvailability(True)
+
+
+def profile_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("settings_get", "agent_profile_set")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if app.agent_active:
+        return CommandAvailability(False, "Wait for the current run to finish before changing the agent profile.")
+    return CommandAvailability(True)
+
+
+def permissions_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = profile_availability(app)
+    if not base.available:
+        return base
+    return app._require_features("agent_editor")
+
+
+def model_presets_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("model_switcher", "model_presets")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if not app._model_switch_allowed:
+        return CommandAvailability(False, "Model preset switching is unavailable for this chat.")
+    return CommandAvailability(True)
+
+
+def model_runtime_availability(app: AgentZeroCLI) -> CommandAvailability:
+    base = app._require_features("model_switcher")
+    if not base.available:
+        return base
+    if not app.current_context:
+        return CommandAvailability(False, "Open or create a chat context first.")
+    if not app._model_switch_allowed:
+        return CommandAvailability(False, "Model runtime editing is unavailable for this chat.")
+    return CommandAvailability(True)

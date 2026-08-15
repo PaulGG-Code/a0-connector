@@ -1,6 +1,6 @@
 # TUI frontend file map
 
-This note lists files that define the **Textual** terminal UI (layout, widgets, styles, and modal screens) for the Agent Zero CLI under `src/agent_zero_cli/`.
+This note lists files that define the **Textual** terminal UI (layout, widgets, styles, and modal screens) for the Agentic Job CLI under `src/agentic_job_cli/`.
 
 ## IDE embedded terminal
 
@@ -32,7 +32,7 @@ run concurrently, but only one full-resolution decoder runs at a time and it
 downsamples before applying orientation and color conversion. Source limits are
 25 MiB encoded data and 32 megapixels decoded.
 
-Rendering is selected with `A0_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
+Rendering is selected with `AJ_CLI_IMAGE_MODE=auto|tgp|sixel|halfcell|off`.
 Automatic selection prefers supported TGP or Sixel and otherwise uses
 half-cell; `off` retains text placeholders. The browser xterm.js preview and
 SVG snapshots force half-cell, so they are useful for deterministic layout but
@@ -55,16 +55,16 @@ Focus the top chat tab strip with `Tab` first, then use:
 
 | Path | Role |
 |------|------|
-| `src/agent_zero_cli/styles/app.tcss` | Global TUI styling (colors, borders, splash surface, `#chat-log`, `#message-input`, footer). |
-| `src/agent_zero_cli/widgets/chat_input.py` | Multiline input (`Enter` to send, `Ctrl+J` for a new line, `Ctrl+A` to select the draft, grows up to a few lines; agent progress as placeholder inside the field when empty). |
-| `src/agent_zero_cli/widgets/chat_log.py` | Selectable chat rows, expandable status/code details, cached Rich conversion, and paged older-history loading. |
-| `src/agent_zero_cli/widgets/image_entry.py` | Inline image placeholder/loading/error state, focusable thumbnail/expanded rendering, and native-widget cleanup. |
-| `src/agent_zero_cli/widgets/__init__.py` | Re-exports widgets (small; part of the UI package). |
-| `src/agent_zero_cli/widgets/splash_view.py` | Staged connection surface for arrow-key local instance picking, single-instance auto-connect, manual URL fallback, login with detected-instance context, refreshed `Change URL` back-navigation, connecting/error states, and empty ready-state actions. |
-| `src/agent_zero_cli/widgets/profile_menu_popover.py` | Current-profile menu for selecting, creating, or editing profiles. |
-| `src/agent_zero_cli/screens/chat_list.py` | Chat list picker (TUI overlay). |
-| `src/agent_zero_cli/screens/profile_editor.py` | Compact two-step profile editor for identity/instructions and tool choices. |
-| `src/agent_zero_cli/screens/permissions.py` | Current-profile Tools, MCPs, and Skills permission editor. |
+| `src/agentic_job_cli/styles/app.tcss` | Global TUI styling (colors, borders, splash surface, `#chat-log`, `#message-input`, footer). |
+| `src/agentic_job_cli/widgets/chat_input.py` | Multiline input (`Enter` to send, `Ctrl+J` for a new line, `Ctrl+A` to select the draft, grows up to a few lines; agent progress as placeholder inside the field when empty). |
+| `src/agentic_job_cli/widgets/chat_log.py` | Selectable chat rows, expandable status/code details, cached Rich conversion, and paged older-history loading. |
+| `src/agentic_job_cli/widgets/image_entry.py` | Inline image placeholder/loading/error state, focusable thumbnail/expanded rendering, and native-widget cleanup. |
+| `src/agentic_job_cli/widgets/__init__.py` | Re-exports widgets (small; part of the UI package). |
+| `src/agentic_job_cli/widgets/splash_view.py` | Staged connection surface for arrow-key local instance picking, single-instance auto-connect, manual URL fallback, login with detected-instance context, refreshed `Change URL` back-navigation, connecting/error states, and empty ready-state actions. |
+| `src/agentic_job_cli/widgets/profile_menu_popover.py` | Current-profile menu for selecting, creating, or editing profiles. |
+| `src/agentic_job_cli/screens/chat_list.py` | Chat list picker (TUI overlay). |
+| `src/agentic_job_cli/screens/profile_editor.py` | Compact two-step profile editor for identity/instructions and tool choices. |
+| `src/agentic_job_cli/screens/permissions.py` | Current-profile Tools, MCPs, and Skills permission editor. |
 
 ## Where UI meets logic
 
@@ -72,11 +72,11 @@ These are not “layout only,” but they drive or support what you see:
 
 | Path | Role |
 |------|------|
-| `src/agent_zero_cli/app.py` | Main `App`: composes the main screen (`ChatLog`, `ChatInput`, `Footer`) and owns WebSocket handling, commands, and most state. |
-| `src/agent_zero_cli/__main__.py` | Entry point that starts the app. |
-| `src/agent_zero_cli/client.py` | HTTP/WebSocket client (no widgets). |
-| `src/agent_zero_cli/config.py` | Configuration and env (no widgets). |
-| `src/agent_zero_cli/media_refs.py` / `image_store.py` / `image_render.py` | Pure reference extraction, authenticated bounded image loading, and interactive renderer selection. |
+| `src/agentic_job_cli/app.py` | Main `App`: composes the main screen (`ChatLog`, `ChatInput`, `Footer`) and owns WebSocket handling, commands, and most state. |
+| `src/agentic_job_cli/__main__.py` | Entry point that starts the app. |
+| `src/agentic_job_cli/client.py` | HTTP/WebSocket client (no widgets). |
+| `src/agentic_job_cli/config.py` | Configuration and env (no widgets). |
+| `src/agentic_job_cli/media_refs.py` / `image_store.py` / `image_render.py` | Pure reference extraction, authenticated bounded image loading, and interactive renderer selection. |
 
 ## Tests
 

@@ -9,8 +9,8 @@ from unittest.mock import Mock
 from PIL import Image as PILImage
 import pytest
 
-from agent_zero_cli.image_store import ImageAsset, ImageStore, ImageUnavailableError
-from agent_zero_cli.media_refs import ImageReference
+from agentic_job_cli.image_store import ImageAsset, ImageStore, ImageUnavailableError
+from agentic_job_cli.media_refs import ImageReference
 
 
 pytestmark = pytest.mark.anyio
@@ -44,7 +44,7 @@ def image_reference(
         owner="assistant",
         caption="Assistant image",
         source=source,  # type: ignore[arg-type]
-        value=value or f"/a0/usr/uploads/{key}.png",
+        value=value or f"/aj/usr/uploads/{key}.png",
     )
 
 
@@ -55,7 +55,7 @@ class FakeImageClient:
         self.calls = 0
 
     async def fetch_image(self, path: str) -> tuple[bytes, str]:
-        assert path.startswith("/a0/")
+        assert path.startswith("/aj/")
         self.calls += 1
         return self.payload, self.mime
 
@@ -71,7 +71,7 @@ class BlockingImageClient:
         self.release = asyncio.Event()
 
     async def fetch_image(self, path: str) -> tuple[bytes, str]:
-        assert path.startswith("/a0/")
+        assert path.startswith("/aj/")
         self.calls += 1
         self.active += 1
         self.started.set()
@@ -211,7 +211,7 @@ async def test_store_decodes_data_uris() -> None:
 async def test_store_rejects_oversized_data_uri_before_base64_decode(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.image_store as image_store
+    import agentic_job_cli.image_store as image_store
 
     decode = Mock(side_effect=AssertionError("base64 decode must not run"))
     monkeypatch.setattr(image_store, "MAX_ENCODED_BYTES", 3)
@@ -262,7 +262,7 @@ async def test_store_uses_first_gif_frame() -> None:
 async def test_store_downsamples_before_exif_orientation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.image_store as image_store
+    import agentic_job_cli.image_store as image_store
 
     exif = PILImage.Exif()
     exif[274] = 6
@@ -319,7 +319,7 @@ async def test_store_downsamples_before_alpha_conversion(
 
 
 async def test_store_rejects_excessive_decoded_dimensions(monkeypatch: pytest.MonkeyPatch) -> None:
-    import agent_zero_cli.image_store as image_store
+    import agentic_job_cli.image_store as image_store
 
     monkeypatch.setattr(image_store, "MAX_DECODED_PIXELS", 10)
     store = ImageStore(FakeImageClient(png_bytes((4, 4))), max_surface_pixels=(96, 64))
@@ -331,7 +331,7 @@ async def test_store_rejects_excessive_decoded_dimensions(monkeypatch: pytest.Mo
 async def test_cancel_pending_holds_decoder_permits_and_closes_late_surfaces(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import agent_zero_cli.image_store as image_store
+    import agentic_job_cli.image_store as image_store
 
     original_decode = image_store._decode_image
     event_loop = asyncio.get_running_loop()

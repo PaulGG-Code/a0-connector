@@ -18,7 +18,7 @@ PYPROJECT = ROOT / "pyproject.toml"
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Regenerate A0 release dependency locks and sync pyproject pins."
+        description="Regenerate AJ release dependency locks and sync pyproject pins."
     )
     parser.add_argument(
         "--check",

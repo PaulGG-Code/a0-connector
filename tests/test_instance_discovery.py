@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import agent_zero_cli.instance_discovery as discovery
+import agentic_job_cli.instance_discovery as discovery
 
 
 pytestmark = pytest.mark.anyio
@@ -40,7 +40,7 @@ async def test_discover_local_instances_uses_local_docker_api_without_windows_cl
                 source="docker-api",
             ),
         ),
-        detail="Found 1 local Agent Zero endpoint.",
+        detail="Found 1 local Agentic Job endpoint.",
     )
     calls: list[str] = []
 
@@ -64,13 +64,13 @@ def test_docker_socket_paths_include_colima_context_profile(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    context_socket = tmp_path / ".colima/a0/docker.sock"
+    context_socket = tmp_path / ".colima/aj/docker.sock"
     context_meta = tmp_path / ".docker/contexts/meta/context-a/meta.json"
     context_meta.parent.mkdir(parents=True)
     context_meta.write_text(
         json.dumps(
             {
-                "Name": "colima-a0",
+                "Name": "colima-aj",
                 "Endpoints": {
                     "docker": {
                         "Host": f"unix://{context_socket}",
@@ -103,7 +103,7 @@ async def test_discover_local_instances_uses_colima_socket_without_docker_cli(
                 source="docker-socket",
             ),
         ),
-        detail="Found 1 local Agent Zero endpoint.",
+        detail="Found 1 local Agentic Job endpoint.",
     )
     calls: list[str] = []
 
@@ -113,14 +113,14 @@ async def test_discover_local_instances_uses_colima_socket_without_docker_cli(
 
     monkeypatch.setattr(discovery, "_find_docker_cli", lambda: None)
     monkeypatch.setattr(discovery, "_find_wsl_cli", lambda: None)
-    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ("/Users/test/.colima/a0/docker.sock",))
+    monkeypatch.setattr(discovery, "_docker_socket_paths", lambda: ("/Users/test/.colima/aj/docker.sock",))
     monkeypatch.setattr(discovery, "_docker_api_base_urls", lambda: ())
     monkeypatch.setattr(discovery, "_discover_with_docker_socket", fake_discover_with_docker_socket)
 
     result = await discovery.discover_local_instances()
 
     assert result == expected
-    assert calls == ["/Users/test/.colima/a0/docker.sock"]
+    assert calls == ["/Users/test/.colima/aj/docker.sock"]
 
 
 async def test_discover_local_instances_falls_back_to_wsl_docker(
@@ -248,7 +248,7 @@ async def test_discover_local_instances_prefers_launcher_friendly_name(
                 "Labels": {"a0.launcher.instanceName": "agent-zero-latest"},
             },
             "State": {"Running": True},
-            "Mounts": [{"Destination": "/a0", "Type": "bind"}],
+            "Mounts": [{"Destination": "/aj", "Type": "bind"}],
             "NetworkSettings": {"Ports": {"80/tcp": [{"HostIp": "127.0.0.1", "HostPort": "32769"}]}},
         },
     ]
