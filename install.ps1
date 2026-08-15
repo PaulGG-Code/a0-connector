@@ -1,11 +1,11 @@
 $ErrorActionPreference = "Stop"
 
-$LatestReleaseApiUrl = if ($env:A0_LATEST_RELEASE_API_URL) { $env:A0_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/agent0ai/a0-connector/releases/latest" }
+$LatestReleaseApiUrl = if ($env:A0_LATEST_RELEASE_API_URL) { $env:A0_LATEST_RELEASE_API_URL } else { "https://api.github.com/repos/PaulGG-Code/a0-connector/releases/latest" }
 $PythonSpec = if ($env:A0_PYTHON_SPEC) { $env:A0_PYTHON_SPEC } else { "3.12" }
 $UvInstallUrl = if ($env:UV_INSTALL_URL) { $env:UV_INSTALL_URL } else { "https://astral.sh/uv/install.ps1" }
 $RuntimeConstraintsPath = "constraints/a0-runtime.txt"
 $BuildConstraintsPath = "constraints/a0-build.txt"
-$ReleaseRawFileUrlBase = "https://raw.githubusercontent.com/agent0ai/a0-connector/refs/tags"
+$ReleaseRawFileUrlBase = "https://raw.githubusercontent.com/PaulGG-Code/a0-connector/refs/tags"
 
 function Resolve-PackageSpec {
     if ($env:A0_PACKAGE_SPEC) {
@@ -32,7 +32,7 @@ function Resolve-PackageSpec {
 
     $escapedTag = [uri]::EscapeDataString($tag.Trim())
     return @{
-        PackageSpec = "a0 @ https://github.com/agent0ai/a0-connector/archive/refs/tags/$escapedTag.zip"
+        PackageSpec = "a0 @ https://github.com/PaulGG-Code/a0-connector/archive/refs/tags/$escapedTag.zip"
         ReleaseTag = $tag.Trim()
     }
 }
